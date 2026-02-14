@@ -1,0 +1,10 @@
+// Part of the TinySwift compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See /LICENSE for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+// EXTRA-ARGS: --no-prelude-import --exclude-dump-file-prefix=min_prelude/
+
+// --- min_prelude/none.tinyswift
+
+// A minimal prelude that avoids importing any prelude library at all.
+package MinPreludeNone;

@@ -1,0 +1,19 @@
+// Part of the TinySwift compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See /LICENSE for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+// Note: X-macro header. Do not use include guards.
+
+#ifndef TINYSWIFT_SUBCOMMAND
+// TODO: We should expand `HelpText` to be a short help name, a synopsis, and a
+// long-form description.
+#define TINYSWIFT_SUBCOMMAND(Name, Spelling, HelpText)
+#endif
+
+TINYSWIFT_SUBCOMMAND(Help, "help",
+                  "Display help information about the driver options.")
+TINYSWIFT_SUBCOMMAND(
+    Dump, "dump",
+    "Dumps intermediate compilation state for the input source file.")
+
+#undef TINYSWIFT_SUBCOMMAND

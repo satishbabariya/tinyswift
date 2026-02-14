@@ -1,0 +1,65 @@
+// Part of the TinySwift compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See /LICENSE for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+// This is an X-macro header. It does not use `#include` guards, and instead is
+// designed to be `#include`ed after the x-macro is defined in order for its
+// inclusion to expand to the desired output. Macro definitions are cleaned up
+// at the end of this file.
+//
+// This macro should be defined before including this header:
+// - TINYSWIFT_SEM_IR_INST_KIND(Name)
+//   Invoked for each kind of semantic instruction.
+
+#ifndef TINYSWIFT_SEM_IR_INST_KIND
+#error "Must define the x-macro to use this file."
+#define TINYSWIFT_SEM_IR_INST_KIND(Name)
+#endif
+
+// Core
+TINYSWIFT_SEM_IR_INST_KIND(ErrorInst)
+TINYSWIFT_SEM_IR_INST_KIND(Assign)
+
+// Control flow
+TINYSWIFT_SEM_IR_INST_KIND(Branch)
+TINYSWIFT_SEM_IR_INST_KIND(BranchIf)
+TINYSWIFT_SEM_IR_INST_KIND(BranchWithArg)
+TINYSWIFT_SEM_IR_INST_KIND(Call)
+TINYSWIFT_SEM_IR_INST_KIND(Return)
+TINYSWIFT_SEM_IR_INST_KIND(ReturnExpr)
+
+// Types
+TINYSWIFT_SEM_IR_INST_KIND(BoolType)
+TINYSWIFT_SEM_IR_INST_KIND(IntType)
+TINYSWIFT_SEM_IR_INST_KIND(FunctionType)
+TINYSWIFT_SEM_IR_INST_KIND(PointerType)
+TINYSWIFT_SEM_IR_INST_KIND(TypeType)
+
+// Values
+TINYSWIFT_SEM_IR_INST_KIND(BoolLiteral)
+TINYSWIFT_SEM_IR_INST_KIND(IntValue)
+TINYSWIFT_SEM_IR_INST_KIND(IntLiteralType)
+
+// Variables and bindings
+TINYSWIFT_SEM_IR_INST_KIND(VarStorage)
+TINYSWIFT_SEM_IR_INST_KIND(NameRef)
+TINYSWIFT_SEM_IR_INST_KIND(Namespace)
+TINYSWIFT_SEM_IR_INST_KIND(NamespaceType)
+TINYSWIFT_SEM_IR_INST_KIND(NameBindingDecl)
+TINYSWIFT_SEM_IR_INST_KIND(ValueBinding)
+TINYSWIFT_SEM_IR_INST_KIND(ValueBindingPattern)
+TINYSWIFT_SEM_IR_INST_KIND(ValueParam)
+TINYSWIFT_SEM_IR_INST_KIND(ValueParamPattern)
+
+// Functions
+TINYSWIFT_SEM_IR_INST_KIND(FunctionDecl)
+
+// Other essential
+TINYSWIFT_SEM_IR_INST_KIND(BlockArg)
+TINYSWIFT_SEM_IR_INST_KIND(SpliceBlock)
+TINYSWIFT_SEM_IR_INST_KIND(ImportDecl)
+TINYSWIFT_SEM_IR_INST_KIND(Converted)
+
+// TODO: Add your language's semantic IR instructions here.
+
+#undef TINYSWIFT_SEM_IR_INST_KIND

@@ -1,0 +1,130 @@
+// Part of the TinySwift compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See /LICENSE for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+// Note that this is an X-macro header.
+//
+// It does not use `#include` guards, and instead is designed to be `#include`ed
+// after some set of x-macros are defined in order for its inclusion to expand
+// to the desired output.
+//
+// The viable X-macros to define prior to including the header are:
+//
+// - `TINYSWIFT_DIAGNOSTIC_KIND`
+
+#ifndef TINYSWIFT_DIAGNOSTIC_KIND
+#error "Must define the x-macro to use this file."
+#define TINYSWIFT_DIAGNOSTIC_KIND(Name)
+#endif
+
+// ============================================================================
+// Driver and subcommand diagnostics
+// ============================================================================
+
+TINYSWIFT_DIAGNOSTIC_KIND(DriverInstallInvalid)
+TINYSWIFT_DIAGNOSTIC_KIND(DriverRuntimesCacheInvalid)
+TINYSWIFT_DIAGNOSTIC_KIND(DriverPrebuiltRuntimesInvalid)
+TINYSWIFT_DIAGNOSTIC_KIND(DriverCommandLineParseFailed)
+TINYSWIFT_DIAGNOSTIC_KIND(CompilePhaseFlagConflict)
+TINYSWIFT_DIAGNOSTIC_KIND(CompilePreludeManifestError)
+TINYSWIFT_DIAGNOSTIC_KIND(CompileInputNotRegularFile)
+TINYSWIFT_DIAGNOSTIC_KIND(CompileOutputFileOpenError)
+TINYSWIFT_DIAGNOSTIC_KIND(CompileTargetInvalid)
+TINYSWIFT_DIAGNOSTIC_KIND(ConfigFailedToReadDigest)
+TINYSWIFT_DIAGNOSTIC_KIND(ConfigFailedToSetupTarget)
+TINYSWIFT_DIAGNOSTIC_KIND(FailureBuildingRuntimes)
+TINYSWIFT_DIAGNOSTIC_KIND(FailureRunningClang)
+TINYSWIFT_DIAGNOSTIC_KIND(FailureRunningClangToLink)
+TINYSWIFT_DIAGNOSTIC_KIND(FormatMultipleFilesToOneOutput)
+TINYSWIFT_DIAGNOSTIC_KIND(ToolFuzzingDisallowed)
+
+TINYSWIFT_DIAGNOSTIC_KIND(CppInteropDriverWarning)
+TINYSWIFT_DIAGNOSTIC_KIND(CppInteropDriverError)
+
+// TODO: Add your language's driver diagnostics here.
+
+// ============================================================================
+// SourceBuffer diagnostics
+// ============================================================================
+
+TINYSWIFT_DIAGNOSTIC_KIND(ErrorOpeningFile)
+TINYSWIFT_DIAGNOSTIC_KIND(ErrorStattingFile)
+TINYSWIFT_DIAGNOSTIC_KIND(FileTooLarge)
+TINYSWIFT_DIAGNOSTIC_KIND(ErrorReadingFile)
+
+// TODO: Add your language's source buffer diagnostics here.
+
+// ============================================================================
+// Lexer diagnostics
+// ============================================================================
+
+TINYSWIFT_DIAGNOSTIC_KIND(TooManyTokens)
+TINYSWIFT_DIAGNOSTIC_KIND(UnmatchedOpening)
+TINYSWIFT_DIAGNOSTIC_KIND(UnmatchedClosing)
+TINYSWIFT_DIAGNOSTIC_KIND(UnrecognizedCharacters)
+
+// TODO: Add your language's lexer diagnostics here.
+
+// ============================================================================
+// Parser diagnostics
+// ============================================================================
+
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedCloseSymbol)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedExpr)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedCodeBlock)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedDeclSemi)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedDeclSemiOrDefinition)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedDeclName)
+TINYSWIFT_DIAGNOSTIC_KIND(UnrecognizedDecl)
+
+// TODO: Add your language's parser diagnostics here.
+
+// ============================================================================
+// Semantics diagnostics
+// ============================================================================
+
+TINYSWIFT_DIAGNOSTIC_KIND(SemanticsTodo)
+
+// TODO: Add your language's semantic analysis diagnostics here.
+
+// ============================================================================
+// CodeGen diagnostics
+// ============================================================================
+
+TINYSWIFT_DIAGNOSTIC_KIND(CodeGenUnableToEmit)
+
+// TODO: Add your language's code generation diagnostics here.
+
+// ============================================================================
+// Language server diagnostics
+// ============================================================================
+
+TINYSWIFT_DIAGNOSTIC_KIND(LanguageServerFileUnknown)
+TINYSWIFT_DIAGNOSTIC_KIND(LanguageServerFileUnsupported)
+TINYSWIFT_DIAGNOSTIC_KIND(LanguageServerMissingInputStream)
+TINYSWIFT_DIAGNOSTIC_KIND(LanguageServerNotificationParseError)
+TINYSWIFT_DIAGNOSTIC_KIND(LanguageServerTransportError)
+TINYSWIFT_DIAGNOSTIC_KIND(LanguageServerUnexpectedReply)
+TINYSWIFT_DIAGNOSTIC_KIND(LanguageServerUnsupportedNotification)
+
+// Document handling.
+TINYSWIFT_DIAGNOSTIC_KIND(LanguageServerOpenDuplicateFile)
+TINYSWIFT_DIAGNOSTIC_KIND(LanguageServerCloseUnknownFile)
+TINYSWIFT_DIAGNOSTIC_KIND(LanguageServerDiagnosticInWrongFile)
+
+TINYSWIFT_DIAGNOSTIC_KIND(LanguageServerNotImplemented)
+
+// TODO: Add your language's language server diagnostics here.
+
+// ============================================================================
+// Test diagnostics
+// ============================================================================
+
+// TestDiagnostic is only for unit tests.
+TINYSWIFT_DIAGNOSTIC_KIND(TestDiagnostic)
+TINYSWIFT_DIAGNOSTIC_KIND(TestDiagnosticOnScope)
+TINYSWIFT_DIAGNOSTIC_KIND(TestDiagnosticNote)
+
+// TODO: Add your language's test diagnostics here.
+
+#undef TINYSWIFT_DIAGNOSTIC_KIND

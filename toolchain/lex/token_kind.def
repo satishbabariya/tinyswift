@@ -1,0 +1,155 @@
+// Part of the TinySwift compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See /LICENSE for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+// This is an X-macro header. It does not use `#include` guards, and instead is
+// designed to be `#include`ed after the x-macro is defined in order for its
+// inclusion to expand to the desired output. Macro definitions are cleaned up
+// at the end of this file.
+//
+// Supported x-macros are:
+// - TINYSWIFT_TOKEN(Name)
+//   Defines a token. Used directly when a token needs custom parsing, such as
+//   integer literals.
+//   - TINYSWIFT_SYMBOL_TOKEN(Name, Spelling)
+//     Defines a symbol which has the provided spelling, such as `*`. Spellings
+//     must be unique.
+//     - TINYSWIFT_OPENING_GROUP_SYMBOL_TOKEN(Name, Spelling, ClosingName)
+//     - TINYSWIFT_CLOSING_GROUP_SYMBOL_TOKEN(Name, Spelling, OpeningName)
+//       These two macros together define matches opening and closing symbols,
+//       such as `(` and `)`, and create an association between the two.
+//   - TINYSWIFT_KEYWORD_TOKEN(Name, Spelling)
+//     Defines a keyword which has the provided spelling, such as `if`.
+//     Spellings must be unique.
+//     - TINYSWIFT_DECL_INTRODUCER_TOKEN(Name, Spelling)
+//       A declaration introducer keyword, such as `fn`.
+//   - TINYSWIFT_TOKEN_WITH_VIRTUAL_NODE(TokenIndex)
+//     Wrapped around one of the above _TOKEN macros, indicates that this
+//     token has one additional virtual node in the parse tree.
+//
+// This tree represents the subset relationship between these macros, where if a
+// specific x-macro isn't defined, it'll fall back to the parent macro.
+
+#ifndef TINYSWIFT_TOKEN
+#define TINYSWIFT_TOKEN(Name)
+#endif
+
+// The error token comes first because we want it to get the zero value, which
+// will also be used in default initialization.
+TINYSWIFT_TOKEN(Error)
+
+#ifndef TINYSWIFT_SYMBOL_TOKEN
+#define TINYSWIFT_SYMBOL_TOKEN(Name, Spelling) TINYSWIFT_TOKEN(Name)
+#endif
+
+#ifndef TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN
+#define TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Name, Spelling) \
+  TINYSWIFT_SYMBOL_TOKEN(Name, Spelling)
+#endif
+
+#ifndef TINYSWIFT_TOKEN_WITH_VIRTUAL_NODE
+#define TINYSWIFT_TOKEN_WITH_VIRTUAL_NODE(Name) Name
+#endif
+
+// TODO: Add your language's symbols here.
+
+// Note that symbols need to be ordered from longest to shortest to effectively
+// provide max-munch lexing.
+
+// clang-format off
+
+TINYSWIFT_SYMBOL_TOKEN(EqualEqual,          "==")
+TINYSWIFT_SYMBOL_TOKEN(ExclaimEqual,        "!=")
+TINYSWIFT_SYMBOL_TOKEN(GreaterEqual,        ">=")
+TINYSWIFT_SYMBOL_TOKEN(LessEqual,           "<=")
+TINYSWIFT_SYMBOL_TOKEN(MinusGreater,        "->")
+TINYSWIFT_SYMBOL_TOKEN(PlusEqual,           "+=")
+TINYSWIFT_SYMBOL_TOKEN(MinusEqual,          "-=")
+TINYSWIFT_SYMBOL_TOKEN(StarEqual,           "*=")
+TINYSWIFT_SYMBOL_TOKEN(SlashEqual,          "/=")
+
+TINYSWIFT_SYMBOL_TOKEN(Amp,                 "&")
+TINYSWIFT_SYMBOL_TOKEN(Caret,               "^")
+TINYSWIFT_SYMBOL_TOKEN(Colon,               ":")
+TINYSWIFT_SYMBOL_TOKEN(Equal,               "=")
+TINYSWIFT_SYMBOL_TOKEN(Exclaim,             "!")
+TINYSWIFT_SYMBOL_TOKEN(Greater,             ">")
+TINYSWIFT_SYMBOL_TOKEN(Less,                "<")
+TINYSWIFT_SYMBOL_TOKEN(Minus,               "-")
+TINYSWIFT_SYMBOL_TOKEN(Percent,             "%")
+TINYSWIFT_SYMBOL_TOKEN(Period,              ".")
+TINYSWIFT_SYMBOL_TOKEN(Pipe,                "|")
+TINYSWIFT_SYMBOL_TOKEN(Plus,                "+")
+TINYSWIFT_SYMBOL_TOKEN(Slash,               "/")
+TINYSWIFT_SYMBOL_TOKEN(Star,                "*")
+TINYSWIFT_SYMBOL_TOKEN(Tilde,               "~")
+
+TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Comma,      ",")
+TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Semi,       ";")
+
+// clang-format on
+
+#ifndef TINYSWIFT_OPENING_GROUP_SYMBOL_TOKEN
+#define TINYSWIFT_OPENING_GROUP_SYMBOL_TOKEN(Name, Spelling, ClosingName) \
+  TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Name, Spelling)
+#endif
+TINYSWIFT_OPENING_GROUP_SYMBOL_TOKEN(OpenParen, "(", CloseParen)
+TINYSWIFT_OPENING_GROUP_SYMBOL_TOKEN(OpenCurlyBrace, "{", CloseCurlyBrace)
+TINYSWIFT_OPENING_GROUP_SYMBOL_TOKEN(OpenSquareBracket, "[", CloseSquareBracket)
+#undef TINYSWIFT_OPENING_GROUP_SYMBOL_TOKEN
+
+#ifndef TINYSWIFT_CLOSING_GROUP_SYMBOL_TOKEN
+#define TINYSWIFT_CLOSING_GROUP_SYMBOL_TOKEN(Name, Spelling, OpeningName) \
+  TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Name, Spelling)
+#endif
+TINYSWIFT_CLOSING_GROUP_SYMBOL_TOKEN(CloseParen, ")", OpenParen)
+TINYSWIFT_CLOSING_GROUP_SYMBOL_TOKEN(CloseCurlyBrace, "}", OpenCurlyBrace)
+TINYSWIFT_CLOSING_GROUP_SYMBOL_TOKEN(CloseSquareBracket, "]", OpenSquareBracket)
+#undef TINYSWIFT_CLOSING_GROUP_SYMBOL_TOKEN
+
+#undef TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN
+#undef TINYSWIFT_SYMBOL_TOKEN
+
+#ifndef TINYSWIFT_KEYWORD_TOKEN
+#define TINYSWIFT_KEYWORD_TOKEN(Name, Spelling) TINYSWIFT_TOKEN(Name)
+#endif
+
+#ifndef TINYSWIFT_DECL_INTRODUCER_TOKEN
+#define TINYSWIFT_DECL_INTRODUCER_TOKEN(Name, Spelling) \
+  TINYSWIFT_KEYWORD_TOKEN(Name, Spelling)
+#endif
+
+// TODO: Add your language's keywords here.
+
+// clang-format off
+
+TINYSWIFT_TOKEN_WITH_VIRTUAL_NODE(
+  TINYSWIFT_DECL_INTRODUCER_TOKEN(Fn,          "fn"))
+TINYSWIFT_DECL_INTRODUCER_TOKEN(Import,      "import")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(Let,         "let")
+TINYSWIFT_TOKEN_WITH_VIRTUAL_NODE(
+  TINYSWIFT_DECL_INTRODUCER_TOKEN(Var,       "var"))
+
+TINYSWIFT_KEYWORD_TOKEN(Break,               "break")
+TINYSWIFT_KEYWORD_TOKEN(Continue,            "continue")
+TINYSWIFT_KEYWORD_TOKEN(Else,                "else")
+TINYSWIFT_KEYWORD_TOKEN(False,               "false")
+TINYSWIFT_KEYWORD_TOKEN(If,                  "if")
+TINYSWIFT_KEYWORD_TOKEN(Return,              "return")
+TINYSWIFT_KEYWORD_TOKEN(True,                "true")
+TINYSWIFT_KEYWORD_TOKEN(While,               "while")
+
+// clang-format on
+#undef TINYSWIFT_DECL_INTRODUCER_TOKEN
+#undef TINYSWIFT_KEYWORD_TOKEN
+
+TINYSWIFT_TOKEN(Identifier)
+TINYSWIFT_TOKEN(IntLiteral)
+TINYSWIFT_TOKEN(StringLiteral)
+TINYSWIFT_TOKEN(IntTypeLiteral)
+TINYSWIFT_TOKEN(FloatTypeLiteral)
+TINYSWIFT_TOKEN(FileStart)
+TINYSWIFT_TOKEN(FileEnd)
+
+#undef TINYSWIFT_TOKEN
+#undef TINYSWIFT_TOKEN_WITH_VIRTUAL_NODE

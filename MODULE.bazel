@@ -1,0 +1,173 @@
+# Part of the TinySwift compiler project, under the Apache License v2.0 with LLVM
+# Exceptions. See /LICENSE for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+"""Bazel modules.
+
+`MODULE.bazel.lock` may change locally when `bazel` is executed. This means one
+of:
+
+1.  An input is changing, typically `MODULE.bazel` or `.bazelversion`.
+    -   Running `bazel mod deps` provides a canonical update to
+        `MODULE.bazel.lock`; include the changes.
+    -   GitHub test actions may also identify platform-specific lockfile
+        updates.
+2.  The host platform hasn't yet been added to the lock file.
+    -   Platforms tested with GitHub actions are kept up-to-date. Other
+        platforms may fall out of sync due to `bazel` or dependency changes,
+        and should be updated with a PR the same way a platform is added.
+    -   Running `bazel mod deps` provides a canonical update to
+        `MODULE.bazel.lock`; create a PR with those changes in order to include
+        the host platform.
+"""
+
+module(name = "tinyswift")
+
+http_archive = use_repo_rule(
+    "@bazel_tools//tools/build_defs/repo:http.bzl",
+    "http_archive",
+)
+
+bazel_dep(name = "abseil-cpp", version = "20260107.0")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "google_benchmark", version = "1.9.5")
+bazel_dep(name = "googletest", version = "1.17.0.bcr.2")
+bazel_dep(name = "re2", version = "2025-11-05.bcr.1")
+bazel_dep(name = "rules_cc", version = "0.2.16")
+bazel_dep(name = "rules_pkg", version = "1.2.0")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "tcmalloc", version = "0.0.0-20250927-12f2552")
+bazel_dep(name = "tree-sitter-bazel", version = "0.26.3.bcr.1")
+
+# The registry only has an old version. We use that here to avoid a miss but
+# override it with a newer version.
+bazel_dep(name = "libpfm", version = "4.11.0")
+
+libpfm_version = "4.13.0"
+
+# The official site is https://perfmon2.sourceforge.net/, but SourceForge makes
+# it difficult to download from bazel. On GitHub action runners,
+# https://git.code.sf.net/p/perfmon2/libpfm4 seems to be blocked. As a
+# consequence, use a mirror.
+archive_override(
+    module_name = "libpfm",
+    integrity = "sha256-sGBx1+UoQCplBCc+pwA1Tr/PS2L/4jnLZHH82wSuPz0=",
+    patch_strip = 1,
+    patches = ["@//bazel/libpfm:0001-Introduce-a-simple-native-Bazel-build.patch"],
+    strip_prefix = "libpfm4-{0}".format(libpfm_version),
+    urls = ["https://github.com/wcohen/libpfm4/archive/v{0}.tar.gz".format(libpfm_version)],
+)
+
+bazel_dep(name = "bazel_clang_tidy", dev_dependency = True)
+git_override(
+    module_name = "bazel_clang_tidy",
+    # HEAD as of 2026-01-28.
+    commit = "c4d35e0d0b838309358e57a2efed831780f85cd0",
+    remote = "https://github.com/erenon/bazel_clang_tidy.git",
+)
+
+bazel_cc_toolchain = use_extension(
+    "//bazel/cc_toolchains:clang_configuration.bzl",
+    "clang_toolchain_extension",
+)
+use_repo(bazel_cc_toolchain, "bazel_cc_toolchain")
+
+register_toolchains("@bazel_cc_toolchain//:all")
+
+bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
+git_override(
+    module_name = "hedron_compile_commands",
+    # HEAD as of 2026-01-28.
+    commit = "abb61a688167623088f8768cc9264798df6a9d10",
+    remote = "https://github.com/hedronvision/bazel-compile-commands-extractor.git",
+)
+
+boost_unordered_version = "1.88.0"
+
+http_archive(
+    name = "boost_unordered",
+    build_file = "@//:third_party/boost_unordered/BUILD.bazel",
+    integrity = "sha256-a5ydXEQCspPhFmCD9vNa3JUIVeitbodEYaJhfOSO8no=",
+    strip_prefix = "boost_unordered-{0}".format(boost_unordered_version),
+    urls = ["https://github.com/MikePopoloski/boost_unordered/archive/v{0}.tar.gz".format(boost_unordered_version)],
+)
+
+# Required for llvm-project.
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "protobuf", version = "34.0-rc1", repo_name = "com_google_protobuf")
+bazel_dep(name = "zlib-ng", version = "2.0.7", repo_name = "llvm_zlib")
+bazel_dep(name = "zstd", version = "1.5.7.bcr.1", repo_name = "llvm_zstd")
+
+###############################################################################
+# llvm-project
+###############################################################################
+
+# We pin to specific upstream commits and try to track top-of-tree reasonably
+# closely rather than pinning to a specific release.
+# HEAD as of 2026-01-08.
+llvm_project_version = "21a1e6e6a70d70635c68b9aaa54f816ae36a6416"
+
+# Load a repository for the raw llvm-project, pre-overlay.
+http_archive(
+    name = "llvm-raw",
+    build_file_content = "# empty",
+    integrity = "sha256-ouWG2d4Cob9P6+dxCLZnV4RldSOqZp7mtwd6vd+ZK3Q=",
+    patch_args = ["-p1"],
+    patches = [
+        "@tinyswift//bazel/llvm_project:0001_Patch_for_mallinfo2_when_using_Bazel_build_system.patch",
+        "@tinyswift//bazel/llvm_project:0002_Added_Bazel_build_for_compiler_rt_fuzzer.patch",
+        "@tinyswift//bazel/llvm_project:0004_Introduce_basic_sources_exporting_for_libunwind.patch",
+        "@tinyswift//bazel/llvm_project:0005_Introduce_basic_sources_exporting_for_libcxx_and_libcxxabi.patch",
+        "@tinyswift//bazel/llvm_project:0008_Add_filegroups_for_installed_compiler-rt_headers.patch",
+    ],
+    strip_prefix = "llvm-project-{0}".format(llvm_project_version),
+    urls = ["https://github.com/llvm/llvm-project/archive/{0}.tar.gz".format(llvm_project_version)],
+)
+
+# Apply the overlay to produce llvm-project.
+llvm_project = use_extension(
+    "//bazel/llvm_project:llvm_project.bzl",
+    "llvm_project",
+)
+use_repo(llvm_project, "llvm-project")
+
+###############################################################################
+# Python
+###############################################################################
+
+bazel_dep(name = "rules_python", version = "1.8.3")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    python_version = "3.11",
+)
+use_repo(python, "python_versions")
+
+###############################################################################
+# Bazel integration testing
+###############################################################################
+
+bazel_dep(
+    name = "rules_bazel_integration_test",
+    version = "0.36.0",
+    dev_dependency = True,
+)
+
+# We test against our current Bazel version, the latest release, and the latest
+# release candidate.
+bazel_binaries = use_extension(
+    "@rules_bazel_integration_test//:extensions.bzl",
+    "bazel_binaries",
+    dev_dependency = True,
+)
+bazel_binaries.download(version_file = "//:.bazelversion")
+bazel_binaries.download(version = "latest")
+bazel_binaries.download(version = "last_rc")
+use_repo(
+    bazel_binaries,
+    "bazel_binaries",
+    "bazel_binaries_bazelisk",
+    "build_bazel_bazel_.bazelversion",
+    "build_bazel_bazel_last_rc",
+    "build_bazel_bazel_latest",
+)
