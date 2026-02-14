@@ -67,22 +67,94 @@ auto TokenizedBuffer::GetTokenText(TokenIndex token) const -> llvm::StringRef {
                                   token_info.error_length());
   }
 
-  // For IntLiteral and StringLiteral, refer back to the source text to
-  // preserve the original spelling.
-  if (token_info.kind() == TokenKind::IntLiteral ||
-      token_info.kind() == TokenKind::StringLiteral) {
-    // TODO: Re-lex the token from source text to find its extent.
-    // For now, return a placeholder.
-    return source_->text().substr(token_info.byte_offset(), 1);
+  // For literals, re-scan from source to find extent.
+  if (token_info.kind() == TokenKind::IntegerLiteral ||
+      token_info.kind() == TokenKind::FloatingLiteral) {
+    // Scan forward from the token start to find the end of the number.
+    const char* start = source_->text().data() + token_info.byte_offset();
+    const char* p = start;
+    const char* end = source_->text().data() + source_->text().size();
+    // Scan digits, letters (for hex), underscores, dots, +/- in exponents.
+    while (p < end) {
+      if (IsIdentifierContinuation(*p) || *p == '_') {
+        ++p;
+        continue;
+      }
+      // Only allow '.' if followed by a digit (fractional part).
+      if (*p == '.' && p + 1 < end &&
+          (IsDecimalDigit(*(p + 1)) || IsHexDigit(*(p + 1)))) {
+        ++p;
+        continue;
+      }
+      // Only allow +/- after 'e', 'E', 'p', 'P' (exponent indicators).
+      if ((*p == '+' || *p == '-') && p > start) {
+        char prev = *(p - 1);
+        if (prev == 'e' || prev == 'E' || prev == 'p' || prev == 'P') {
+          ++p;
+          continue;
+        }
+      }
+      break;
+    }
+    return llvm::StringRef(start, p - start);
   }
 
-  // Refer back to the source text to avoid needing to reconstruct the
-  // spelling from the size.
-  if (token_info.kind().is_sized_type_literal()) {
-    llvm::StringRef suffix = source_->text()
-                                 .substr(token_info.byte_offset() + 1)
-                                 .take_while(IsDecimalDigit);
-    return llvm::StringRef(suffix.data() - 1, suffix.size() + 1);
+  if (token_info.kind() == TokenKind::StringLiteral) {
+    // Scan from the source to find the string literal extent.
+    const char* start = source_->text().data() + token_info.byte_offset();
+    const char* p = start;
+    const char* end = source_->text().data() + source_->text().size();
+
+    // Count leading # for raw string delimiters.
+    int hash_count = 0;
+    while (p < end && *p == '#') {
+      ++hash_count;
+      ++p;
+    }
+
+    if (p < end && *p == '"') {
+      ++p;
+      // Check for multiline """.
+      bool is_multiline = (p + 1 < end && *p == '"' && *(p + 1) == '"');
+      if (is_multiline) {
+        p += 2;
+        // Scan to closing """###.
+        while (p + 2 < end) {
+          if (*p == '"' && *(p + 1) == '"' && *(p + 2) == '"') {
+            p += 3;
+            // Match trailing #s.
+            for (int i = 0; i < hash_count && p < end && *p == '#'; ++i) {
+              ++p;
+            }
+            return llvm::StringRef(start, p - start);
+          }
+          ++p;
+        }
+      } else {
+        // Single-line string: scan to closing "###.
+        while (p < end) {
+          if (*p == '\\') {
+            ++p;
+            if (p < end) ++p;
+            continue;
+          }
+          if (*p == '"') {
+            ++p;
+            // Match trailing #s.
+            for (int i = 0; i < hash_count && p < end && *p == '#'; ++i) {
+              ++p;
+            }
+            return llvm::StringRef(start, p - start);
+          }
+          if (*p == '\n' || *p == '\r') {
+            break;
+          }
+          ++p;
+        }
+      }
+    }
+    // Unterminated or error; return what we have.
+    return llvm::StringRef(start, p - start);
   }
 
   if (token_info.kind() == TokenKind::FileStart ||
@@ -90,6 +162,58 @@ auto TokenizedBuffer::GetTokenText(TokenIndex token) const -> llvm::StringRef {
     return llvm::StringRef();
   }
 
+  // Operators: re-scan operator chars from source.
+  if (token_info.kind().is_operator()) {
+    const char* start = source_->text().data() + token_info.byte_offset();
+    const char* p = start;
+    const char* end = source_->text().data() + source_->text().size();
+    while (p < end && IsOperatorContinuationChar(*p)) {
+      // Stop at comment start.
+      if (*p == '/' && p + 1 < end && (*(p + 1) == '/' || *(p + 1) == '*')) {
+        break;
+      }
+      ++p;
+    }
+    return llvm::StringRef(start, p - start);
+  }
+
+  // Dollar identifiers and escaped identifiers.
+  if (token_info.kind() == TokenKind::DollarIdent) {
+    const char* start = source_->text().data() + token_info.byte_offset();
+    const char* p = start + 1;  // skip $
+    const char* end = source_->text().data() + source_->text().size();
+    while (p < end && IsIdentifierContinuation(*p)) {
+      ++p;
+    }
+    return llvm::StringRef(start, p - start);
+  }
+
+  if (token_info.kind() == TokenKind::EscapedIdentifier) {
+    const char* start = source_->text().data() + token_info.byte_offset();
+    const char* p = start + 1;  // skip opening backtick
+    const char* end = source_->text().data() + source_->text().size();
+    while (p < end && *p != '`') {
+      ++p;
+    }
+    if (p < end) ++p;  // include closing backtick
+    return llvm::StringRef(start, p - start);
+  }
+
+  // String interpolation tokens.
+  if (token_info.kind() == TokenKind::StringSegment) {
+    // The payload stores a string literal ID; use the identifier store to get
+    // the text length. For now, return from source.
+    return value_stores_->string_literal_values().Get(
+        token_info.string_literal_id());
+  }
+
+  if (token_info.kind() == TokenKind::StringInterpolationAnchor) {
+    // The anchor is the `\(` sequence.
+    return llvm::StringRef(
+        source_->text().data() + token_info.byte_offset(), 2);
+  }
+
+  // Identifier is the final fallback.
   TINYSWIFT_CHECK(token_info.kind() == TokenKind::Identifier, "{0}",
                token_info.kind());
   return value_stores_->identifiers().Get(token_info.ident_id());
@@ -97,14 +221,16 @@ auto TokenizedBuffer::GetTokenText(TokenIndex token) const -> llvm::StringRef {
 
 auto TokenizedBuffer::GetIdentifier(TokenIndex token) const -> IdentifierId {
   const auto& token_info = token_infos_.Get(token);
-  TINYSWIFT_CHECK(token_info.kind() == TokenKind::Identifier, "{0}",
+  TINYSWIFT_CHECK(token_info.kind() == TokenKind::Identifier ||
+               token_info.kind() == TokenKind::DollarIdent ||
+               token_info.kind() == TokenKind::EscapedIdentifier, "{0}",
                token_info.kind());
   return token_info.ident_id();
 }
 
 auto TokenizedBuffer::GetIntLiteral(TokenIndex token) const -> IntId {
   const auto& token_info = token_infos_.Get(token);
-  TINYSWIFT_CHECK(token_info.kind() == TokenKind::IntLiteral, "{0}",
+  TINYSWIFT_CHECK(token_info.kind() == TokenKind::IntegerLiteral, "{0}",
                token_info.kind());
   return token_info.int_id();
 }
@@ -115,13 +241,6 @@ auto TokenizedBuffer::GetStringLiteralValue(TokenIndex token) const
   TINYSWIFT_CHECK(token_info.kind() == TokenKind::StringLiteral, "{0}",
                token_info.kind());
   return token_info.string_literal_id();
-}
-
-auto TokenizedBuffer::GetTypeLiteralSize(TokenIndex token) const -> IntId {
-  const auto& token_info = token_infos_.Get(token);
-  TINYSWIFT_CHECK(token_info.kind().is_sized_type_literal(), "{0}",
-               token_info.kind());
-  return token_info.int_id();
 }
 
 auto TokenizedBuffer::GetMatchedClosingToken(TokenIndex opening_token) const
@@ -251,13 +370,20 @@ auto TokenizedBuffer::PrintToken(llvm::raw_ostream& output_stream,
 
   switch (token_info.kind()) {
     case TokenKind::Identifier:
+    case TokenKind::DollarIdent:
+    case TokenKind::EscapedIdentifier:
       output_stream << ", identifier: " << GetIdentifier(token).index;
       break;
-    case TokenKind::IntLiteral:
+    case TokenKind::IntegerLiteral:
       output_stream << ", value: \"";
       value_stores_->ints()
           .Get(GetIntLiteral(token))
           .print(output_stream, /*isSigned=*/false);
+      output_stream << "\"";
+      break;
+    case TokenKind::FloatingLiteral:
+      output_stream << ", value: \"";
+      value_stores_->reals().Get(token_info.real_id()).Print(output_stream);
       output_stream << "\"";
       break;
     case TokenKind::StringLiteral:
@@ -274,6 +400,11 @@ auto TokenizedBuffer::PrintToken(llvm::raw_ostream& output_stream,
       } else if (token_info.kind().is_closing_symbol()) {
         output_stream << ", opening_token: "
                       << GetMatchedOpeningToken(token).index;
+      } else if (token_info.kind().is_operator()) {
+        output_stream << ", operator: \""
+                      << value_stores_->identifiers().Get(
+                             token_info.operator_id())
+                      << "\"";
       }
       break;
   }
@@ -375,9 +506,8 @@ auto TokenizedBuffer::SourcePointerToDiagnosticLoc(const char* loc) const
                              : text.substr(line_it->start);
 
   // Remove a newline at the end of the line if present.
-  // TODO: This should expand to remove all vertical whitespace bytes at the
-  // tail of the line such as CR+LF, etc.
   line.consume_back("\n");
+  line.consume_back("\r");
 
   return {.loc = {.filename = source_->filename(),
                   .line = line,
@@ -393,8 +523,6 @@ auto TokenizedBuffer::TokenToDiagnosticLoc(TokenIndex token) const
       source_->text().begin() + token_infos_.Get(token).byte_offset();
 
   // Find the corresponding file location.
-  // TODO: Should we somehow indicate in the diagnostic location if this token
-  // is a recovery token that doesn't correspond to the original source?
   auto converted = SourcePointerToDiagnosticLoc(token_start);
   converted.loc.length = GetTokenText(token).size();
   return converted;

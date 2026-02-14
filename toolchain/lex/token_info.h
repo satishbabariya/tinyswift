@@ -33,14 +33,6 @@ namespace TinySwift::Lex {
 // mutating methods, setters on this type may be unexpectedly expensive due to
 // the bit-packed representation and should be avoided. As such, only the
 // minimal necessary setters are provided.
-//
-// TODO: It might be worth considering a struct-of-arrays data layout in order
-// to move the byte offset to a separate array from the rest as it is only hot
-// during lexing, and then cold during parsing and semantic analysis. However,
-// a trivial approach to that adds more overhead than it saves due to tracking
-// two separate vectors and their growth. Making this profitable would likely
-// at least require a highly specialized single vector that manages the growth
-// once and then provides separate storage areas for the two arrays.
 class TokenInfo {
  public:
   // The kind for this token.
@@ -56,24 +48,39 @@ class TokenInfo {
   // check that the kind is valid. Some tokens do not include a payload at all
   // and none of these methods may be called.
   auto ident_id() const -> IdentifierId {
-    TINYSWIFT_DCHECK(kind() == TokenKind::Identifier);
+    TINYSWIFT_DCHECK(kind() == TokenKind::Identifier ||
+                  kind() == TokenKind::DollarIdent ||
+                  kind() == TokenKind::EscapedIdentifier);
     return IdentifierId(token_payload_);
   }
   auto set_ident_id(IdentifierId ident_id) -> void {
-    TINYSWIFT_DCHECK(kind() == TokenKind::Identifier);
+    TINYSWIFT_DCHECK(kind() == TokenKind::Identifier ||
+                  kind() == TokenKind::DollarIdent ||
+                  kind() == TokenKind::EscapedIdentifier);
     token_payload_ = ident_id.index;
   }
 
   auto string_literal_id() const -> StringLiteralValueId {
-    TINYSWIFT_DCHECK(kind() == TokenKind::StringLiteral);
+    TINYSWIFT_DCHECK(kind() == TokenKind::StringLiteral ||
+                  kind() == TokenKind::StringSegment);
     return StringLiteralValueId(token_payload_);
   }
 
   auto int_id() const -> IntId {
-    TINYSWIFT_DCHECK(kind() == TokenKind::IntLiteral ||
-                  kind() == TokenKind::IntTypeLiteral ||
-                  kind() == TokenKind::FloatTypeLiteral);
+    TINYSWIFT_DCHECK(kind() == TokenKind::IntegerLiteral);
     return IntId::MakeFromTokenPayload(token_payload_);
+  }
+
+  auto real_id() const -> RealId {
+    TINYSWIFT_DCHECK(kind() == TokenKind::FloatingLiteral);
+    return RealId(token_payload_);
+  }
+
+  // Payload accessor for operator tokens: the identifier storing the operator
+  // spelling.
+  auto operator_id() const -> IdentifierId {
+    TINYSWIFT_DCHECK(kind().is_operator());
+    return IdentifierId(token_payload_);
   }
 
   auto closing_token_index() const -> TokenIndex {

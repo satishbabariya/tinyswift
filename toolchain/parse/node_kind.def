@@ -207,10 +207,9 @@ TINYSWIFT_PARSE_NODE_KIND(IntLiteral)
 // Literals
 // ============================================================================
 
-TINYSWIFT_PARSE_NODE_KIND_TOKEN_LITERAL(BoolLiteralFalse, False)
-TINYSWIFT_PARSE_NODE_KIND_TOKEN_LITERAL(BoolLiteralTrue, True)
+TINYSWIFT_PARSE_NODE_KIND_TOKEN_LITERAL(BoolLiteralFalse, FalseKeyword)
+TINYSWIFT_PARSE_NODE_KIND_TOKEN_LITERAL(BoolLiteralTrue, TrueKeyword)
 TINYSWIFT_PARSE_NODE_KIND_TOKEN_LITERAL(StringLiteral, StringLiteral)
-TINYSWIFT_PARSE_NODE_KIND_TOKEN_LITERAL(IntTypeLiteral, IntTypeLiteral)
 
 // TODO: Add your language's literal parse node kinds here.
 

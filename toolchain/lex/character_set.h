@@ -9,10 +9,6 @@
 
 namespace TinySwift::Lex {
 
-// TODO: These definitions need to be updated to match whatever Unicode lexical
-// rules we pick. The function interfaces will need to change to accommodate
-// multi-byte characters.
-
 // Is this an alphabetical character according to TinySwift's lexical rules?
 //
 // Alphabetical characters are permitted at the start of identifiers. This
@@ -34,22 +30,57 @@ inline auto IsDecimalDigit(char c) -> bool { return llvm::isDigit(c); }
 // being a valid continuation character of an identifier or numeric literal.
 inline auto IsAlnum(char c) -> bool { return llvm::isAlnum(c); }
 
-// Is this a hexadecimal digit according to TinySwift's lexical rules?
+// Is this a hexadecimal digit?
+inline auto IsHexDigit(char c) -> bool { return llvm::isHexDigit(c); }
+
+// Is this an uppercase hexadecimal digit?
 //
-// Hexadecimal digits are permitted in `0x`-prefixed literals, as well as after
-// a `\x` escape sequence.
-//
-// Note that lowercase 'a'..'f' are currently not considered hexadecimal digits
-// in any context.
+// Note that lowercase 'a'..'f' are currently not considered in some contexts.
 inline auto IsUpperHexDigit(char c) -> bool {
   return ('0' <= c && c <= '9') || ('A' <= c && c <= 'F');
 }
 
 // Is this a lowercase letter?
-//
-// Lowercase letters in numeric literals can be followed by `+` or `-` to
-// extend the literal.
 inline auto IsLower(char c) -> bool { return 'a' <= c && c <= 'z'; }
+
+// Is this character a valid start of a Swift identifier?
+//
+// Swift identifiers start with a letter or underscore. Unicode identifiers
+// are deferred to a later phase; currently ASCII-only.
+inline auto IsIdentifierStart(char c) -> bool {
+  return llvm::isAlpha(c) || c == '_';
+}
+
+// Is this character a valid continuation of a Swift identifier?
+//
+// Swift identifier continuation includes letters, digits, and underscore.
+inline auto IsIdentifierContinuation(char c) -> bool {
+  return llvm::isAlnum(c) || c == '_';
+}
+
+// Is this character a valid start of a Swift operator?
+//
+// Swift operators are composed of the characters: / = - + * % < > ! & | ^ ~ .
+// Note: these are NOT fixed punctuators in Swift; they form user-definable
+// operators classified by spacing context.
+inline auto IsOperatorStartChar(char c) -> bool {
+  switch (c) {
+    case '/': case '=': case '-': case '+': case '*': case '%':
+    case '<': case '>': case '!': case '&': case '|': case '^':
+    case '~': case '.':
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Is this character a valid continuation of a Swift operator?
+//
+// Currently the same as IsOperatorStartChar for ASCII. Unicode combining
+// marks would be added in a later phase.
+inline auto IsOperatorContinuationChar(char c) -> bool {
+  return IsOperatorStartChar(c);
+}
 
 // Is this character considered to be horizontal whitespace?
 //
@@ -60,8 +91,11 @@ inline auto IsHorizontalWhitespace(char c) -> bool {
 
 // Is this character considered to be vertical whitespace?
 //
-// Such characters are considered to terminate lines.
-inline auto IsVerticalWhitespace(char c) -> bool { return c == '\n'; }
+// Such characters are considered to terminate lines. Includes both \n and \r
+// for CR/LF handling.
+inline auto IsVerticalWhitespace(char c) -> bool {
+  return c == '\n' || c == '\r';
+}
 
 // Is this character considered to be whitespace?
 //

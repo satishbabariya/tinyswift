@@ -22,7 +22,13 @@
 //     Defines a keyword which has the provided spelling, such as `if`.
 //     Spellings must be unique.
 //     - TINYSWIFT_DECL_INTRODUCER_TOKEN(Name, Spelling)
-//       A declaration introducer keyword, such as `fn`.
+//       A declaration introducer keyword, such as `func`.
+//     - TINYSWIFT_STMT_KEYWORD_TOKEN(Name, Spelling)
+//       A statement keyword, such as `return`.
+//     - TINYSWIFT_EXPR_KEYWORD_TOKEN(Name, Spelling)
+//       An expression keyword, such as `true`.
+//   - TINYSWIFT_POUND_KEYWORD_TOKEN(Name, Spelling)
+//     Defines a pound keyword which has the provided spelling, such as `#if`.
 //   - TINYSWIFT_TOKEN_WITH_VIRTUAL_NODE(TokenIndex)
 //     Wrapped around one of the above _TOKEN macros, indicates that this
 //     token has one additional virtual node in the parse tree.
@@ -51,43 +57,41 @@ TINYSWIFT_TOKEN(Error)
 #define TINYSWIFT_TOKEN_WITH_VIRTUAL_NODE(Name) Name
 #endif
 
-// TODO: Add your language's symbols here.
-
-// Note that symbols need to be ordered from longest to shortest to effectively
-// provide max-munch lexing.
+// ============================================================================
+// Symbols - multi-character (longest first for max-munch)
+// ============================================================================
 
 // clang-format off
 
+TINYSWIFT_SYMBOL_TOKEN(EllipsisToken,       "...")
 TINYSWIFT_SYMBOL_TOKEN(EqualEqual,          "==")
 TINYSWIFT_SYMBOL_TOKEN(ExclaimEqual,        "!=")
 TINYSWIFT_SYMBOL_TOKEN(GreaterEqual,        ">=")
 TINYSWIFT_SYMBOL_TOKEN(LessEqual,           "<=")
 TINYSWIFT_SYMBOL_TOKEN(MinusGreater,        "->")
-TINYSWIFT_SYMBOL_TOKEN(PlusEqual,           "+=")
-TINYSWIFT_SYMBOL_TOKEN(MinusEqual,          "-=")
-TINYSWIFT_SYMBOL_TOKEN(StarEqual,           "*=")
-TINYSWIFT_SYMBOL_TOKEN(SlashEqual,          "/=")
+TINYSWIFT_SYMBOL_TOKEN(ColonColon,          "::")
 
-TINYSWIFT_SYMBOL_TOKEN(Amp,                 "&")
-TINYSWIFT_SYMBOL_TOKEN(Caret,               "^")
-TINYSWIFT_SYMBOL_TOKEN(Colon,               ":")
-TINYSWIFT_SYMBOL_TOKEN(Equal,               "=")
-TINYSWIFT_SYMBOL_TOKEN(Exclaim,             "!")
-TINYSWIFT_SYMBOL_TOKEN(Greater,             ">")
-TINYSWIFT_SYMBOL_TOKEN(Less,                "<")
-TINYSWIFT_SYMBOL_TOKEN(Minus,               "-")
-TINYSWIFT_SYMBOL_TOKEN(Percent,             "%")
-TINYSWIFT_SYMBOL_TOKEN(Period,              ".")
-TINYSWIFT_SYMBOL_TOKEN(Pipe,                "|")
-TINYSWIFT_SYMBOL_TOKEN(Plus,                "+")
-TINYSWIFT_SYMBOL_TOKEN(Slash,               "/")
-TINYSWIFT_SYMBOL_TOKEN(Star,                "*")
-TINYSWIFT_SYMBOL_TOKEN(Tilde,               "~")
+// ============================================================================
+// Symbols - single character
+// ============================================================================
 
 TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Comma,      ",")
 TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Semi,       ";")
+TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Colon,      ":")
+TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Equal,      "=")
+TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Period,     ".")
+TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(At,         "@")
+TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Pound,      "#")
+TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Amp,        "&")
+TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Exclaim,    "!")
+TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Question,   "?")
+TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN(Backslash,  "\\")
 
 // clang-format on
+
+// ============================================================================
+// Grouping symbols
+// ============================================================================
 
 #ifndef TINYSWIFT_OPENING_GROUP_SYMBOL_TOKEN
 #define TINYSWIFT_OPENING_GROUP_SYMBOL_TOKEN(Name, Spelling, ClosingName) \
@@ -110,44 +114,188 @@ TINYSWIFT_CLOSING_GROUP_SYMBOL_TOKEN(CloseSquareBracket, "]", OpenSquareBracket)
 #undef TINYSWIFT_ONE_CHAR_SYMBOL_TOKEN
 #undef TINYSWIFT_SYMBOL_TOKEN
 
+// ============================================================================
+// Keywords
+// ============================================================================
+
 #ifndef TINYSWIFT_KEYWORD_TOKEN
 #define TINYSWIFT_KEYWORD_TOKEN(Name, Spelling) TINYSWIFT_TOKEN(Name)
 #endif
+
+// --- Declaration introducers ---
 
 #ifndef TINYSWIFT_DECL_INTRODUCER_TOKEN
 #define TINYSWIFT_DECL_INTRODUCER_TOKEN(Name, Spelling) \
   TINYSWIFT_KEYWORD_TOKEN(Name, Spelling)
 #endif
 
-// TODO: Add your language's keywords here.
-
 // clang-format off
 
+TINYSWIFT_DECL_INTRODUCER_TOKEN(AssociatedtypeKeyword,  "associatedtype")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(ClassKeyword,           "class")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(DeinitKeyword,          "deinit")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(EnumKeyword,            "enum")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(ExtensionKeyword,       "extension")
 TINYSWIFT_TOKEN_WITH_VIRTUAL_NODE(
-  TINYSWIFT_DECL_INTRODUCER_TOKEN(Fn,          "fn"))
-TINYSWIFT_DECL_INTRODUCER_TOKEN(Import,      "import")
-TINYSWIFT_DECL_INTRODUCER_TOKEN(Let,         "let")
+  TINYSWIFT_DECL_INTRODUCER_TOKEN(FuncKeyword,          "func"))
+TINYSWIFT_DECL_INTRODUCER_TOKEN(ImportKeyword,          "import")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(InitKeyword,            "init")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(InoutKeyword,           "inout")
 TINYSWIFT_TOKEN_WITH_VIRTUAL_NODE(
-  TINYSWIFT_DECL_INTRODUCER_TOKEN(Var,       "var"))
-
-TINYSWIFT_KEYWORD_TOKEN(Break,               "break")
-TINYSWIFT_KEYWORD_TOKEN(Continue,            "continue")
-TINYSWIFT_KEYWORD_TOKEN(Else,                "else")
-TINYSWIFT_KEYWORD_TOKEN(False,               "false")
-TINYSWIFT_KEYWORD_TOKEN(If,                  "if")
-TINYSWIFT_KEYWORD_TOKEN(Return,              "return")
-TINYSWIFT_KEYWORD_TOKEN(True,                "true")
-TINYSWIFT_KEYWORD_TOKEN(While,               "while")
+  TINYSWIFT_DECL_INTRODUCER_TOKEN(LetKeyword,           "let"))
+TINYSWIFT_DECL_INTRODUCER_TOKEN(OperatorKeyword,        "operator")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(PrecedencegroupKeyword, "precedencegroup")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(ProtocolKeyword,        "protocol")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(StructKeyword,          "struct")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(SubscriptKeyword,       "subscript")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(TypealiasKeyword,       "typealias")
+TINYSWIFT_TOKEN_WITH_VIRTUAL_NODE(
+  TINYSWIFT_DECL_INTRODUCER_TOKEN(VarKeyword,           "var"))
+TINYSWIFT_DECL_INTRODUCER_TOKEN(FileprivateKeyword,     "fileprivate")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(InternalKeyword,        "internal")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(PrivateKeyword,         "private")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(PublicKeyword,          "public")
+TINYSWIFT_DECL_INTRODUCER_TOKEN(StaticKeyword,          "static")
 
 // clang-format on
 #undef TINYSWIFT_DECL_INTRODUCER_TOKEN
+
+// --- Statement keywords ---
+
+#ifndef TINYSWIFT_STMT_KEYWORD_TOKEN
+#define TINYSWIFT_STMT_KEYWORD_TOKEN(Name, Spelling) \
+  TINYSWIFT_KEYWORD_TOKEN(Name, Spelling)
+#endif
+
+// clang-format off
+
+TINYSWIFT_STMT_KEYWORD_TOKEN(DeferKeyword,        "defer")
+TINYSWIFT_STMT_KEYWORD_TOKEN(IfKeyword,           "if")
+TINYSWIFT_STMT_KEYWORD_TOKEN(GuardKeyword,        "guard")
+TINYSWIFT_STMT_KEYWORD_TOKEN(DoKeyword,           "do")
+TINYSWIFT_STMT_KEYWORD_TOKEN(RepeatKeyword,       "repeat")
+TINYSWIFT_STMT_KEYWORD_TOKEN(ElseKeyword,         "else")
+TINYSWIFT_STMT_KEYWORD_TOKEN(ForKeyword,          "for")
+TINYSWIFT_STMT_KEYWORD_TOKEN(InKeyword,           "in")
+TINYSWIFT_STMT_KEYWORD_TOKEN(WhileKeyword,        "while")
+TINYSWIFT_STMT_KEYWORD_TOKEN(ReturnKeyword,       "return")
+TINYSWIFT_STMT_KEYWORD_TOKEN(BreakKeyword,        "break")
+TINYSWIFT_STMT_KEYWORD_TOKEN(ContinueKeyword,     "continue")
+TINYSWIFT_STMT_KEYWORD_TOKEN(FallthroughKeyword,  "fallthrough")
+TINYSWIFT_STMT_KEYWORD_TOKEN(SwitchKeyword,       "switch")
+TINYSWIFT_STMT_KEYWORD_TOKEN(CaseKeyword,         "case")
+TINYSWIFT_STMT_KEYWORD_TOKEN(DefaultKeyword,      "default")
+TINYSWIFT_STMT_KEYWORD_TOKEN(WhereKeyword,        "where")
+TINYSWIFT_STMT_KEYWORD_TOKEN(CatchKeyword,        "catch")
+TINYSWIFT_STMT_KEYWORD_TOKEN(ThrowKeyword,        "throw")
+
+// clang-format on
+#undef TINYSWIFT_STMT_KEYWORD_TOKEN
+
+// --- Expression keywords ---
+
+#ifndef TINYSWIFT_EXPR_KEYWORD_TOKEN
+#define TINYSWIFT_EXPR_KEYWORD_TOKEN(Name, Spelling) \
+  TINYSWIFT_KEYWORD_TOKEN(Name, Spelling)
+#endif
+
+// clang-format off
+
+TINYSWIFT_EXPR_KEYWORD_TOKEN(AsKeyword,           "as")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(AnyKeyword,          "Any")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(FalseKeyword,        "false")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(IsKeyword,           "is")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(NilKeyword,          "nil")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(RethrowsKeyword,     "rethrows")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(SuperKeyword,        "super")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(SelfKeyword,         "self")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(CapitalSelfKeyword,  "Self")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(TrueKeyword,         "true")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(TryKeyword,          "try")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(ThrowsKeyword,       "throws")
+
+// clang-format on
+#undef TINYSWIFT_EXPR_KEYWORD_TOKEN
+
+// --- Pattern keywords ---
+
+TINYSWIFT_KEYWORD_TOKEN(UnderscoreKeyword,        "_")
+
 #undef TINYSWIFT_KEYWORD_TOKEN
 
-TINYSWIFT_TOKEN(Identifier)
-TINYSWIFT_TOKEN(IntLiteral)
+// ============================================================================
+// Pound keywords
+// ============================================================================
+
+#ifndef TINYSWIFT_POUND_KEYWORD_TOKEN
+#define TINYSWIFT_POUND_KEYWORD_TOKEN(Name, Spelling) TINYSWIFT_TOKEN(Name)
+#endif
+
+// clang-format off
+
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundKeyPath,        "#keyPath")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundLine,           "#line")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundSelector,       "#selector")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundFile,           "#file")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundFileID,         "#fileID")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundFilePath,       "#filePath")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundColumn,         "#column")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundFunction,       "#function")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundDsohandle,      "#dsohandle")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundAssert,         "#assert")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundSourceLocation, "#sourceLocation")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundWarning,        "#warning")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundError,          "#error")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundIf,             "#if")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundElse,           "#else")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundElseif,         "#elseif")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundEndif,          "#endif")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundAvailable,      "#available")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundUnavailable,    "#unavailable")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundFileLiteral,    "#fileLiteral")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundImageLiteral,   "#imageLiteral")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundColorLiteral,   "#colorLiteral")
+TINYSWIFT_POUND_KEYWORD_TOKEN(PoundHasSymbol,      "#_hasSymbol")
+
+// clang-format on
+#undef TINYSWIFT_POUND_KEYWORD_TOKEN
+
+// ============================================================================
+// Literal tokens
+// ============================================================================
+
+TINYSWIFT_TOKEN(IntegerLiteral)
+TINYSWIFT_TOKEN(FloatingLiteral)
 TINYSWIFT_TOKEN(StringLiteral)
-TINYSWIFT_TOKEN(IntTypeLiteral)
-TINYSWIFT_TOKEN(FloatTypeLiteral)
+
+// ============================================================================
+// Operator tokens (classified by spacing context)
+// ============================================================================
+
+TINYSWIFT_TOKEN(OperatorBinarySpaced)
+TINYSWIFT_TOKEN(OperatorBinaryUnspaced)
+TINYSWIFT_TOKEN(OperatorPrefix)
+TINYSWIFT_TOKEN(OperatorPostfix)
+
+// ============================================================================
+// Identifier tokens
+// ============================================================================
+
+TINYSWIFT_TOKEN(Identifier)
+TINYSWIFT_TOKEN(DollarIdent)
+TINYSWIFT_TOKEN(EscapedIdentifier)
+
+// ============================================================================
+// String interpolation tokens
+// ============================================================================
+
+TINYSWIFT_TOKEN(StringSegment)
+TINYSWIFT_TOKEN(StringInterpolationAnchor)
+
+// ============================================================================
+// Boundary tokens
+// ============================================================================
+
 TINYSWIFT_TOKEN(FileStart)
 TINYSWIFT_TOKEN(FileEnd)
 

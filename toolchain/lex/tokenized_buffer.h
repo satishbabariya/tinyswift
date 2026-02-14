@@ -138,14 +138,11 @@ class TokenizedBuffer : public Printable<TokenizedBuffer> {
   // an `Identifier`.
   auto GetIdentifier(TokenIndex token) const -> IdentifierId;
 
-  // Returns the value of an `IntLiteral` token.
+  // Returns the value of an `IntegerLiteral` token.
   auto GetIntLiteral(TokenIndex token) const -> IntId;
 
   // Returns the value of a `StringLiteral` token.
   auto GetStringLiteralValue(TokenIndex token) const -> StringLiteralValueId;
-
-  // Returns the size specified in a `*TypeLiteral` token.
-  auto GetTypeLiteralSize(TokenIndex token) const -> IntId;
 
   // Returns the closing token matched with the given opening token.
   //

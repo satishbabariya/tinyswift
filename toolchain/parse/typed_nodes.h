@@ -99,7 +99,7 @@ using IdentifierNameExpr =
 // ------------
 
 using ImportIntroducer =
-    LeafNode<NodeKind::ImportIntroducer, Lex::ImportTokenIndex>;
+    LeafNode<NodeKind::ImportIntroducer, Lex::ImportKeywordTokenIndex>;
 
 // An import declaration: `import ...;`
 // TODO: Add import source fields (package name, library specifier, etc.)
@@ -117,7 +117,7 @@ struct ImportDecl {
 // --------------
 
 using FunctionIntroducer =
-    LeafNode<NodeKind::FunctionIntroducer, Lex::FnTokenIndex>;
+    LeafNode<NodeKind::FunctionIntroducer, Lex::FuncKeywordTokenIndex>;
 
 // A return type: `-> i32`.
 struct ReturnType {
@@ -182,7 +182,7 @@ struct ExplicitParamList {
 // Let nodes
 // ---------
 
-using LetIntroducer = LeafNode<NodeKind::LetIntroducer, Lex::LetTokenIndex>;
+using LetIntroducer = LeafNode<NodeKind::LetIntroducer, Lex::LetKeywordTokenIndex>;
 using LetInitializer = LeafNode<NodeKind::LetInitializer, Lex::EqualTokenIndex>;
 
 // A binding pattern: `name: Type`.
@@ -215,7 +215,7 @@ struct LetDecl {
 // ---------
 
 using VariableIntroducer =
-    LeafNode<NodeKind::VariableIntroducer, Lex::VarTokenIndex>;
+    LeafNode<NodeKind::VariableIntroducer, Lex::VarKeywordTokenIndex>;
 using VariableInitializer =
     LeafNode<NodeKind::VariableInitializer, Lex::EqualTokenIndex>;
 
@@ -234,7 +234,7 @@ struct VariablePattern {
   static constexpr auto Kind = NodeKind::VariablePattern.Define(
       {.category = NodeCategory::Pattern, .child_count = 1});
 
-  Lex::VarTokenIndex token;
+  Lex::VarKeywordTokenIndex token;
   AnyPatternId inner;
 };
 
@@ -281,7 +281,7 @@ struct ExprStatement {
 };
 
 using BreakStatementStart =
-    LeafNode<NodeKind::BreakStatementStart, Lex::BreakTokenIndex>;
+    LeafNode<NodeKind::BreakStatementStart, Lex::BreakKeywordTokenIndex>;
 
 // A break statement: `break;`.
 struct BreakStatement {
@@ -295,7 +295,7 @@ struct BreakStatement {
 };
 
 using ContinueStatementStart =
-    LeafNode<NodeKind::ContinueStatementStart, Lex::ContinueTokenIndex>;
+    LeafNode<NodeKind::ContinueStatementStart, Lex::ContinueKeywordTokenIndex>;
 
 // A continue statement: `continue;`.
 struct ContinueStatement {
@@ -309,7 +309,7 @@ struct ContinueStatement {
 };
 
 using ReturnStatementStart =
-    LeafNode<NodeKind::ReturnStatementStart, Lex::ReturnTokenIndex>;
+    LeafNode<NodeKind::ReturnStatementStart, Lex::ReturnKeywordTokenIndex>;
 
 // A return statement: `return;` or `return expr;`.
 struct ReturnStatement {
@@ -336,14 +336,14 @@ struct IfCondition {
 };
 
 using IfStatementElse =
-    LeafNode<NodeKind::IfStatementElse, Lex::ElseTokenIndex>;
+    LeafNode<NodeKind::IfStatementElse, Lex::ElseKeywordTokenIndex>;
 
 // An `if` statement: `if (expr) { ... } else { ... }`.
 struct IfStatement {
   static constexpr auto Kind = NodeKind::IfStatement.Define(
       {.category = NodeCategory::Statement, .bracketed_by = IfCondition::Kind});
 
-  Lex::IfTokenIndex token;
+  Lex::IfKeywordTokenIndex token;
   IfConditionId head;
   CodeBlockId then;
 
@@ -374,7 +374,7 @@ struct WhileStatement {
                                        .bracketed_by = WhileCondition::Kind,
                                        .child_count = 2});
 
-  Lex::WhileTokenIndex token;
+  Lex::WhileKeywordTokenIndex token;
   WhileConditionId head;
   CodeBlockId body;
 };
@@ -472,16 +472,16 @@ struct PostfixOperator {
                NodeCategory::Modifier>;
 #define TINYSWIFT_PARSE_NODE_KIND_PREFIX_OPERATOR(Name) \
   using PrefixOperator##Name =                       \
-      PrefixOperator<NodeKind::PrefixOperator##Name, Lex::Name##TokenIndex>;
+      PrefixOperator<NodeKind::PrefixOperator##Name, Lex::TokenIndex>;
 #define TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(Name) \
   using InfixOperator##Name =                       \
-      InfixOperator<NodeKind::InfixOperator##Name, Lex::Name##TokenIndex>;
+      InfixOperator<NodeKind::InfixOperator##Name, Lex::TokenIndex>;
 #define TINYSWIFT_PARSE_NODE_KIND_POSTFIX_OPERATOR(Name) \
   using PostfixOperator##Name =                       \
-      PostfixOperator<NodeKind::PostfixOperator##Name, Lex::Name##TokenIndex>;
+      PostfixOperator<NodeKind::PostfixOperator##Name, Lex::TokenIndex>;
 #include "toolchain/parse/node_kind.def"
 
-using IntLiteral = LeafNode<NodeKind::IntLiteral, Lex::IntLiteralTokenIndex,
+using IntLiteral = LeafNode<NodeKind::IntLiteral, Lex::IntegerLiteralTokenIndex,
                             NodeCategory::Expr | NodeCategory::IntConst>;
 
 // ---------------------------------------------------------------------------

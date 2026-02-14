@@ -62,8 +62,17 @@ TINYSWIFT_DIAGNOSTIC_KIND(TooManyTokens)
 TINYSWIFT_DIAGNOSTIC_KIND(UnmatchedOpening)
 TINYSWIFT_DIAGNOSTIC_KIND(UnmatchedClosing)
 TINYSWIFT_DIAGNOSTIC_KIND(UnrecognizedCharacters)
-
-// TODO: Add your language's lexer diagnostics here.
+TINYSWIFT_DIAGNOSTIC_KIND(InvalidCharacterInOperator)
+TINYSWIFT_DIAGNOSTIC_KIND(InvalidEscapeSequence)
+TINYSWIFT_DIAGNOSTIC_KIND(UnterminatedString)
+TINYSWIFT_DIAGNOSTIC_KIND(UnterminatedBlockComment)
+TINYSWIFT_DIAGNOSTIC_KIND(UnterminatedEscapedIdentifier)
+TINYSWIFT_DIAGNOSTIC_KIND(InvalidNumberLiteral)
+TINYSWIFT_DIAGNOSTIC_KIND(InvalidUnicodeEscape)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedDigitAfterPrefix)
+TINYSWIFT_DIAGNOSTIC_KIND(InvalidDollarIdentifier)
+TINYSWIFT_DIAGNOSTIC_KIND(NulCharacterInSource)
+TINYSWIFT_DIAGNOSTIC_KIND(UnexpectedBOM)
 
 // ============================================================================
 // Parser diagnostics

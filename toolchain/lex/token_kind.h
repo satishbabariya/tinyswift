@@ -28,6 +28,9 @@ class TokenKind : public TINYSWIFT_ENUM_BASE(TokenKind) {
   // An array of all the keyword tokens.
   static const llvm::ArrayRef<TokenKind> KeywordTokens;
 
+  // An array of all the pound keyword tokens.
+  static const llvm::ArrayRef<TokenKind> PoundKeywordTokens;
+
   using EnumBase::EnumBase;
 
   // Permit creation from RawEnumType for templates.
@@ -42,59 +45,77 @@ class TokenKind : public TINYSWIFT_ENUM_BASE(TokenKind) {
   // inside of other tokens, outside of the contents of other tokens they
   // don't require any specific characters before or after to distinguish them
   // in the source. Returns false otherwise.
-  auto is_symbol() const -> bool { return IsSymbol[AsInt()]; }
+  auto is_symbol() const -> bool { return kIsSymbol[AsInt()]; }
 
   // Test whether this kind of token is a grouping symbol (part of an opening
   // and closing pair that must always be matched in the token stream).
-  auto is_grouping_symbol() const -> bool { return IsGroupingSymbol[AsInt()]; }
+  auto is_grouping_symbol() const -> bool { return kIsGroupingSymbol[AsInt()]; }
 
   // Test whether this kind of token is an opening symbol for a group.
-  auto is_opening_symbol() const -> bool { return IsOpeningSymbol[AsInt()]; }
+  auto is_opening_symbol() const -> bool { return kIsOpeningSymbol[AsInt()]; }
 
   // Returns the associated closing symbol for an opening symbol.
   //
   // The token kind must be an opening symbol.
   auto closing_symbol() const -> TokenKind {
-    auto result = ClosingSymbol[AsInt()];
+    auto result = kClosingSymbol[AsInt()];
     TINYSWIFT_DCHECK(result != Error, "Only opening symbols are valid!");
     return result;
   }
 
   // Test whether this kind of token is a closing symbol for a group.
-  auto is_closing_symbol() const -> bool { return IsClosingSymbol[AsInt()]; }
+  auto is_closing_symbol() const -> bool { return kIsClosingSymbol[AsInt()]; }
 
   // Returns the associated opening symbol for a closing symbol.
   //
   // The token kind must be a closing symbol.
   auto opening_symbol() const -> TokenKind {
-    auto result = OpeningSymbol[AsInt()];
+    auto result = kOpeningSymbol[AsInt()];
     TINYSWIFT_DCHECK(result != Error, "Only closing symbols are valid!");
     return result;
   }
 
   // Test whether this kind of token is a one-character symbol whose character
   // is not part of any other symbol.
-  auto is_one_char_symbol() const -> bool { return IsOneCharSymbol[AsInt()]; }
+  auto is_one_char_symbol() const -> bool { return kIsOneCharSymbol[AsInt()]; }
 
   // Test whether this kind of token is a keyword.
-  auto is_keyword() const -> bool { return IsKeyword[AsInt()]; }
+  auto is_keyword() const -> bool { return kIsKeyword[AsInt()]; }
 
-  // Test whether this kind of token is a sized type literal.
-  auto is_sized_type_literal() const -> bool {
-    return *this == TokenKind::IntTypeLiteral ||
-           *this == TokenKind::FloatTypeLiteral;
+  // Test whether this kind of token is a statement keyword.
+  auto is_stmt_keyword() const -> bool { return kIsStmtKeyword[AsInt()]; }
+
+  // Test whether this kind of token is an expression keyword.
+  auto is_expr_keyword() const -> bool { return kIsExprKeyword[AsInt()]; }
+
+  // Test whether this kind of token is a pound keyword.
+  auto is_pound_keyword() const -> bool { return kIsPoundKeyword[AsInt()]; }
+
+  // Test whether this kind of token is an operator.
+  auto is_operator() const -> bool {
+    return *this == OperatorBinarySpaced ||
+           *this == OperatorBinaryUnspaced ||
+           *this == OperatorPrefix ||
+           *this == OperatorPostfix;
+  }
+
+  // Test whether this kind of token is a literal.
+  auto is_literal() const -> bool {
+    return *this == IntegerLiteral ||
+           *this == FloatingLiteral ||
+           *this == StringLiteral;
   }
 
   // If this token kind has a fixed spelling when in source code, returns it.
   // Otherwise returns an empty string.
   auto fixed_spelling() const -> llvm::StringLiteral {
-    return FixedSpelling[AsInt()];
+    return kFixedSpelling[AsInt()];
   }
 
   // Get the expected number of parse tree nodes that will be created for this
   // token.
   auto expected_max_parse_tree_size() const -> int {
-    return ExpectedParseTreeSize[AsInt()];
+    return kExpectedParseTreeSize[AsInt()];
   }
 
   // Test whether this token kind is in the provided list.
@@ -109,20 +130,24 @@ class TokenKind : public TINYSWIFT_ENUM_BASE(TokenKind) {
 
  private:
   static const TokenKind KeywordTokensStorage[];
+  static const TokenKind PoundKeywordTokensStorage[];
 
-  static const bool IsSymbol[];
-  static const bool IsGroupingSymbol[];
-  static const bool IsOpeningSymbol[];
-  static const TokenKind ClosingSymbol[];
-  static const bool IsClosingSymbol[];
-  static const TokenKind OpeningSymbol[];
-  static const bool IsOneCharSymbol[];
+  static const bool kIsSymbol[];
+  static const bool kIsGroupingSymbol[];
+  static const bool kIsOpeningSymbol[];
+  static const TokenKind kClosingSymbol[];
+  static const bool kIsClosingSymbol[];
+  static const TokenKind kOpeningSymbol[];
+  static const bool kIsOneCharSymbol[];
 
-  static const bool IsKeyword[];
+  static const bool kIsKeyword[];
+  static const bool kIsStmtKeyword[];
+  static const bool kIsExprKeyword[];
+  static const bool kIsPoundKeyword[];
 
-  static const llvm::StringLiteral FixedSpelling[];
+  static const llvm::StringLiteral kFixedSpelling[];
 
-  static const int8_t ExpectedParseTreeSize[];
+  static const int8_t kExpectedParseTreeSize[];
 };
 
 #define TINYSWIFT_TOKEN(TokenName) \
@@ -135,6 +160,13 @@ inline constexpr TokenKind TokenKind::KeywordTokensStorage[] = {
 };
 inline constexpr llvm::ArrayRef<TokenKind> TokenKind::KeywordTokens =
     KeywordTokensStorage;
+
+inline constexpr TokenKind TokenKind::PoundKeywordTokensStorage[] = {
+#define TINYSWIFT_POUND_KEYWORD_TOKEN(TokenName, Spelling) TokenKind::TokenName,
+#include "toolchain/lex/token_kind.def"
+};
+inline constexpr llvm::ArrayRef<TokenKind> TokenKind::PoundKeywordTokens =
+    PoundKeywordTokensStorage;
 
 }  // namespace TinySwift::Lex
 
