@@ -152,11 +152,18 @@ struct NodeIdOneOf : public NodeId {
       : NodeId(NoneIndex) {}
 };
 
-// TODO: Add composite NodeIdOneOf aliases for your language's node kinds.
+// Composite NodeIdOneOf aliases for Swift node kinds.
 using AnyFunctionDeclId =
     NodeIdOneOf<FunctionDeclId, FunctionDefinitionStartId>;
 using AnyFunctionDefinitionId = FunctionDefinitionId;
-using AnyPointerDeferenceExprId = PrefixOperatorStarId;
+
+// Type declarations.
+using AnyTypeDeclId =
+    NodeIdOneOf<StructDefinitionId, ClassDefinitionId, EnumDefinitionId,
+                ProtocolDefinitionId, ExtensionDefinitionId>;
+
+// Type expression nodes.
+using AnyTypeExprId = NodeIdInCategory<NodeCategory::Type>;
 
 // NodeId with kind that is anything but T::Kind.
 template <typename T>

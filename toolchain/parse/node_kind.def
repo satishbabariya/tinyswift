@@ -11,12 +11,6 @@
 // - TINYSWIFT_PARSE_NODE_KIND(Name)
 //   Used as a fallback if other macros are missing. Also, used directly
 //   when none of the below category-oriented macros apply.
-//   - TINYSWIFT_PARSE_NODE_KIND_PREFIX_OPERATOR(Name)
-//     Defines a parse node for a prefix operator, with the Name as token.
-//   - TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(Name)
-//     Defines a parse node for an infix operator, with the Name as token.
-//   - TINYSWIFT_PARSE_NODE_KIND_POSTFIX_OPERATOR(Name)
-//     Defines a parse node for a postfix operator, with the Name as token.
 //   - TINYSWIFT_PARSE_NODE_KIND_TOKEN_LITERAL(Name, LexTokenKind)
 //     Defines a parse node that corresponds to a token that is a single-token
 //     literal.
@@ -32,36 +26,6 @@
 #if !defined(TINYSWIFT_PARSE_NODE_KIND)
 #error "Must define TINYSWIFT_PARSE_NODE_KIND family x-macros to use this file."
 #define TINYSWIFT_PARSE_NODE_KIND(Name)
-#endif
-
-// This is expected to be used with something like:
-//
-//   // Use x-macros to handle modifier cases.
-//   #define TINYSWIFT_PARSE_NODE_KIND(Name)
-//   #define TINYSWIFT_PARSE_NODE_KIND_PREFIX_OPERATOR(Name) <code>
-#ifndef TINYSWIFT_PARSE_NODE_KIND_PREFIX_OPERATOR
-#define TINYSWIFT_PARSE_NODE_KIND_PREFIX_OPERATOR(Name) \
-  TINYSWIFT_PARSE_NODE_KIND(PrefixOperator##Name)
-#endif
-
-// This is expected to be used with something like:
-//
-//   // Use x-macros to handle modifier cases.
-//   #define TINYSWIFT_PARSE_NODE_KIND(Name)
-//   #define TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(Name) <code>
-#ifndef TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR
-#define TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(Name) \
-  TINYSWIFT_PARSE_NODE_KIND(InfixOperator##Name)
-#endif
-
-// This is expected to be used with something like:
-//
-//   // Use x-macros to handle modifier cases.
-//   #define TINYSWIFT_PARSE_NODE_KIND(Name)
-//   #define TINYSWIFT_PARSE_NODE_KIND_POSTFIX_OPERATOR(Name) <code>
-#ifndef TINYSWIFT_PARSE_NODE_KIND_POSTFIX_OPERATOR
-#define TINYSWIFT_PARSE_NODE_KIND_POSTFIX_OPERATOR(Name) \
-  TINYSWIFT_PARSE_NODE_KIND(PostfixOperator##Name)
 #endif
 
 // This is expected to be used with something like:
@@ -105,19 +69,17 @@ TINYSWIFT_PARSE_NODE_KIND(EmptyDecl)
 
 TINYSWIFT_PARSE_NODE_KIND(IdentifierNameNotBeforeParams)
 TINYSWIFT_PARSE_NODE_KIND(IdentifierNameBeforeParams)
-
 TINYSWIFT_PARSE_NODE_KIND(IdentifierNameExpr)
-
-// TODO: Add your language's name-related parse node kinds here.
+TINYSWIFT_PARSE_NODE_KIND(SelfExpr)
+TINYSWIFT_PARSE_NODE_KIND(SuperExpr)
+TINYSWIFT_PARSE_NODE_KIND(DollarIdentExpr)
 
 // ============================================================================
-// Import/Package
+// Import
 // ============================================================================
 
 TINYSWIFT_PARSE_NODE_KIND(ImportIntroducer)
 TINYSWIFT_PARSE_NODE_KIND(ImportDecl)
-
-// TODO: Add your language's import/package parse node kinds here.
 
 // ============================================================================
 // Functions
@@ -128,8 +90,8 @@ TINYSWIFT_PARSE_NODE_KIND(ReturnType)
 TINYSWIFT_PARSE_NODE_KIND(FunctionDefinitionStart)
 TINYSWIFT_PARSE_NODE_KIND(FunctionDefinition)
 TINYSWIFT_PARSE_NODE_KIND(FunctionDecl)
-
-// TODO: Add your language's function-related parse node kinds here.
+TINYSWIFT_PARSE_NODE_KIND(FunctionParam)
+TINYSWIFT_PARSE_NODE_KIND(ExternalParamName)
 
 // ============================================================================
 // Parameters
@@ -138,8 +100,6 @@ TINYSWIFT_PARSE_NODE_KIND(FunctionDecl)
 TINYSWIFT_PARSE_NODE_KIND(ExplicitParamListStart)
 TINYSWIFT_PARSE_NODE_KIND(ExplicitParamList)
 TINYSWIFT_PARSE_NODE_KIND(PatternListComma)
-
-// TODO: Add your language's parameter-related parse node kinds here.
 
 // ============================================================================
 // Variables and bindings
@@ -156,7 +116,64 @@ TINYSWIFT_PARSE_NODE_KIND(VariableDecl)
 TINYSWIFT_PARSE_NODE_KIND(VariablePattern)
 TINYSWIFT_PARSE_NODE_KIND(VarBindingPattern)
 
-// TODO: Add your language's variable/binding parse node kinds here.
+// ============================================================================
+// Type declarations
+// ============================================================================
+
+TINYSWIFT_PARSE_NODE_KIND(StructIntroducer)
+TINYSWIFT_PARSE_NODE_KIND(StructDefinitionStart)
+TINYSWIFT_PARSE_NODE_KIND(StructDefinition)
+
+TINYSWIFT_PARSE_NODE_KIND(ClassIntroducer)
+TINYSWIFT_PARSE_NODE_KIND(ClassDefinitionStart)
+TINYSWIFT_PARSE_NODE_KIND(ClassDefinition)
+
+TINYSWIFT_PARSE_NODE_KIND(EnumIntroducer)
+TINYSWIFT_PARSE_NODE_KIND(EnumDefinitionStart)
+TINYSWIFT_PARSE_NODE_KIND(EnumDefinition)
+TINYSWIFT_PARSE_NODE_KIND(EnumCaseIntroducer)
+TINYSWIFT_PARSE_NODE_KIND(EnumCaseElement)
+TINYSWIFT_PARSE_NODE_KIND(EnumCaseDecl)
+
+TINYSWIFT_PARSE_NODE_KIND(ProtocolIntroducer)
+TINYSWIFT_PARSE_NODE_KIND(ProtocolDefinitionStart)
+TINYSWIFT_PARSE_NODE_KIND(ProtocolDefinition)
+
+TINYSWIFT_PARSE_NODE_KIND(ExtensionIntroducer)
+TINYSWIFT_PARSE_NODE_KIND(ExtensionDefinitionStart)
+TINYSWIFT_PARSE_NODE_KIND(ExtensionDefinition)
+
+TINYSWIFT_PARSE_NODE_KIND(InheritanceClauseStart)
+TINYSWIFT_PARSE_NODE_KIND(InheritanceClause)
+
+TINYSWIFT_PARSE_NODE_KIND(TypealiasIntroducer)
+TINYSWIFT_PARSE_NODE_KIND(TypealiasDecl)
+
+// ============================================================================
+// Init/Deinit/Subscript
+// ============================================================================
+
+TINYSWIFT_PARSE_NODE_KIND(InitIntroducer)
+TINYSWIFT_PARSE_NODE_KIND(InitDefinitionStart)
+TINYSWIFT_PARSE_NODE_KIND(InitDefinition)
+
+TINYSWIFT_PARSE_NODE_KIND(DeinitIntroducer)
+TINYSWIFT_PARSE_NODE_KIND(DeinitDefinition)
+
+TINYSWIFT_PARSE_NODE_KIND(SubscriptIntroducer)
+TINYSWIFT_PARSE_NODE_KIND(SubscriptDefinitionStart)
+TINYSWIFT_PARSE_NODE_KIND(SubscriptDefinition)
+
+// ============================================================================
+// Accessors
+// ============================================================================
+
+TINYSWIFT_PARSE_NODE_KIND(AccessorBlockStart)
+TINYSWIFT_PARSE_NODE_KIND(AccessorBlock)
+TINYSWIFT_PARSE_NODE_KIND(GetAccessor)
+TINYSWIFT_PARSE_NODE_KIND(SetAccessor)
+TINYSWIFT_PARSE_NODE_KIND(WillSetAccessor)
+TINYSWIFT_PARSE_NODE_KIND(DidSetAccessor)
 
 // ============================================================================
 // Code blocks and statements
@@ -170,22 +187,56 @@ TINYSWIFT_PARSE_NODE_KIND(ExprStatement)
 TINYSWIFT_PARSE_NODE_KIND(ReturnStatementStart)
 TINYSWIFT_PARSE_NODE_KIND(ReturnStatement)
 
-TINYSWIFT_PARSE_NODE_KIND(IfConditionStart)
-TINYSWIFT_PARSE_NODE_KIND(IfCondition)
-TINYSWIFT_PARSE_NODE_KIND(IfStatementElse)
-TINYSWIFT_PARSE_NODE_KIND(IfStatement)
-
-TINYSWIFT_PARSE_NODE_KIND(WhileConditionStart)
-TINYSWIFT_PARSE_NODE_KIND(WhileCondition)
-TINYSWIFT_PARSE_NODE_KIND(WhileStatement)
-
 TINYSWIFT_PARSE_NODE_KIND(BreakStatementStart)
 TINYSWIFT_PARSE_NODE_KIND(BreakStatement)
 
 TINYSWIFT_PARSE_NODE_KIND(ContinueStatementStart)
 TINYSWIFT_PARSE_NODE_KIND(ContinueStatement)
 
-// TODO: Add your language's statement parse node kinds here.
+TINYSWIFT_PARSE_NODE_KIND(ThrowStatementStart)
+TINYSWIFT_PARSE_NODE_KIND(ThrowStatement)
+
+TINYSWIFT_PARSE_NODE_KIND(FallthroughStatement)
+
+// ============================================================================
+// Control flow
+// ============================================================================
+
+TINYSWIFT_PARSE_NODE_KIND(IfCondition)
+TINYSWIFT_PARSE_NODE_KIND(IfStatementElse)
+TINYSWIFT_PARSE_NODE_KIND(IfStatement)
+
+TINYSWIFT_PARSE_NODE_KIND(GuardCondition)
+TINYSWIFT_PARSE_NODE_KIND(GuardStatementElse)
+TINYSWIFT_PARSE_NODE_KIND(GuardStatement)
+
+TINYSWIFT_PARSE_NODE_KIND(WhileCondition)
+TINYSWIFT_PARSE_NODE_KIND(WhileStatement)
+
+TINYSWIFT_PARSE_NODE_KIND(ForInIntroducer)
+TINYSWIFT_PARSE_NODE_KIND(ForInStatement)
+
+TINYSWIFT_PARSE_NODE_KIND(RepeatWhileStatement)
+
+TINYSWIFT_PARSE_NODE_KIND(SwitchIntroducer)
+TINYSWIFT_PARSE_NODE_KIND(SwitchStatement)
+TINYSWIFT_PARSE_NODE_KIND(SwitchCaseLabel)
+TINYSWIFT_PARSE_NODE_KIND(SwitchDefaultLabel)
+TINYSWIFT_PARSE_NODE_KIND(SwitchCaseBody)
+
+TINYSWIFT_PARSE_NODE_KIND(DoIntroducer)
+TINYSWIFT_PARSE_NODE_KIND(DoStatement)
+TINYSWIFT_PARSE_NODE_KIND(DoCatchClause)
+
+TINYSWIFT_PARSE_NODE_KIND(DeferStatementStart)
+TINYSWIFT_PARSE_NODE_KIND(DeferStatement)
+
+// ============================================================================
+// Condition lists (for if/guard/while)
+// ============================================================================
+
+TINYSWIFT_PARSE_NODE_KIND(ConditionListItem)
+TINYSWIFT_PARSE_NODE_KIND(OptionalBindingCondition)
 
 // ============================================================================
 // Expressions
@@ -196,12 +247,115 @@ TINYSWIFT_PARSE_NODE_KIND(ParenExpr)
 
 TINYSWIFT_PARSE_NODE_KIND(CallExprStart)
 TINYSWIFT_PARSE_NODE_KIND(CallExpr)
+TINYSWIFT_PARSE_NODE_KIND(CallArgument)
+TINYSWIFT_PARSE_NODE_KIND(ArgumentLabel)
 
 TINYSWIFT_PARSE_NODE_KIND(MemberAccessExpr)
 
-TINYSWIFT_PARSE_NODE_KIND(IntLiteral)
+TINYSWIFT_PARSE_NODE_KIND(SubscriptExprStart)
+TINYSWIFT_PARSE_NODE_KIND(SubscriptExpr)
 
-// TODO: Add your language's expression parse node kinds here.
+TINYSWIFT_PARSE_NODE_KIND(IntLiteral)
+TINYSWIFT_PARSE_NODE_KIND(FloatingLiteral)
+TINYSWIFT_PARSE_NODE_KIND(NilLiteral)
+
+TINYSWIFT_PARSE_NODE_KIND(PrefixOperatorExpr)
+TINYSWIFT_PARSE_NODE_KIND(InfixOperatorExpr)
+TINYSWIFT_PARSE_NODE_KIND(PostfixOperatorExpr)
+
+TINYSWIFT_PARSE_NODE_KIND(AssignmentExpr)
+TINYSWIFT_PARSE_NODE_KIND(TernaryExpr)
+
+TINYSWIFT_PARSE_NODE_KIND(AsExpr)
+TINYSWIFT_PARSE_NODE_KIND(AsExclaimExpr)
+TINYSWIFT_PARSE_NODE_KIND(AsQuestionExpr)
+TINYSWIFT_PARSE_NODE_KIND(IsExpr)
+
+TINYSWIFT_PARSE_NODE_KIND(TryExpr)
+TINYSWIFT_PARSE_NODE_KIND(TryExclaimExpr)
+TINYSWIFT_PARSE_NODE_KIND(TryQuestionExpr)
+
+TINYSWIFT_PARSE_NODE_KIND(ClosureExprStart)
+TINYSWIFT_PARSE_NODE_KIND(ClosureExpr)
+TINYSWIFT_PARSE_NODE_KIND(ClosureSignature)
+TINYSWIFT_PARSE_NODE_KIND(ClosureParam)
+
+TINYSWIFT_PARSE_NODE_KIND(TupleExprStart)
+TINYSWIFT_PARSE_NODE_KIND(TupleExpr)
+TINYSWIFT_PARSE_NODE_KIND(TupleElement)
+
+TINYSWIFT_PARSE_NODE_KIND(ArrayExprStart)
+TINYSWIFT_PARSE_NODE_KIND(ArrayExpr)
+
+TINYSWIFT_PARSE_NODE_KIND(DictionaryExprStart)
+TINYSWIFT_PARSE_NODE_KIND(DictionaryExpr)
+TINYSWIFT_PARSE_NODE_KIND(DictionaryExprEntry)
+
+TINYSWIFT_PARSE_NODE_KIND(StringInterpolationExpr)
+
+TINYSWIFT_PARSE_NODE_KIND(KeyPathExpr)
+TINYSWIFT_PARSE_NODE_KIND(KeyPathComponent)
+
+// ============================================================================
+// Type expressions
+// ============================================================================
+
+TINYSWIFT_PARSE_NODE_KIND(TypeAnnotation)
+TINYSWIFT_PARSE_NODE_KIND(IdentifierType)
+TINYSWIFT_PARSE_NODE_KIND(OptionalType)
+TINYSWIFT_PARSE_NODE_KIND(ImplicitlyUnwrappedOptionalType)
+TINYSWIFT_PARSE_NODE_KIND(ArrayType)
+TINYSWIFT_PARSE_NODE_KIND(DictionaryType)
+TINYSWIFT_PARSE_NODE_KIND(TupleType)
+TINYSWIFT_PARSE_NODE_KIND(FunctionType)
+TINYSWIFT_PARSE_NODE_KIND(ProtocolCompositionType)
+TINYSWIFT_PARSE_NODE_KIND(MemberType)
+TINYSWIFT_PARSE_NODE_KIND(MetatypeType)
+
+// ============================================================================
+// Generics
+// ============================================================================
+
+TINYSWIFT_PARSE_NODE_KIND(GenericParameterClauseStart)
+TINYSWIFT_PARSE_NODE_KIND(GenericParameterClause)
+TINYSWIFT_PARSE_NODE_KIND(GenericParameter)
+TINYSWIFT_PARSE_NODE_KIND(GenericArgumentClauseStart)
+TINYSWIFT_PARSE_NODE_KIND(GenericArgumentClause)
+TINYSWIFT_PARSE_NODE_KIND(GenericWhereClause)
+TINYSWIFT_PARSE_NODE_KIND(SameTypeRequirement)
+TINYSWIFT_PARSE_NODE_KIND(ConformanceRequirement)
+
+// ============================================================================
+// Patterns
+// ============================================================================
+
+TINYSWIFT_PARSE_NODE_KIND(WildcardPattern)
+TINYSWIFT_PARSE_NODE_KIND(IdentifierPattern)
+TINYSWIFT_PARSE_NODE_KIND(TuplePattern)
+TINYSWIFT_PARSE_NODE_KIND(TuplePatternElement)
+TINYSWIFT_PARSE_NODE_KIND(EnumCasePattern)
+TINYSWIFT_PARSE_NODE_KIND(OptionalPattern)
+TINYSWIFT_PARSE_NODE_KIND(IsPattern)
+TINYSWIFT_PARSE_NODE_KIND(ExprPattern)
+
+// ============================================================================
+// Attributes and modifiers
+// ============================================================================
+
+TINYSWIFT_PARSE_NODE_KIND(AttributeStart)
+TINYSWIFT_PARSE_NODE_KIND(Attribute)
+TINYSWIFT_PARSE_NODE_KIND(AccessModifier)
+TINYSWIFT_PARSE_NODE_KIND(StaticModifier)
+
+// ============================================================================
+// Conditional compilation
+// ============================================================================
+
+TINYSWIFT_PARSE_NODE_KIND(PoundIfStart)
+TINYSWIFT_PARSE_NODE_KIND(PoundIfDecl)
+TINYSWIFT_PARSE_NODE_KIND(PoundElseDecl)
+TINYSWIFT_PARSE_NODE_KIND(PoundElseifDecl)
+TINYSWIFT_PARSE_NODE_KIND(PoundEndifDecl)
 
 // ============================================================================
 // Literals
@@ -211,51 +365,12 @@ TINYSWIFT_PARSE_NODE_KIND_TOKEN_LITERAL(BoolLiteralFalse, FalseKeyword)
 TINYSWIFT_PARSE_NODE_KIND_TOKEN_LITERAL(BoolLiteralTrue, TrueKeyword)
 TINYSWIFT_PARSE_NODE_KIND_TOKEN_LITERAL(StringLiteral, StringLiteral)
 
-// TODO: Add your language's literal parse node kinds here.
-
-// ============================================================================
-// Operators
-// ============================================================================
-
-TINYSWIFT_PARSE_NODE_KIND_PREFIX_OPERATOR(Minus)
-TINYSWIFT_PARSE_NODE_KIND_PREFIX_OPERATOR(Exclaim)
-TINYSWIFT_PARSE_NODE_KIND_PREFIX_OPERATOR(Star)
-
-// TODO: Add your language's prefix operator parse node kinds here.
-
-TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(Plus)
-TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(Minus)
-TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(Star)
-TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(Slash)
-TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(Equal)
-TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(EqualEqual)
-TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(ExclaimEqual)
-TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(Less)
-TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(LessEqual)
-TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(Greater)
-TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR(GreaterEqual)
-
-// TODO: Add your language's infix operator parse node kinds here.
-
-TINYSWIFT_PARSE_NODE_KIND_POSTFIX_OPERATOR(Star)
-
-// TODO: Add your language's postfix operator parse node kinds here.
-
 // ============================================================================
 // Modifiers
 // ============================================================================
 
-// TODO: Add your language's modifier parse node kinds here.
-
-// ============================================================================
-// Type declarations
-// ============================================================================
-
-// TODO: Add your language's type declaration parse node kinds here.
+// (Modifier nodes are above in the Attributes section)
 
 #undef TINYSWIFT_PARSE_NODE_KIND
-#undef TINYSWIFT_PARSE_NODE_KIND_INFIX_OPERATOR
-#undef TINYSWIFT_PARSE_NODE_KIND_POSTFIX_OPERATOR
-#undef TINYSWIFT_PARSE_NODE_KIND_PREFIX_OPERATOR
 #undef TINYSWIFT_PARSE_NODE_KIND_TOKEN_LITERAL
 #undef TINYSWIFT_PARSE_NODE_KIND_TOKEN_MODIFIER

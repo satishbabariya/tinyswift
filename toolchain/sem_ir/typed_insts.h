@@ -161,7 +161,7 @@ struct FunctionType {
 // A pointer type `T*`.
 struct PointerType {
   static constexpr auto Kind =
-      InstKind::PointerType.Define<Parse::PostfixOperatorStarId>(
+      InstKind::PointerType.Define<Parse::PostfixOperatorExprId>(
           {.ir_name = "ptr_type",
            .is_type = InstIsType::Always,
            .constant_kind = InstConstantKind::WheneverPossible,

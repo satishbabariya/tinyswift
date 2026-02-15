@@ -6,32 +6,67 @@
 
 #include "common/check.h"
 #include "common/vlog.h"
+#include "toolchain/parse/context.h"
 #include "toolchain/parse/node_kind.h"
 #include "toolchain/parse/tree_and_subtrees.h"
 
 namespace TinySwift::Parse {
 
-auto Parse(Lex::TokenizedBuffer& tokens, ParseOptions options) -> Tree {
-  // TODO: Implement your language's parser here.
-  // This stage should parse the token stream into a parse tree (Tree).
-  //
-  // Typical responsibilities:
-  // - Recursive descent or table-driven parsing
-  // - Building the parse tree with proper nesting
-  // - Error recovery for malformed input
-  // - Reporting syntax errors via diagnostics
-  //
-  // See TinySwift compiler for reference implementation patterns.
+// Forward declarations from parse_decl.cpp and parse_stmt.cpp.
+auto ParseDecl(Context& context) -> void;
+auto ParseStatement(Context& context) -> void;
 
+// Determines if the current token starts a declaration.
+static auto IsAtDeclStart(Context& context) -> bool {
+  auto kind = context.Peek();
+  return kind == Lex::TokenKind::LetKeyword ||
+         kind == Lex::TokenKind::VarKeyword ||
+         kind == Lex::TokenKind::FuncKeyword ||
+         kind == Lex::TokenKind::StructKeyword ||
+         kind == Lex::TokenKind::ClassKeyword ||
+         kind == Lex::TokenKind::EnumKeyword ||
+         kind == Lex::TokenKind::ProtocolKeyword ||
+         kind == Lex::TokenKind::ExtensionKeyword ||
+         kind == Lex::TokenKind::ImportKeyword ||
+         kind == Lex::TokenKind::TypealiasKeyword ||
+         kind == Lex::TokenKind::InitKeyword ||
+         kind == Lex::TokenKind::DeinitKeyword ||
+         kind == Lex::TokenKind::SubscriptKeyword ||
+         kind == Lex::TokenKind::PublicKeyword ||
+         kind == Lex::TokenKind::PrivateKeyword ||
+         kind == Lex::TokenKind::InternalKeyword ||
+         kind == Lex::TokenKind::FileprivateKeyword ||
+         kind == Lex::TokenKind::StaticKeyword ||
+         kind == Lex::TokenKind::At;
+}
+
+// Parses the top-level content of a source file.
+static auto ParseTopLevel(Context& context) -> void {
+  // Emit FileStart at position 0.
+  context.AddLeafNode(NodeKind::FileStart, context.position());
+
+  // Parse top-level declarations and statements.
+  while (!context.AtEndOfFile()) {
+    if (IsAtDeclStart(context)) {
+      ParseDecl(context);
+    } else {
+      ParseStatement(context);
+    }
+  }
+
+  // Emit FileEnd.
+  context.AddLeafNode(NodeKind::FileEnd, context.position());
+}
+
+auto Parse(Lex::TokenizedBuffer& tokens, ParseOptions options) -> Tree {
   auto* consumer =
       options.consumer ? options.consumer : &Diagnostics::ConsoleConsumer();
 
   Tree tree(tokens);
+  Context context(tree, tokens, *consumer, options.vlog_stream);
 
-  // The tree is currently empty. A real parser would populate it by walking
-  // the token stream and building parse nodes using the Context class.
-  // For now, mark the tree as having errors since we haven't parsed anything.
-  tree.set_has_errors(true);
+  // Run the recursive descent parser.
+  ParseTopLevel(context);
 
   if (options.vlog_stream || options.dump_stream) {
     consumer->Flush();

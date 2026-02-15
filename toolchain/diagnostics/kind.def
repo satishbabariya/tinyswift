@@ -79,14 +79,23 @@ TINYSWIFT_DIAGNOSTIC_KIND(UnexpectedBOM)
 // ============================================================================
 
 TINYSWIFT_DIAGNOSTIC_KIND(ExpectedCloseSymbol)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedCloseSymbolParser)
 TINYSWIFT_DIAGNOSTIC_KIND(ExpectedExpr)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedExprParser)
 TINYSWIFT_DIAGNOSTIC_KIND(ExpectedCodeBlock)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedCodeBlockBrace)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedConditionExpr)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedStatementExpr)
 TINYSWIFT_DIAGNOSTIC_KIND(ExpectedDeclSemi)
 TINYSWIFT_DIAGNOSTIC_KIND(ExpectedDeclSemiOrDefinition)
 TINYSWIFT_DIAGNOSTIC_KIND(ExpectedDeclName)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedDeclNameParser)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedDeclParser)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedInitializerExpr)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedOpenBrace)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedType)
+TINYSWIFT_DIAGNOSTIC_KIND(ExpectedPattern)
 TINYSWIFT_DIAGNOSTIC_KIND(UnrecognizedDecl)
-
-// TODO: Add your language's parser diagnostics here.
 
 // ============================================================================
 // Semantics diagnostics

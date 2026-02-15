@@ -85,8 +85,19 @@ cc_library(
 
 cc_library(
     name = "parse",
-    srcs = ["parse.cpp"],
-    hdrs = ["parse.h"],
+    srcs = [
+        "context.cpp",
+        "parse.cpp",
+        "parse_decl.cpp",
+        "parse_expr.cpp",
+        "parse_pattern.cpp",
+        "parse_stmt.cpp",
+        "parse_type.cpp",
+    ],
+    hdrs = [
+        "context.h",
+        "parse.h",
+    ],
     deps = [
         ":dump",
         ":node_kind",
@@ -95,6 +106,7 @@ cc_library(
         "//common:ostream",
         "//common:vlog",
         "//toolchain/diagnostics:emitter",
+        "//toolchain/lex:token_index",
         "//toolchain/lex:token_kind",
         "//toolchain/lex:tokenized_buffer",
     ],

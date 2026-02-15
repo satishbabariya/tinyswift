@@ -30,7 +30,8 @@ namespace TinySwift::Parse {
   /* `require <type> impls` or just `require impls` */ \
   X(RequireImpls)                                      \
   X(Requirement)                                       \
-  X(Statement)
+  X(Statement)                                         \
+  X(Type)
 
 // We expect this to grow, so are using a bigger size than needed.
 TINYSWIFT_DEFINE_RAW_ENUM_MASK(NodeCategory, uint32_t) {
