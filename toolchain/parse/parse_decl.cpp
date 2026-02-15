@@ -19,6 +19,7 @@ TINYSWIFT_DIAGNOSTIC(ExpectedDeclParser, Error,
 // Forward declarations from other parse files.
 auto ParseExpr(Context& context) -> void;
 auto ParsePattern(Context& context) -> void;
+auto ParseType(Context& context) -> void;
 auto ParseTypeAnnotation(Context& context) -> void;
 auto ParseGenericParameterClause(Context& context) -> void;
 auto ParseGenericWhereClause(Context& context) -> void;
@@ -318,7 +319,7 @@ static auto ParseFuncDecl(Context& context) -> void {
   // Optional return type: `-> Type`
   if (context.Peek() == Lex::TokenKind::MinusGreater) {
     auto arrow = context.Consume();
-    ParseTypeAnnotation(context);
+    ParseType(context);
     context.AddNode(NodeKind::ReturnType, arrow);
   }
 
@@ -327,15 +328,17 @@ static auto ParseFuncDecl(Context& context) -> void {
     ParseGenericWhereClause(context);
   }
 
-  context.AddNode(NodeKind::FunctionDefinitionStart, func_token);
-
-  // Function body.
+  // Function body or forward declaration.
   if (context.Peek() == Lex::TokenKind::OpenCurlyBrace) {
+    // Function definition: FunctionIntroducer ... FunctionDefinitionStart
+    //                      CodeBlock FunctionDefinition
+    context.AddNode(NodeKind::FunctionDefinitionStart, func_token);
     ParseCodeBlock(context);
     context.AddNode(NodeKind::FunctionDefinition, func_token);
+  } else {
+    // Forward declaration: FunctionIntroducer ... FunctionDecl
+    context.AddNode(NodeKind::FunctionDecl, func_token);
   }
-
-  context.AddNode(NodeKind::FunctionDecl, func_token);
 }
 
 // Parses members inside a type body: `{ members... }`

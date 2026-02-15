@@ -42,8 +42,8 @@ static auto IsAtDeclStart(Context& context) -> bool {
 
 // Parses the top-level content of a source file.
 static auto ParseTopLevel(Context& context) -> void {
-  // Emit FileStart at position 0.
-  context.AddLeafNode(NodeKind::FileStart, context.position());
+  // Emit FileStart at position 0 and consume the FileStart token.
+  context.AddLeafNode(NodeKind::FileStart, context.Consume());
 
   // Parse top-level declarations and statements.
   while (!context.AtEndOfFile()) {
@@ -54,8 +54,8 @@ static auto ParseTopLevel(Context& context) -> void {
     }
   }
 
-  // Emit FileEnd.
-  context.AddLeafNode(NodeKind::FileEnd, context.position());
+  // Emit FileEnd and consume the FileEnd token.
+  context.AddLeafNode(NodeKind::FileEnd, context.Consume());
 }
 
 auto Parse(Lex::TokenizedBuffer& tokens, ParseOptions options) -> Tree {

@@ -20,8 +20,10 @@ auto ParseGenericArguments(Context& context) -> void;
 auto ParseGenericParameterClause(Context& context) -> void;
 auto ParseGenericWhereClause(Context& context) -> void;
 
+// Forward declaration for this file (called from other TUs).
+auto ParseType(Context& context) -> void;
+
 // Internal forward declarations.
-static auto ParseType(Context& context) -> void;
 static auto ParsePrimaryType(Context& context) -> void;
 static auto ParsePostfixType(Context& context) -> void;
 
@@ -51,7 +53,7 @@ auto ParseTypeAnnotation(Context& context) -> void {
 }
 
 // Parses a type expression.
-static auto ParseType(Context& context) -> void {
+auto ParseType(Context& context) -> void {
   ParsePrimaryType(context);
   ParsePostfixType(context);
 

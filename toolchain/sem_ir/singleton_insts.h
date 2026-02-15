@@ -21,6 +21,9 @@ inline constexpr std::array SingletonInstKinds = {
     InstKind::IntLiteralType,
     InstKind::NamespaceType,
     InstKind::TypeType,
+    InstKind::StringType,
+    InstKind::FloatType,
+    InstKind::DoubleType,
 };
 
 // Returns whether the given instruction kind is a singleton.

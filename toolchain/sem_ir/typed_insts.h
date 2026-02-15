@@ -354,8 +354,223 @@ struct Converted {
   InstId result_id;
 };
 
-// TODO: Add your language's typed instruction representations here.
-// See TinySwift compiler for reference implementation patterns.
+// The type of string values.
+using StringType = SingletonTypeInst<InstKind::StringType, "String">;
+
+// A string literal value.
+struct StringLiteral {
+  static constexpr auto Kind = InstKind::StringLiteral.Define<Parse::NodeId>(
+      {.ir_name = "string_literal", .constant_kind = InstConstantKind::Always});
+
+  TypeId type_id;
+  StringLiteralValueId string_id;
+};
+
+// The type of Float values.
+using FloatType = SingletonTypeInst<InstKind::FloatType, "Float">;
+
+// The type of Double values.
+using DoubleType = SingletonTypeInst<InstKind::DoubleType, "Double">;
+
+// A floating-point value.
+struct FloatValue {
+  static constexpr auto Kind = InstKind::FloatValue.Define<Parse::NodeId>(
+      {.ir_name = "float_value", .constant_kind = InstConstantKind::Always});
+
+  TypeId type_id;
+  FloatId float_id;
+};
+
+// An optional type `T?`.
+struct OptionalType {
+  static constexpr auto Kind = InstKind::OptionalType.Define<Parse::NodeId>(
+      {.ir_name = "optional_type",
+       .is_type = InstIsType::Always,
+       .constant_kind = InstConstantKind::WheneverPossible});
+
+  TypeId type_id;
+  TypeInstId inner_type_id;
+};
+
+// An optional none value (`nil`).
+struct OptionalNone {
+  static constexpr auto Kind = InstKind::OptionalNone.Define<Parse::NodeId>(
+      {.ir_name = "optional_none",
+       .constant_kind = InstConstantKind::Always});
+
+  TypeId type_id;
+};
+
+// An optional some value (wrapping a value).
+struct OptionalSome {
+  static constexpr auto Kind = InstKind::OptionalSome.Define<Parse::NodeId>(
+      {.ir_name = "optional_some"});
+
+  TypeId type_id;
+  InstId value_id;
+};
+
+// Integer arithmetic operations.
+struct IntAdd {
+  static constexpr auto Kind = InstKind::IntAdd.Define<Parse::NodeId>(
+      {.ir_name = "int_add"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntSub {
+  static constexpr auto Kind = InstKind::IntSub.Define<Parse::NodeId>(
+      {.ir_name = "int_sub"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntMul {
+  static constexpr auto Kind = InstKind::IntMul.Define<Parse::NodeId>(
+      {.ir_name = "int_mul"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntDiv {
+  static constexpr auto Kind = InstKind::IntDiv.Define<Parse::NodeId>(
+      {.ir_name = "int_div"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntMod {
+  static constexpr auto Kind = InstKind::IntMod.Define<Parse::NodeId>(
+      {.ir_name = "int_mod"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntNegate {
+  static constexpr auto Kind = InstKind::IntNegate.Define<Parse::NodeId>(
+      {.ir_name = "int_negate"});
+  TypeId type_id;
+  InstId operand_id;
+};
+
+// Integer comparison operations.
+struct IntEq {
+  static constexpr auto Kind = InstKind::IntEq.Define<Parse::NodeId>(
+      {.ir_name = "int_eq"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntNeq {
+  static constexpr auto Kind = InstKind::IntNeq.Define<Parse::NodeId>(
+      {.ir_name = "int_neq"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntLess {
+  static constexpr auto Kind = InstKind::IntLess.Define<Parse::NodeId>(
+      {.ir_name = "int_less"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntGreater {
+  static constexpr auto Kind = InstKind::IntGreater.Define<Parse::NodeId>(
+      {.ir_name = "int_greater"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntLessEq {
+  static constexpr auto Kind = InstKind::IntLessEq.Define<Parse::NodeId>(
+      {.ir_name = "int_less_eq"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntGreaterEq {
+  static constexpr auto Kind = InstKind::IntGreaterEq.Define<Parse::NodeId>(
+      {.ir_name = "int_greater_eq"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+// Boolean operations.
+struct BoolNot {
+  static constexpr auto Kind = InstKind::BoolNot.Define<Parse::NodeId>(
+      {.ir_name = "bool_not"});
+  TypeId type_id;
+  InstId operand_id;
+};
+
+struct BoolAnd {
+  static constexpr auto Kind = InstKind::BoolAnd.Define<Parse::NodeId>(
+      {.ir_name = "bool_and"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct BoolOr {
+  static constexpr auto Kind = InstKind::BoolOr.Define<Parse::NodeId>(
+      {.ir_name = "bool_or"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+// A struct type declaration.
+struct StructType {
+  static constexpr auto Kind = InstKind::StructType.Define<Parse::NodeId>(
+      {.ir_name = "struct_type",
+       .is_type = InstIsType::Always,
+       .constant_kind = InstConstantKind::AlwaysUnique});
+
+  TypeId type_id;
+  NameScopeId name_scope_id;
+};
+
+// A struct initialization expression.
+struct StructInit {
+  static constexpr auto Kind = InstKind::StructInit.Define<Parse::NodeId>(
+      {.ir_name = "struct_init"});
+
+  TypeId type_id;
+  InstBlockId args_id;
+};
+
+// A field access expression `base.field`.
+struct FieldAccess {
+  static constexpr auto Kind = InstKind::FieldAccess.Define<Parse::NodeId>(
+      {.ir_name = "field_access"});
+
+  TypeId type_id;
+  InstId base_id;
+  ElementIndex index;
+};
+
+// A class type declaration.
+struct ClassType {
+  static constexpr auto Kind = InstKind::ClassType.Define<Parse::NodeId>(
+      {.ir_name = "class_type",
+       .is_type = InstIsType::Always,
+       .constant_kind = InstConstantKind::AlwaysUnique});
+
+  TypeId type_id;
+  NameScopeId name_scope_id;
+};
 
 // These concepts are an implementation detail of the library, not public API.
 namespace Internal {
