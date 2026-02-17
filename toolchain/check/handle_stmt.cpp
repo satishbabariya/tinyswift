@@ -166,6 +166,151 @@ auto HandleWhileStatement(Context& context, Parse::NodeId node_id) -> void {
   context.PopInstBlock();  // cond
 }
 
+// Handles a guard statement.
+auto HandleGuardStatement(Context& context, Parse::NodeId node_id) -> void {
+  auto children = context.tree_and_subtrees().children(node_id);
+
+  SemIR::InstId cond_id = SemIR::InstId::None;
+  Parse::NodeId else_block_node = Parse::NodeId::None;
+
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::GuardCondition) {
+      auto cond_children = context.tree_and_subtrees().children(child);
+      for (auto cc : cond_children) {
+        if (context.node_kind(cc).category().HasAnyOf(
+                Parse::NodeCategory::Expr)) {
+          cond_id = HandleExpr(context, cc);
+          break;
+        }
+      }
+    } else if (child_kind == Parse::NodeKind::GuardStatementElse) {
+      // Next sibling after else keyword is the body.
+      continue;
+    } else if (child_kind == Parse::NodeKind::CodeBlock) {
+      else_block_node = child;
+    }
+  }
+
+  // Guard: if condition is false, branch to else block (which must diverge).
+  auto else_label = context.PushInstBlock();
+
+  // BranchIf with negated condition: branch to else when cond is false.
+  // We emit: if (!cond) goto else_block
+  // Since we only have BranchIf (branch when true), we negate.
+  auto bool_type = context.GetBuiltinType("Bool");
+  auto not_cond_id = context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::BoolNot{.type_id = bool_type, .operand_id = cond_id}));
+
+  context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::BranchIf{.target_id = SemIR::LabelId(else_label),
+                       .cond_id = not_cond_id}));
+
+  if (else_block_node.has_value()) {
+    HandleCodeBlock(context, else_block_node);
+  }
+  context.PopInstBlock();
+}
+
+// Handles a for-in statement (basic desugaring to while loop).
+auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
+  auto children = context.tree_and_subtrees().children(node_id);
+
+  // For now, emit a simple while-style loop structure.
+  // Full iterator protocol support requires stdlib integration.
+  Parse::NodeId body_node = Parse::NodeId::None;
+
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::CodeBlock) {
+      body_node = child;
+    }
+  }
+
+  // Create a loop structure: condition block + body block.
+  auto cond_label = context.PushInstBlock();
+  auto body_label = context.PushInstBlock();
+
+  // For now, emit unconditional branch to body (stub).
+  auto bool_type = context.GetBuiltinType("Bool");
+  auto true_id = context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::BoolLiteral{.type_id = bool_type,
+                         .value = SemIR::BoolValue::From(true)}));
+
+  context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::BranchIf{.target_id = SemIR::LabelId(body_label),
+                       .cond_id = true_id}));
+
+  if (body_node.has_value()) {
+    HandleCodeBlock(context, body_node);
+  }
+
+  // Branch back to condition.
+  context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::Branch{.target_id = SemIR::LabelId(cond_label)}));
+
+  context.PopInstBlock();  // body
+  context.PopInstBlock();  // cond
+}
+
+// Handles a switch statement (basic if-else chain desugaring).
+auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
+  auto children = context.tree_and_subtrees().children(node_id);
+
+  // Extract the scrutinee expression.
+  SemIR::InstId scrutinee_id = SemIR::InstId::None;
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::SwitchIntroducer) {
+      continue;
+    }
+    if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+      scrutinee_id = HandleExpr(context, child);
+      break;
+    }
+  }
+
+  // Process each case as a BranchIf chain.
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::SwitchCaseLabel ||
+        child_kind == Parse::NodeKind::SwitchDefaultLabel) {
+      // Process the code block following this label.
+      continue;
+    }
+    if (child_kind == Parse::NodeKind::CodeBlock) {
+      auto case_label = context.PushInstBlock();
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(case_label)}));
+      HandleCodeBlock(context, child);
+      context.PopInstBlock();
+    }
+  }
+}
+
+// Handles a defer statement.
+auto HandleDeferStatement(Context& context, Parse::NodeId node_id) -> void {
+  auto children = context.tree_and_subtrees().children(node_id);
+
+  // For now, just process the deferred body inline at the current position.
+  // Proper defer semantics (execute at scope exit) will be implemented in SIL.
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::DeferStatementStart) {
+      continue;
+    }
+    if (child_kind == Parse::NodeKind::CodeBlock) {
+      HandleCodeBlock(context, child);
+    }
+  }
+}
+
 }  // namespace
 
 auto HandleCodeBlock(Context& context, Parse::NodeId node_id) -> void {
@@ -241,6 +386,22 @@ auto HandleStatement(Context& context, Parse::NodeId node_id) -> void {
   }
   if (kind == Parse::NodeKind::WhileStatement) {
     HandleWhileStatement(context, node_id);
+    return;
+  }
+  if (kind == Parse::NodeKind::GuardStatement) {
+    HandleGuardStatement(context, node_id);
+    return;
+  }
+  if (kind == Parse::NodeKind::ForInStatement) {
+    HandleForInStatement(context, node_id);
+    return;
+  }
+  if (kind == Parse::NodeKind::SwitchStatement) {
+    HandleSwitchStatement(context, node_id);
+    return;
+  }
+  if (kind == Parse::NodeKind::DeferStatement) {
+    HandleDeferStatement(context, node_id);
     return;
   }
 

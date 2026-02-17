@@ -103,7 +103,18 @@ TINYSWIFT_DIAGNOSTIC_KIND(UnrecognizedDecl)
 
 TINYSWIFT_DIAGNOSTIC_KIND(SemanticsTodo)
 
-// TODO: Add your language's semantic analysis diagnostics here.
+// Type checking diagnostics.
+TINYSWIFT_DIAGNOSTIC_KIND(TypeMismatch)
+TINYSWIFT_DIAGNOSTIC_KIND(UndefinedName)
+TINYSWIFT_DIAGNOSTIC_KIND(RedefinedName)
+TINYSWIFT_DIAGNOSTIC_KIND(InvalidOperandTypes)
+TINYSWIFT_DIAGNOSTIC_KIND(MissingReturn)
+TINYSWIFT_DIAGNOSTIC_KIND(TooManyArguments)
+TINYSWIFT_DIAGNOSTIC_KIND(TooFewArguments)
+TINYSWIFT_DIAGNOSTIC_KIND(CannotCallNonFunction)
+TINYSWIFT_DIAGNOSTIC_KIND(AmbiguousType)
+TINYSWIFT_DIAGNOSTIC_KIND(InvalidMemberAccess)
+TINYSWIFT_DIAGNOSTIC_KIND(CannotInferType)
 
 // ============================================================================
 // CodeGen diagnostics

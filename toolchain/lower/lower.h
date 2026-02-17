@@ -10,17 +10,23 @@
 #include "llvm/IR/Module.h"
 #include "toolchain/lower/options.h"
 #include "toolchain/sem_ir/file.h"
-
-// TODO: Implement your language's SemIR-to-LLVM-IR lowering here.
-// See TinySwift compiler for reference implementation patterns.
+#include "toolchain/tiny_sil/module.h"
 
 namespace TinySwift::Lower {
 
-// Lowers SemIR to LLVM IR.
+// Lowers SemIR directly to LLVM IR (legacy path).
 auto LowerToLLVM(llvm::LLVMContext& llvm_context,
                  llvm::StringRef module_name,
                  const SemIR::File& sem_ir,
                  const LowerToLLVMOptions& options)
+    -> std::unique_ptr<llvm::Module>;
+
+// Lowers TinySIL to LLVM IR (new SIL-based path).
+auto LowerSILToLLVM(llvm::LLVMContext& llvm_context,
+                    llvm::StringRef module_name,
+                    const TinySIL::SILModule& sil_module,
+                    const SemIR::File& sem_ir,
+                    const LowerToLLVMOptions& options)
     -> std::unique_ptr<llvm::Module>;
 
 }  // namespace TinySwift::Lower

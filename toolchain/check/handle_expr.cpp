@@ -21,6 +21,48 @@ auto GetInstType(Context& context, SemIR::InstId inst_id) -> SemIR::TypeId {
   return context.insts().Get(inst_id).type_id();
 }
 
+// Returns true if the type is Float or Double.
+auto IsFloatType(Context& context, SemIR::TypeId type_id) -> bool {
+  if (!type_id.has_value() || !type_id.is_concrete()) {
+    return false;
+  }
+  auto float_type = context.GetBuiltinType("Float");
+  auto double_type = context.GetBuiltinType("Double");
+  return type_id == float_type || type_id == double_type;
+}
+
+// Returns true if the type is Int (IntLiteralType).
+auto IsIntType(Context& context, SemIR::TypeId type_id) -> bool {
+  if (!type_id.has_value() || !type_id.is_concrete()) {
+    return false;
+  }
+  auto int_type = context.GetBuiltinType("Int");
+  return type_id == int_type;
+}
+
+// Returns true if the type is Bool.
+auto IsBoolType(Context& context, SemIR::TypeId type_id) -> bool {
+  if (!type_id.has_value() || !type_id.is_concrete()) {
+    return false;
+  }
+  auto bool_type = context.GetBuiltinType("Bool");
+  return type_id == bool_type;
+}
+
+// Returns true if the type is String.
+auto IsStringType(Context& context, SemIR::TypeId type_id) -> bool {
+  if (!type_id.has_value() || !type_id.is_concrete()) {
+    return false;
+  }
+  auto string_type = context.GetBuiltinType("String");
+  return type_id == string_type;
+}
+
+// Returns true if the type is an error type.
+auto IsErrorType(SemIR::TypeId type_id) -> bool {
+  return !type_id.has_value() || type_id == SemIR::ErrorInst::TypeId;
+}
+
 // Handles an integer literal.
 auto HandleIntLiteral(Context& context, Parse::NodeId node_id)
     -> SemIR::InstId {
@@ -108,7 +150,7 @@ auto HandleIdentifierNameExpr(Context& context, Parse::NodeId node_id)
 
   auto ident_id = context.identifiers().Lookup(text);
   if (!ident_id.has_value()) {
-    // Name not found. Return error.
+    context.EmitError(node_id, UndefinedName, std::string(text));
     return context.AddInst(SemIR::LocIdAndInst::NoLoc(
         SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
   }
@@ -116,6 +158,7 @@ auto HandleIdentifierNameExpr(Context& context, Parse::NodeId node_id)
   auto name_id = SemIR::NameId::ForIdentifier(ident_id);
   auto value_id = context.LookupName(name_id);
   if (!value_id.has_value()) {
+    context.EmitError(node_id, UndefinedName, std::string(text));
     return context.AddInst(SemIR::LocIdAndInst::NoLoc(
         SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
   }
@@ -173,7 +216,7 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
   context.inst_blocks().ReplacePlaceholder(
       args_block_id, llvm::ArrayRef<SemIR::InstId>(arg_ids));
 
-  // Determine return type (for now, use error type).
+  // Determine return type and validate arguments.
   auto type_id = SemIR::ErrorInst::TypeId;
   if (callee_id.has_value()) {
     auto callee_inst = context.insts().Get(callee_id);
@@ -182,6 +225,29 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
       if (fn.return_type_inst_id.has_value()) {
         type_id = context.types().GetTypeIdForTypeInstId(
             fn.return_type_inst_id);
+      }
+
+      // Check argument count.
+      int expected_count = 0;
+      if (fn.call_params_id.has_value() &&
+          fn.call_params_id != SemIR::InstBlockId::Empty) {
+        expected_count = static_cast<int>(
+            context.sem_ir().inst_blocks().Get(fn.call_params_id).size());
+      }
+      int actual_count = static_cast<int>(arg_ids.size());
+      if (actual_count > expected_count) {
+        context.EmitError(node_id, TooManyArguments,
+                          expected_count, actual_count);
+      } else if (actual_count < expected_count) {
+        context.EmitError(node_id, TooFewArguments,
+                          expected_count, actual_count);
+      }
+    } else {
+      // Callee is not a function declaration - check if it's something callable.
+      // For now, emit error if it's not a function.
+      auto callee_type = GetInstType(context, callee_id);
+      if (!IsErrorType(callee_type)) {
+        context.EmitError(node_id, CannotCallNonFunction);
       }
     }
   }
@@ -214,29 +280,56 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
     }
   }
 
-  // Try to resolve the member in the base type's scope.
   auto base_type_id = GetInstType(context, base_id);
   auto type_id = SemIR::ErrorInst::TypeId;
   SemIR::ElementIndex element_index(0);
 
-  // For struct/class types, look up the member.
+  if (IsErrorType(base_type_id)) {
+    return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+        SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+  }
+
+  // For struct/class/enum types, look up the member in the type's scope.
   if (base_type_id.has_value() && base_type_id.is_concrete()) {
     auto type_inst_id = context.types().GetTypeInstId(base_type_id);
     if (type_inst_id.has_value()) {
       auto type_inst = context.insts().Get(type_inst_id);
+
+      SemIR::NameScopeId scope_id = SemIR::NameScopeId::None;
       if (auto struct_type = type_inst.TryAs<SemIR::StructType>()) {
-        // Look up member in scope.
-        if (!member_name.empty()) {
-          auto ident_id = context.identifiers().Lookup(member_name);
-          if (ident_id.has_value()) {
-            auto name_id = SemIR::NameId::ForIdentifier(ident_id);
-            // Search the struct's scope for the member.
-            // For now, return the base's type.
-            auto member_inst_id = context.LookupName(name_id);
-            if (member_inst_id.has_value()) {
+        scope_id = struct_type->name_scope_id;
+      } else if (auto class_type = type_inst.TryAs<SemIR::ClassType>()) {
+        scope_id = class_type->name_scope_id;
+      } else if (auto enum_type = type_inst.TryAs<SemIR::EnumType>()) {
+        scope_id = enum_type->name_scope_id;
+      }
+
+      if (scope_id.has_value() && !member_name.empty()) {
+        auto ident_id = context.identifiers().Lookup(member_name);
+        if (ident_id.has_value()) {
+          auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+          // Search the type's scope for the member.
+          auto& scope = context.name_scopes().Get(scope_id);
+          auto found = scope.names.find(name_id.index);
+          if (found != scope.names.end()) {
+            auto member_inst_id = found->second;
+            auto member_inst = context.insts().Get(member_inst_id);
+            // If it's a StructField, use its index and type.
+            if (auto field = member_inst.TryAs<SemIR::StructField>()) {
+              type_id = field->type_id;
+              element_index = field->index;
+            } else {
               type_id = GetInstType(context, member_inst_id);
             }
+          } else {
+            context.EmitError(node_id, InvalidMemberAccess,
+                              context.GetTypeName(base_type_id),
+                              std::string(member_name));
           }
+        } else {
+          context.EmitError(node_id, InvalidMemberAccess,
+                            context.GetTypeName(base_type_id),
+                            std::string(member_name));
         }
       }
     }
@@ -248,14 +341,13 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
           .type_id = type_id, .base_id = base_id, .index = element_index}));
 }
 
-// Handles an infix operator expression.
+// Handles an infix operator expression with type checking.
 auto HandleInfixOperatorExpr(Context& context, Parse::NodeId node_id)
     -> SemIR::InstId {
   auto children = context.tree_and_subtrees().children(node_id);
 
   SemIR::InstId lhs_id = SemIR::InstId::None;
   SemIR::InstId rhs_id = SemIR::InstId::None;
-  llvm::StringRef op_text;
 
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
@@ -268,82 +360,243 @@ auto HandleInfixOperatorExpr(Context& context, Parse::NodeId node_id)
     }
   }
 
-  op_text = context.token_text(context.node_token(node_id));
-
+  auto op_text = context.token_text(context.node_token(node_id));
   auto lhs_type = GetInstType(context, lhs_id);
+  auto rhs_type = GetInstType(context, rhs_id);
   auto bool_type = context.GetBuiltinType("Bool");
 
-  // Dispatch based on operator.
-  if (op_text == "+") {
-    return context.AddInst(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::IntAdd{.type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+  // If either operand is an error, propagate without further checking.
+  if (IsErrorType(lhs_type) || IsErrorType(rhs_type)) {
+    return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+        SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
   }
-  if (op_text == "-") {
-    return context.AddInst(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::IntSub{.type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+
+  bool lhs_is_float = IsFloatType(context, lhs_type);
+  bool rhs_is_float = IsFloatType(context, rhs_type);
+  bool lhs_is_int = IsIntType(context, lhs_type);
+  bool rhs_is_int = IsIntType(context, rhs_type);
+  bool lhs_is_bool = IsBoolType(context, lhs_type);
+  bool lhs_is_string = IsStringType(context, lhs_type);
+
+  // Arithmetic operators: +, -, *, /, %
+  if (op_text == "+" || op_text == "-" || op_text == "*" || op_text == "/" ||
+      op_text == "%") {
+    // String concatenation for +.
+    if (op_text == "+" && lhs_is_string && IsStringType(context, rhs_type)) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::StringConcat{
+              .type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+    }
+
+    // Check operand types match.
+    if (lhs_type != rhs_type) {
+      context.EmitError(node_id, InvalidOperandTypes,
+                        std::string(op_text),
+                        context.GetTypeName(lhs_type),
+                        context.GetTypeName(rhs_type));
+      return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+          SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+    }
+
+    // Float arithmetic.
+    if (lhs_is_float) {
+      if (op_text == "+") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::FloatAdd{
+                .type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == "-") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::FloatSub{
+                .type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == "*") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::FloatMul{
+                .type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == "/") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::FloatDiv{
+                .type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      // Float % is not standard in Swift, emit error.
+      context.EmitError(node_id, InvalidOperandTypes,
+                        std::string(op_text),
+                        context.GetTypeName(lhs_type),
+                        context.GetTypeName(rhs_type));
+      return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+          SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+    }
+
+    // Int arithmetic.
+    if (lhs_is_int) {
+      if (op_text == "+") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntAdd{
+                .type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == "-") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntSub{
+                .type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == "*") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntMul{
+                .type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == "/") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntDiv{
+                .type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      // %
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::IntMod{
+              .type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+    }
+
+    // Not a numeric type.
+    context.EmitError(node_id, InvalidOperandTypes,
+                      std::string(op_text),
+                      context.GetTypeName(lhs_type),
+                      context.GetTypeName(rhs_type));
+    return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+        SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
   }
-  if (op_text == "*") {
-    return context.AddInst(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::IntMul{.type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
-  }
-  if (op_text == "/") {
-    return context.AddInst(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::IntDiv{.type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
-  }
-  if (op_text == "%") {
-    return context.AddInst(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::IntMod{.type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
-  }
-  if (op_text == "==") {
-    return context.AddInst(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::IntEq{.type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
-  }
-  if (op_text == "!=") {
-    return context.AddInst(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::IntNeq{.type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
-  }
-  if (op_text == "<") {
-    return context.AddInst(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::IntLess{.type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
-  }
-  if (op_text == ">") {
-    return context.AddInst(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::IntGreater{
-            .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
-  }
-  if (op_text == "<=") {
-    return context.AddInst(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::IntLessEq{
-            .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
-  }
-  if (op_text == ">=") {
+
+  // Comparison operators: ==, !=, <, >, <=, >=
+  if (op_text == "==" || op_text == "!=" || op_text == "<" ||
+      op_text == ">" || op_text == "<=" || op_text == ">=") {
+    // Check operand types match.
+    if (lhs_type != rhs_type) {
+      context.EmitError(node_id, InvalidOperandTypes,
+                        std::string(op_text),
+                        context.GetTypeName(lhs_type),
+                        context.GetTypeName(rhs_type));
+      return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+          SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+    }
+
+    // Float comparisons.
+    if (lhs_is_float) {
+      if (op_text == "==") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::FloatEq{
+                .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == "!=") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::FloatNeq{
+                .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == "<") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::FloatLess{
+                .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == ">") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::FloatGreater{
+                .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == "<=") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::FloatLessEq{
+                .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      // >=
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::FloatGreaterEq{
+              .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+    }
+
+    // Int comparisons.
+    if (op_text == "==") {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::IntEq{
+              .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+    }
+    if (op_text == "!=") {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::IntNeq{
+              .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+    }
+    if (op_text == "<") {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::IntLess{
+              .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+    }
+    if (op_text == ">") {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::IntGreater{
+              .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+    }
+    if (op_text == "<=") {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::IntLessEq{
+              .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+    }
+    // >=
     return context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
         SemIR::IntGreaterEq{
             .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
   }
+
+  // Boolean operators: &&, ||
   if (op_text == "&&") {
+    if (!lhs_is_bool || !IsBoolType(context, rhs_type)) {
+      context.EmitError(node_id, InvalidOperandTypes,
+                        std::string(op_text),
+                        context.GetTypeName(lhs_type),
+                        context.GetTypeName(rhs_type));
+      return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+          SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+    }
     return context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
-        SemIR::BoolAnd{.type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+        SemIR::BoolAnd{
+            .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
   }
   if (op_text == "||") {
+    if (!lhs_is_bool || !IsBoolType(context, rhs_type)) {
+      context.EmitError(node_id, InvalidOperandTypes,
+                        std::string(op_text),
+                        context.GetTypeName(lhs_type),
+                        context.GetTypeName(rhs_type));
+      return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+          SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+    }
     return context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
-        SemIR::BoolOr{.type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+        SemIR::BoolOr{
+            .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
   }
 
-  // Unknown operator - just return lhs.
+  // Unknown operator.
   return lhs_id;
 }
 
@@ -364,12 +617,40 @@ auto HandlePrefixOperatorExpr(Context& context, Parse::NodeId node_id)
   auto op_text = context.token_text(context.node_token(node_id));
   auto operand_type = GetInstType(context, operand_id);
 
+  if (IsErrorType(operand_type)) {
+    return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+        SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+  }
+
   if (op_text == "-") {
-    return context.AddInst(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::IntNegate{.type_id = operand_type, .operand_id = operand_id}));
+    if (IsFloatType(context, operand_type)) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::FloatNegate{
+              .type_id = operand_type, .operand_id = operand_id}));
+    }
+    if (IsIntType(context, operand_type)) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::IntNegate{
+              .type_id = operand_type, .operand_id = operand_id}));
+    }
+    context.EmitError(node_id, InvalidOperandTypes,
+                      std::string(op_text),
+                      context.GetTypeName(operand_type),
+                      std::string(""));
+    return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+        SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
   }
   if (op_text == "!") {
+    if (!IsBoolType(context, operand_type)) {
+      context.EmitError(node_id, InvalidOperandTypes,
+                        std::string(op_text),
+                        context.GetTypeName(operand_type),
+                        std::string(""));
+      return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+          SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+    }
     return context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
         SemIR::BoolNot{.type_id = operand_type, .operand_id = operand_id}));

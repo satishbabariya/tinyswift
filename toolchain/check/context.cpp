@@ -11,9 +11,8 @@ namespace TinySwift::Check {
 Context::Context(Unit& unit, const Parse::TreeAndSubtrees& tree_and_subtrees,
                  Diagnostics::Consumer& consumer)
     : sem_ir_(unit.sem_ir),
-      tree_and_subtrees_(&tree_and_subtrees) {
-  (void)consumer;  // Will be used when diagnostics are emitted.
-}
+      tree_and_subtrees_(&tree_and_subtrees),
+      emitter_(&consumer, &tokens()) {}
 
 auto Context::AddInstInNoBlock(SemIR::LocIdAndInst loc_and_inst)
     -> SemIR::InstId {
@@ -89,6 +88,57 @@ auto Context::CurrentScopeId() const -> SemIR::NameScopeId {
     return SemIR::NameScopeId::None;
   }
   return scope_stack_.back().scope_id;
+}
+
+auto Context::GetTypeName(SemIR::TypeId type_id) -> std::string {
+  if (!type_id.has_value() || type_id == SemIR::ErrorInst::TypeId) {
+    return "<error>";
+  }
+  if (!type_id.is_concrete()) {
+    return "<unknown>";
+  }
+  auto type_inst_id = types().GetTypeInstId(type_id);
+  if (!type_inst_id.has_value()) {
+    return "<unknown>";
+  }
+  auto type_inst = insts().Get(type_inst_id);
+  switch (type_inst.kind()) {
+    case SemIR::InstKind::BoolType:
+      return "Bool";
+    case SemIR::InstKind::IntType:
+    case SemIR::InstKind::IntLiteralType:
+      return "Int";
+    case SemIR::InstKind::StringType:
+      return "String";
+    case SemIR::InstKind::FloatType:
+      return "Float";
+    case SemIR::InstKind::DoubleType:
+      return "Double";
+    case SemIR::InstKind::StructType: {
+      auto struct_type = type_inst.As<SemIR::StructType>();
+      auto& scope = name_scopes().Get(struct_type.name_scope_id);
+      if (scope.name_id.AsIdentifierId().has_value()) {
+        return std::string(identifiers().Get(scope.name_id.AsIdentifierId()));
+      }
+      return "<struct>";
+    }
+    case SemIR::InstKind::ClassType: {
+      auto class_type = type_inst.As<SemIR::ClassType>();
+      auto& scope = name_scopes().Get(class_type.name_scope_id);
+      if (scope.name_id.AsIdentifierId().has_value()) {
+        return std::string(identifiers().Get(scope.name_id.AsIdentifierId()));
+      }
+      return "<class>";
+    }
+    case SemIR::InstKind::OptionalType:
+      return "Optional";
+    case SemIR::InstKind::FunctionType:
+      return "Function";
+    case SemIR::InstKind::PointerType:
+      return "Pointer";
+    default:
+      return "<type>";
+  }
 }
 
 auto Context::GetBuiltinType(llvm::StringRef name) -> SemIR::TypeId {

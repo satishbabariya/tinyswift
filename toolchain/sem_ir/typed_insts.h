@@ -531,6 +531,119 @@ struct BoolOr {
   InstId rhs_id;
 };
 
+// Float arithmetic operations.
+struct FloatAdd {
+  static constexpr auto Kind = InstKind::FloatAdd.Define<Parse::NodeId>(
+      {.ir_name = "float_add"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct FloatSub {
+  static constexpr auto Kind = InstKind::FloatSub.Define<Parse::NodeId>(
+      {.ir_name = "float_sub"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct FloatMul {
+  static constexpr auto Kind = InstKind::FloatMul.Define<Parse::NodeId>(
+      {.ir_name = "float_mul"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct FloatDiv {
+  static constexpr auto Kind = InstKind::FloatDiv.Define<Parse::NodeId>(
+      {.ir_name = "float_div"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct FloatNegate {
+  static constexpr auto Kind = InstKind::FloatNegate.Define<Parse::NodeId>(
+      {.ir_name = "float_negate"});
+  TypeId type_id;
+  InstId operand_id;
+};
+
+// Float comparison operations.
+struct FloatEq {
+  static constexpr auto Kind = InstKind::FloatEq.Define<Parse::NodeId>(
+      {.ir_name = "float_eq"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct FloatNeq {
+  static constexpr auto Kind = InstKind::FloatNeq.Define<Parse::NodeId>(
+      {.ir_name = "float_neq"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct FloatLess {
+  static constexpr auto Kind = InstKind::FloatLess.Define<Parse::NodeId>(
+      {.ir_name = "float_less"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct FloatGreater {
+  static constexpr auto Kind = InstKind::FloatGreater.Define<Parse::NodeId>(
+      {.ir_name = "float_greater"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct FloatLessEq {
+  static constexpr auto Kind = InstKind::FloatLessEq.Define<Parse::NodeId>(
+      {.ir_name = "float_less_eq"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct FloatGreaterEq {
+  static constexpr auto Kind = InstKind::FloatGreaterEq.Define<Parse::NodeId>(
+      {.ir_name = "float_greater_eq"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+// String concatenation.
+struct StringConcat {
+  static constexpr auto Kind = InstKind::StringConcat.Define<Parse::NodeId>(
+      {.ir_name = "string_concat"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+// Explicit type conversions.
+struct IntToFloat {
+  static constexpr auto Kind = InstKind::IntToFloat.Define<Parse::NodeId>(
+      {.ir_name = "int_to_float"});
+  TypeId type_id;
+  InstId operand_id;
+};
+
+struct FloatToInt {
+  static constexpr auto Kind = InstKind::FloatToInt.Define<Parse::NodeId>(
+      {.ir_name = "float_to_int"});
+  TypeId type_id;
+  InstId operand_id;
+};
+
 // A struct type declaration.
 struct StructType {
   static constexpr auto Kind = InstKind::StructType.Define<Parse::NodeId>(
@@ -561,6 +674,19 @@ struct FieldAccess {
   ElementIndex index;
 };
 
+// A struct field descriptor.
+struct StructField {
+  static constexpr auto Kind = InstKind::StructField.Define<Parse::NodeId>(
+      {.ir_name = "struct_field",
+       .expr_category = ExprCategory::NotExpr,
+       .constant_kind = InstConstantKind::Never,
+       .is_lowered = false});
+
+  TypeId type_id;
+  NameId name_id;
+  ElementIndex index;
+};
+
 // A class type declaration.
 struct ClassType {
   static constexpr auto Kind = InstKind::ClassType.Define<Parse::NodeId>(
@@ -570,6 +696,141 @@ struct ClassType {
 
   TypeId type_id;
   NameScopeId name_scope_id;
+};
+
+// An enum type declaration.
+struct EnumType {
+  static constexpr auto Kind = InstKind::EnumType.Define<Parse::NodeId>(
+      {.ir_name = "enum_type",
+       .is_type = InstIsType::Always,
+       .constant_kind = InstConstantKind::AlwaysUnique});
+
+  TypeId type_id;
+  NameScopeId name_scope_id;
+  InstBlockId cases_id;
+};
+
+// An enum case (no payload).
+struct EnumCase {
+  static constexpr auto Kind = InstKind::EnumCase.Define<Parse::NodeId>(
+      {.ir_name = "enum_case",
+       .constant_kind = InstConstantKind::Always});
+
+  TypeId type_id;
+  NameId name_id;
+  ElementIndex discriminant;
+};
+
+// An enum case with payload.
+struct EnumCaseWithPayload {
+  static constexpr auto Kind =
+      InstKind::EnumCaseWithPayload.Define<Parse::NodeId>(
+          {.ir_name = "enum_case_payload",
+           .constant_kind = InstConstantKind::Always});
+
+  TypeId type_id;
+  NameId name_id;
+  // Discriminant is packed in the ElementIndex.
+  ElementIndex discriminant;
+};
+
+// Construct an enum value.
+struct EnumInit {
+  static constexpr auto Kind = InstKind::EnumInit.Define<Parse::NodeId>(
+      {.ir_name = "enum_init"});
+
+  TypeId type_id;
+  InstId case_id;
+};
+
+// Extract the discriminant tag from an enum value.
+struct EnumDiscriminant {
+  static constexpr auto Kind =
+      InstKind::EnumDiscriminant.Define<Parse::NodeId>(
+          {.ir_name = "enum_discriminant"});
+
+  TypeId type_id;
+  InstId enum_id;
+};
+
+// Extract the payload from an enum value given a known discriminant.
+struct EnumPayload {
+  static constexpr auto Kind = InstKind::EnumPayload.Define<Parse::NodeId>(
+      {.ir_name = "enum_payload"});
+
+  TypeId type_id;
+  InstId enum_id;
+};
+
+// A tuple type.
+struct TupleType {
+  static constexpr auto Kind = InstKind::TupleType.Define<Parse::NodeId>(
+      {.ir_name = "tuple_type",
+       .is_type = InstIsType::Always,
+       .constant_kind = InstConstantKind::WheneverPossible});
+
+  TypeId type_id;
+  InstBlockId element_types_id;
+};
+
+// A tuple initialization expression.
+struct TupleInit {
+  static constexpr auto Kind = InstKind::TupleInit.Define<Parse::NodeId>(
+      {.ir_name = "tuple_init"});
+
+  TypeId type_id;
+  InstBlockId elements_id;
+};
+
+// A tuple element access.
+struct TupleAccess {
+  static constexpr auto Kind = InstKind::TupleAccess.Define<Parse::NodeId>(
+      {.ir_name = "tuple_access"});
+
+  TypeId type_id;
+  InstId tuple_id;
+  ElementIndex index;
+};
+
+// A closure expression.
+struct ClosureExpr {
+  static constexpr auto Kind = InstKind::ClosureExpr.Define<Parse::NodeId>(
+      {.ir_name = "closure_expr"});
+
+  TypeId type_id;
+  FunctionId function_id;
+  InstBlockId captures_id;
+};
+
+// A reference to a captured variable.
+struct CaptureRef {
+  static constexpr auto Kind = InstKind::CaptureRef.Define<Parse::NodeId>(
+      {.ir_name = "capture_ref"});
+
+  TypeId type_id;
+  InstId captured_inst_id;
+};
+
+// A switch instruction (multi-way branch).
+struct SwitchInst {
+  static constexpr auto Kind = InstKind::SwitchInst.Define<Parse::NodeId>(
+      {.ir_name = "switch",
+       .constant_kind = InstConstantKind::Never,
+       .terminator_kind = TerminatorKind::Terminator});
+
+  InstId scrutinee_id;
+  InstBlockId case_blocks_id;
+};
+
+// A single case pattern in a switch.
+struct CasePattern {
+  static constexpr auto Kind = InstKind::CasePattern.Define<Parse::NodeId>(
+      {.ir_name = "case_pattern",
+       .constant_kind = InstConstantKind::Never});
+
+  TypeId type_id;
+  InstId pattern_id;
+  InstBlockId body_id;
 };
 
 // These concepts are an implementation detail of the library, not public API.

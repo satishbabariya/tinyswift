@@ -6,38 +6,21 @@ load("//bazel/cc_rules:defs.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
 
-filegroup(
-    name = "testdata",
-    srcs = glob(["testdata/**/*.swift"], allow_empty = True),
-)
-
 cc_library(
-    name = "options",
-    hdrs = ["options.h"],
-    deps = [
-        "@llvm-project//llvm:Support",
-    ],
-)
-
-cc_library(
-    name = "lower",
+    name = "tiny_sil_gen",
     srcs = [
         "context.cpp",
-        "handle_inst.cpp",
-        "handle_type.cpp",
-        "lower.cpp",
+        "sil_gen.cpp",
     ],
     hdrs = [
         "context.h",
-        "lower.h",
+        "managed_value.h",
+        "sil_gen.h",
     ],
     deps = [
-        ":options",
-        "//common:check",
-        "//common:vlog",
         "//toolchain/sem_ir:file",
+        "//toolchain/sem_ir:typed_insts",
         "//toolchain/tiny_sil",
-        "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
     ],
 )

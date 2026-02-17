@@ -28,6 +28,11 @@
 #include "toolchain/lex/lex.h"
 #include "toolchain/lower/lower.h"
 #include "toolchain/parse/parse.h"
+#include "toolchain/tiny_sil/module.h"
+#include "toolchain/tiny_sil/printer.h"
+#include "toolchain/tiny_sil/verifier.h"
+#include "toolchain/tiny_sil_gen/sil_gen.h"
+#include "toolchain/tiny_sil_optimizer/pass_manager.h"
 #include "toolchain/parse/tree_and_subtrees.h"
 #include "toolchain/sem_ir/ids.h"
 #include "toolchain/source/source_buffer.h"
@@ -62,6 +67,7 @@ compile to machine code.
                 arg_b.OneOfValue("lex", Phase::Lex),
                 arg_b.OneOfValue("parse", Phase::Parse),
                 arg_b.OneOfValue("check", Phase::Check),
+                arg_b.OneOfValue("sil", Phase::Sil),
                 arg_b.OneOfValue("lower", Phase::Lower),
                 arg_b.OneOfValue("optimize", Phase::Optimize),
                 arg_b.OneOfValue("codegen", Phase::CodeGen).Default(true),
@@ -186,6 +192,12 @@ Selects the amount of optimization to perform.
       [&](auto& arg_b) { arg_b.Set(&builtin_sem_ir); });
   b.AddFlag(
       {
+          .name = "dump-sil",
+          .help = "Dump the TinySIL to stdout after SILGen.",
+      },
+      [&](auto& arg_b) { arg_b.Set(&dump_sil); });
+  b.AddFlag(
+      {
           .name = "dump-llvm-ir",
           .help = "Dump the LLVM IR to stdout after lowering.",
       },
@@ -269,6 +281,8 @@ static auto PhaseToString(CompileOptions::Phase phase) -> std::string {
       return "parse";
     case CompileOptions::Phase::Check:
       return "check";
+    case CompileOptions::Phase::Sil:
+      return "sil";
     case CompileOptions::Phase::Lower:
       return "lower";
     case CompileOptions::Phase::Optimize:
@@ -301,6 +315,13 @@ auto CompileSubcommand::ValidateOptions(
       }
       [[fallthrough]];
     case Phase::Check:
+      if (options_.dump_sil) {
+        emitter.Emit(CompilePhaseFlagConflict, "SIL",
+                     PhaseToString(options_.phase));
+        return false;
+      }
+      [[fallthrough]];
+    case Phase::Sil:
       if (options_.dump_llvm_ir) {
         emitter.Emit(CompilePhaseFlagConflict, "LLVM IR",
                      PhaseToString(options_.phase));
@@ -330,6 +351,8 @@ class CompilationUnit {
   auto RunParse() -> void;
   auto GetCheckUnit() -> Check::Unit;
   auto PostCheck() -> void;
+  auto RunSilGen() -> void;
+  auto PostSilGen() -> void;
   auto RunLower() -> void;
   auto RunOptimize() -> void;
   auto PostLower() -> void;
@@ -380,6 +403,7 @@ class CompilationUnit {
       tree_and_subtrees_getter_;
   std::unique_ptr<llvm::LLVMContext> llvm_context_;
   std::optional<SemIR::File> sem_ir_;
+  std::unique_ptr<TinySIL::SILModule> sil_module_;
   std::unique_ptr<llvm::Module> module_;
   std::unique_ptr<llvm::TargetMachine> target_machine_;
 };
@@ -508,6 +532,36 @@ auto CompilationUnit::PostCheck() -> void {
   }
 }
 
+auto CompilationUnit::RunSilGen() -> void {
+  LogCall("TinySILGen::GenerateSIL", "silgen", [&] {
+    TINYSWIFT_CHECK(sem_ir_, "Must call GetCheckUnit/PostCheck first");
+    sil_module_ = TinySILGen::GenerateSIL(*sem_ir_);
+  });
+}
+
+auto CompilationUnit::PostSilGen() -> void {
+  TINYSWIFT_CHECK(sil_module_, "Must call RunSilGen first");
+
+  // Verify the SIL module structure.
+  if (!TinySIL::VerifySILModule(*sil_module_, driver_env_->error_stream)) {
+    success_ = false;
+  }
+
+  // Run mandatory diagnostic passes.
+  if (!TinySILOptimizer::RunMandatoryPasses(*sil_module_,
+                                             driver_env_->error_stream)) {
+    success_ = false;
+  }
+
+  // Run performance optimization passes.
+  TinySILOptimizer::RunPerformancePasses(*sil_module_);
+
+  // Dump SIL if requested.
+  if (options_->dump_sil && IncludeInDumps()) {
+    TinySIL::PrintSILModule(*driver_env_->output_stream, *sil_module_);
+  }
+}
+
 auto CompilationUnit::RunLower() -> void {
   LogCall("Lower::LowerToLLVM", "lower", [&] {
     if (!llvm_context_) {
@@ -519,8 +573,16 @@ auto CompilationUnit::RunLower() -> void {
     options.want_debug_info = options_->include_debug_info;
     options.vlog_stream = vlog_stream_;
     options.opt_level = options_->opt_level;
-    module_ = Lower::LowerToLLVM(*llvm_context_, input_filename_,
-                                 *sem_ir_, options);
+
+    if (sil_module_) {
+      // Use the SIL-based lowering path.
+      module_ = Lower::LowerSILToLLVM(*llvm_context_, input_filename_,
+                                       *sil_module_, *sem_ir_, options);
+    } else {
+      // Fallback: direct SemIR → LLVM path.
+      module_ = Lower::LowerToLLVM(*llvm_context_, input_filename_,
+                                   *sem_ir_, options);
+    }
   });
 }
 
@@ -878,6 +940,17 @@ auto CompileSubcommand::Run(DriverEnv& driver_env) -> DriverResult {
   if (llvm::any_of(units, [&](const auto& unit) { return !unit->success(); })) {
     TINYSWIFT_VLOG_TO(driver_env.vlog_stream,
                    "*** Stopping before lowering due to errors ***\n");
+    return make_result();
+  }
+
+  // SILGen.
+  for (auto& unit : units) {
+    if (unit->has_source()) {
+      unit->RunSilGen();
+      unit->PostSilGen();
+    }
+  }
+  if (options_.phase == CompileOptions::Phase::Sil) {
     return make_result();
   }
 

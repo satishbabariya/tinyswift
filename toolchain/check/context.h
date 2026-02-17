@@ -9,6 +9,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "toolchain/check/check.h"
+#include "toolchain/diagnostics/diagnostic.h"
 #include "toolchain/diagnostics/emitter.h"
 #include "toolchain/lex/tokenized_buffer.h"
 #include "toolchain/parse/tree.h"
@@ -19,6 +20,36 @@
 #include "toolchain/sem_ir/typed_insts.h"
 
 namespace TinySwift::Check {
+
+// Semantic diagnostic definitions.
+// NOLINTNEXTLINE(readability-identifier-naming)
+TINYSWIFT_DIAGNOSTIC(TypeMismatch, Error, "type mismatch: expected {0}, got {1}",
+                     std::string, std::string);
+TINYSWIFT_DIAGNOSTIC(UndefinedName, Error, "use of undefined name '{0}'",
+                     std::string);
+TINYSWIFT_DIAGNOSTIC(RedefinedName, Error, "redefinition of '{0}'",
+                     std::string);
+TINYSWIFT_DIAGNOSTIC(InvalidOperandTypes, Error,
+                     "invalid operand types for '{0}': '{1}' and '{2}'",
+                     std::string, std::string, std::string);
+TINYSWIFT_DIAGNOSTIC(MissingReturn, Error,
+                     "missing return in function expected to return '{0}'",
+                     std::string);
+TINYSWIFT_DIAGNOSTIC(TooManyArguments, Error,
+                     "too many arguments: expected {0}, got {1}",
+                     int, int);
+TINYSWIFT_DIAGNOSTIC(TooFewArguments, Error,
+                     "too few arguments: expected {0}, got {1}",
+                     int, int);
+TINYSWIFT_DIAGNOSTIC(CannotCallNonFunction, Error,
+                     "cannot call non-function value");
+TINYSWIFT_DIAGNOSTIC(AmbiguousType, Error,
+                     "type is ambiguous in this context");
+TINYSWIFT_DIAGNOSTIC(InvalidMemberAccess, Error,
+                     "value of type '{0}' has no member '{1}'",
+                     std::string, std::string);
+TINYSWIFT_DIAGNOSTIC(CannotInferType, Error,
+                     "cannot infer type for '{0}'", std::string);
 
 // Manages the semantic checking context for a single file.
 class Context {
@@ -130,10 +161,55 @@ class Context {
   auto set_has_errors(bool has_errors) -> void {
     sem_ir_->set_has_errors(has_errors);
   }
+  auto has_errors() const -> bool { return sem_ir_->has_errors(); }
+
+  // --- Diagnostics ---
+
+  // Emits a diagnostic at the given parse node location and marks has_errors.
+  template <typename... Args>
+  auto EmitError(Parse::NodeId node_id,
+                 const Diagnostics::DiagnosticBase<Args...>& diagnostic,
+                 Diagnostics::Internal::NoTypeDeduction<Args>... args) -> void {
+    auto token = node_token(node_id);
+    emitter_.Emit(token, diagnostic, args...);
+    set_has_errors(true);
+  }
+
+  // Emits a diagnostic at the given token and marks has_errors.
+  template <typename... Args>
+  auto EmitErrorAt(Lex::TokenIndex token,
+                   const Diagnostics::DiagnosticBase<Args...>& diagnostic,
+                   Diagnostics::Internal::NoTypeDeduction<Args>... args) -> void {
+    emitter_.Emit(token, diagnostic, args...);
+    set_has_errors(true);
+  }
+
+  // --- Type name helpers ---
+
+  // Returns a human-readable name for a TypeId.
+  auto GetTypeName(SemIR::TypeId type_id) -> std::string;
 
  private:
+  // Diagnostic emitter for semantic analysis, locating by token index.
+  class TokenEmitter : public Diagnostics::Emitter<Lex::TokenIndex> {
+   public:
+    explicit TokenEmitter(Diagnostics::Consumer* consumer,
+                          const Lex::TokenizedBuffer* tokens)
+        : Emitter(consumer), tokens_(tokens) {}
+
+   protected:
+    auto ConvertLoc(Lex::TokenIndex token, ContextFnT /*context_fn*/) const
+        -> Diagnostics::ConvertedLoc override {
+      return tokens_->TokenToDiagnosticLoc(token);
+    }
+
+   private:
+    const Lex::TokenizedBuffer* tokens_;
+  };
+
   SemIR::File* sem_ir_;
   const Parse::TreeAndSubtrees* tree_and_subtrees_;
+  TokenEmitter emitter_;
 
   // Stack of inst block builders. Each entry is a (placeholder_id, insts) pair.
   struct InstBlockEntry {
