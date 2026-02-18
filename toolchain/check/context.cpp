@@ -41,6 +41,16 @@ auto Context::PopInstBlock() -> SemIR::InstBlockId {
   return entry.id;
 }
 
+auto Context::SwitchInstBlock(SemIR::InstBlockId new_block_id) -> void {
+  if (!inst_block_stack_.empty()) {
+    auto entry = std::move(inst_block_stack_.back());
+    inst_block_stack_.pop_back();
+    inst_blocks().ReplacePlaceholder(
+        entry.id, llvm::ArrayRef<SemIR::InstId>(entry.insts));
+  }
+  inst_block_stack_.push_back({new_block_id, {}});
+}
+
 auto Context::CurrentInstBlockId() const -> SemIR::InstBlockId {
   if (inst_block_stack_.empty()) {
     return SemIR::InstBlockId::None;
@@ -80,6 +90,19 @@ auto Context::AddNameToScope(SemIR::NameId name_id, SemIR::InstId inst_id)
     -> void {
   if (!scope_stack_.empty()) {
     scope_stack_.back().names.insert_or_assign(name_id.index, inst_id);
+    // Also persist in the NameScope so member access can find names after
+    // the scope is popped.
+    auto scope_id = scope_stack_.back().scope_id;
+    if (scope_id.has_value()) {
+      name_scopes().Get(scope_id).names.insert_or_assign(name_id.index,
+                                                         inst_id);
+    }
+  }
+}
+
+auto Context::AddBodyBlock(SemIR::InstBlockId block_id) -> void {
+  if (current_function_id_.has_value()) {
+    functions().Get(current_function_id_).body_block_ids.push_back(block_id);
   }
 }
 

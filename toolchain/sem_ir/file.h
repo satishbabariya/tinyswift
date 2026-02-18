@@ -6,6 +6,7 @@
 #define TINYSWIFT_TOOLCHAIN_SEM_IR_FILE_H_
 
 #include "common/error.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -138,6 +139,9 @@ struct NameScope : public Printable<NameScope> {
   NameScopeId parent_scope_id;
   InstId inst_id;
 
+  // Persistent name→InstId map for member lookup after checking.
+  llvm::DenseMap<int32_t, InstId> names;
+
   auto Print(llvm::raw_ostream& out) const -> void {
     out << "{name: " << name_id << ", parent_scope: " << parent_scope_id << "}";
   }
@@ -151,10 +155,12 @@ class NameScopeStore {
   auto Add(InstId inst_id, NameId name_id, NameScopeId parent_scope_id)
       -> NameScopeId {
     auto id = NameScopeId(static_cast<int32_t>(scopes_.size()));
-    scopes_.push_back(
-        {.name_id = name_id,
-         .parent_scope_id = parent_scope_id,
-         .inst_id = inst_id});
+    NameScope scope{
+        .name_id = name_id,
+        .parent_scope_id = parent_scope_id,
+        .inst_id = inst_id,
+        .names = llvm::DenseMap<int32_t, InstId>()};
+    scopes_.push_back(std::move(scope));
     return id;
   }
 

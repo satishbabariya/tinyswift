@@ -5,6 +5,8 @@
 #ifndef TINYSWIFT_TOOLCHAIN_CHECK_CONTEXT_H_
 #define TINYSWIFT_TOOLCHAIN_CHECK_CONTEXT_H_
 
+#include <algorithm>
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -89,12 +91,47 @@ class Context {
   // Pops the current instruction block, finalizes it, and returns its ID.
   auto PopInstBlock() -> SemIR::InstBlockId;
 
+  // Finalizes the current top block and switches emission to a new block.
+  // Used when control flow splits (if/while) and we need to continue in a
+  // different block after the split (the merge/continuation block).
+  auto SwitchInstBlock(SemIR::InstBlockId new_block_id) -> void;
+
   // Returns the current inst block id being built (top of stack).
   auto CurrentInstBlockId() const -> SemIR::InstBlockId;
 
   // Adds an instruction ID to a specific block.
   auto AddInstToBlock(SemIR::InstBlockId block_id, SemIR::InstId inst_id)
       -> void;
+
+  // --- Current function tracking ---
+
+  // Sets the current function being checked (for adding body blocks).
+  auto SetCurrentFunction(SemIR::FunctionId id) -> void {
+    current_function_id_ = id;
+  }
+  auto ClearCurrentFunction() -> void {
+    current_function_id_ = SemIR::FunctionId::None;
+  }
+  auto CurrentFunctionId() const -> SemIR::FunctionId {
+    return current_function_id_;
+  }
+
+  // Adds a body block to the current function.
+  auto AddBodyBlock(SemIR::InstBlockId block_id) -> void;
+
+  // --- Pending condition for if/while/guard ---
+  // The parser places condition expressions as siblings before the statement
+  // node. HandleCodeBlock stores the parse NodeId here for the statement
+  // handler to evaluate (if/guard evaluate inline; while evaluates in a
+  // dedicated condition block so the back-edge can re-evaluate it).
+  auto SetPendingCondition(Parse::NodeId node_id) -> void {
+    pending_condition_node_id_ = node_id;
+  }
+  auto TakePendingCondition() -> Parse::NodeId {
+    auto id = pending_condition_node_id_;
+    pending_condition_node_id_ = Parse::NodeId::None;
+    return id;
+  }
 
   // --- Name scope management ---
 
@@ -131,6 +168,19 @@ class Context {
   }
   auto tree_and_subtrees() const -> const Parse::TreeAndSubtrees& {
     return *tree_and_subtrees_;
+  }
+
+  // Returns children of a node in source order. The TreeAndSubtrees::children()
+  // iterator returns reverse postorder (which is reverse source order for
+  // siblings), so we collect and reverse.
+  auto children_source_order(Parse::NodeId n) const
+      -> llvm::SmallVector<Parse::NodeId> {
+    llvm::SmallVector<Parse::NodeId> result;
+    for (auto child : tree_and_subtrees_->children(n)) {
+      result.push_back(child);
+    }
+    std::reverse(result.begin(), result.end());
+    return result;
   }
   auto tokens() const -> const Lex::TokenizedBuffer& { return tree().tokens(); }
 
@@ -220,6 +270,12 @@ class Context {
 
   // Stack of name scopes.
   llvm::SmallVector<ScopeEntry> scope_stack_;
+
+  // Current function being checked.
+  SemIR::FunctionId current_function_id_ = SemIR::FunctionId::None;
+
+  // Pending condition parse node for if/while/guard statements.
+  Parse::NodeId pending_condition_node_id_ = Parse::NodeId::None;
 };
 
 }  // namespace TinySwift::Check

@@ -190,7 +190,7 @@ static auto LowerTopLevelInsts(Context& context) -> void {
         kind == SemIR::InstKind::DoubleType ||
         kind == SemIR::InstKind::StructType ||
         kind == SemIR::InstKind::ClassType ||
-        kind == SemIR::InstKind::EnumType ||
+        kind == SemIR::InstKind::EnumDecl ||
         kind == SemIR::InstKind::EnumCase ||
         kind == SemIR::InstKind::EnumCaseWithPayload ||
         kind == SemIR::InstKind::TupleType ||
@@ -281,7 +281,7 @@ auto GetLLVMTypeForSIL(Context& context, const TinySIL::SILType& sil_type)
   auto type_id = SemIR::TypeId(sil_type.type_index);
   auto* ty = context.GetType(type_id);
   if (sil_type.is_address) {
-    return ty->getPointerTo();
+    return llvm::PointerType::get(ty->getContext(), 0);
   }
   return ty;
 }
@@ -316,7 +316,7 @@ auto LowerSILInst(Context& context,
                   const TinySIL::SILInstruction& inst,
                   llvm::DenseMap<int32_t, llvm::Value*>& sil_values,
                   llvm::DenseMap<int32_t, llvm::BasicBlock*>& sil_blocks,
-                  llvm::Function* llvm_fn) -> void {
+                  llvm::Function* /*llvm_fn*/) -> void {
   auto& builder = context.builder();
 
   auto getSILValue = [&](const TinySIL::SILValue& val) -> llvm::Value* {
@@ -355,7 +355,7 @@ auto LowerSILInst(Context& context,
     }
 
     case TinySIL::SILInstKind::StringLiteral: {
-      auto* val = builder.CreateGlobalStringPtr(inst.string_literal_value);
+      auto* val = builder.CreateGlobalString(inst.string_literal_value);
       setSILValue(inst.result, val);
       break;
     }

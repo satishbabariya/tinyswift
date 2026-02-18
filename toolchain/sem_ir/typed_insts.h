@@ -699,9 +699,9 @@ struct ClassType {
 };
 
 // An enum type declaration.
-struct EnumType {
-  static constexpr auto Kind = InstKind::EnumType.Define<Parse::NodeId>(
-      {.ir_name = "enum_type",
+struct EnumDecl {
+  static constexpr auto Kind = InstKind::EnumDecl.Define<Parse::NodeId>(
+      {.ir_name = "enum_decl",
        .is_type = InstIsType::Always,
        .constant_kind = InstConstantKind::AlwaysUnique});
 

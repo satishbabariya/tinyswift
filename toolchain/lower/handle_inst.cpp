@@ -115,7 +115,16 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
       auto name_ref = inst.As<SemIR::NameRef>();
       auto* value = context.TryGetLocal(name_ref.value_id);
       if (value) {
-        context.SetLocal(inst_id, value);
+        // If the referenced value is mutable storage (VarStorage), we need to
+        // load from the alloca to get the actual value.
+        auto ref_inst = sem_ir.insts().Get(name_ref.value_id);
+        if (ref_inst.Is<SemIR::VarStorage>()) {
+          llvm::Type* val_type = context.GetType(name_ref.type_id);
+          auto* loaded = context.builder().CreateLoad(val_type, value);
+          context.SetLocal(inst_id, loaded);
+        } else {
+          context.SetLocal(inst_id, value);
+        }
       }
       break;
     }
@@ -570,7 +579,7 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     // -----------------------------------------------------------------------
     // Enum operations
     // -----------------------------------------------------------------------
-    case SemIR::InstKind::EnumType:
+    case SemIR::InstKind::EnumDecl:
     case SemIR::InstKind::EnumCase:
     case SemIR::InstKind::EnumCaseWithPayload:
       // Type-level instructions, not lowered directly.

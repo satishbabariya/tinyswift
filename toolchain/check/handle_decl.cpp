@@ -13,7 +13,7 @@
 namespace TinySwift::Check {
 
 auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
 
   SemIR::NameId name_id = SemIR::NameId::None;
   SemIR::TypeId type_id = SemIR::TypeId::None;
@@ -29,7 +29,7 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
 
     if (child_kind == Parse::NodeKind::LetBindingPattern) {
       // LetBindingPattern has name and type.
-      auto pattern_children = context.tree_and_subtrees().children(child);
+      auto pattern_children = context.children_source_order(child);
       for (auto pc : pattern_children) {
         auto pc_kind = context.node_kind(pc);
         if (pc_kind == Parse::NodeKind::IdentifierNameNotBeforeParams) {
@@ -105,7 +105,7 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
 }
 
 auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
 
   SemIR::NameId name_id = SemIR::NameId::None;
   SemIR::TypeId type_id = SemIR::TypeId::None;
@@ -119,13 +119,20 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
       continue;
     }
 
-    if (child_kind == Parse::NodeKind::VariablePattern) {
-      // VariablePattern wraps an inner pattern.
-      auto vp_children = context.tree_and_subtrees().children(child);
+    if (child_kind == Parse::NodeKind::IdentifierPattern) {
+      // Direct identifier pattern: var i = n (no type annotation).
+      name_node_id = child;
+      auto token = context.node_token(child);
+      auto text = context.token_text(token);
+      auto ident_id = context.identifiers().Add(text);
+      name_id = SemIR::NameId::ForIdentifier(ident_id);
+    } else if (child_kind == Parse::NodeKind::VariablePattern) {
+      // VariablePattern wraps an inner pattern: var i: Int = n
+      auto vp_children = context.children_source_order(child);
       for (auto vpc : vp_children) {
         auto vpc_kind = context.node_kind(vpc);
         if (vpc_kind == Parse::NodeKind::VarBindingPattern) {
-          auto bp_children = context.tree_and_subtrees().children(vpc);
+          auto bp_children = context.children_source_order(vpc);
           for (auto bpc : bp_children) {
             auto bpc_kind = context.node_kind(bpc);
             if (bpc_kind == Parse::NodeKind::IdentifierNameNotBeforeParams) {

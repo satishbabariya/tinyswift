@@ -62,40 +62,11 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
         name = sem_ir.identifiers().Get(scope.name_id.AsIdentifierId());
       }
 
-      // Look for StructField instructions to build the body.
-      // Search all instructions for StructField with matching type.
-      llvm::SmallVector<llvm::Type*> field_types;
-      auto type_inst_id = sem_ir.types().GetTypeInstId(type_id);
-      for (auto [iter_id, iter_inst] : sem_ir.insts().enumerate()) {
-        if (auto field = iter_inst.TryAs<SemIR::StructField>()) {
-          // Check if this field belongs to this struct by matching its type_id.
-          if (field->type_id.has_value() && field->type_id != SemIR::ErrorInst::TypeId) {
-            // The StructField's type_id is the field's type, not the struct's type.
-            // We need a different approach: collect fields registered in the scope.
-          }
-        }
-      }
-
-      // For now, build the struct from NameScope entries.
+      // Create a named struct type. Field layout is not yet tracked in
+      // NameScope (names are ephemeral during checking), so the struct body
+      // is left empty for now. Proper field layout requires adding an
+      // InstBlockId fields_id to StructType.
       auto* llvm_struct = llvm::StructType::create(context.llvm_context(), name);
-
-      // Collect field types from the scope's name entries.
-      llvm::SmallVector<llvm::Type*> body_types;
-      for (auto& [name_id_idx, inst_id] : scope.names) {
-        auto field_inst = sem_ir.insts().Get(inst_id);
-        auto field_type_id = field_inst.type_id();
-        if (field_type_id.has_value() &&
-            field_type_id != SemIR::ErrorInst::TypeId &&
-            field_type_id != SemIR::TypeType::TypeId) {
-          auto* ft = context.GetType(field_type_id);
-          if (!ft->isVoidTy()) {
-            body_types.push_back(ft);
-          }
-        }
-      }
-      if (!body_types.empty()) {
-        llvm_struct->setBody(body_types);
-      }
       return llvm_struct;
     }
 
@@ -106,30 +77,13 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
       if (scope.name_id.AsIdentifierId().has_value()) {
         name = sem_ir.identifiers().Get(scope.name_id.AsIdentifierId());
       }
+      // Same as StructType — field layout not yet persisted in NameScope.
       auto* llvm_struct = llvm::StructType::create(context.llvm_context(), name);
-
-      // Collect field types from scope.
-      llvm::SmallVector<llvm::Type*> body_types;
-      for (auto& [name_id_idx, inst_id] : scope.names) {
-        auto field_inst = sem_ir.insts().Get(inst_id);
-        auto field_type_id = field_inst.type_id();
-        if (field_type_id.has_value() &&
-            field_type_id != SemIR::ErrorInst::TypeId &&
-            field_type_id != SemIR::TypeType::TypeId) {
-          auto* ft = context.GetType(field_type_id);
-          if (!ft->isVoidTy()) {
-            body_types.push_back(ft);
-          }
-        }
-      }
-      if (!body_types.empty()) {
-        llvm_struct->setBody(body_types);
-      }
       return llvm_struct;
     }
 
-    case SemIR::InstKind::EnumType: {
-      auto enum_type = inst.As<SemIR::EnumType>();
+    case SemIR::InstKind::EnumDecl: {
+      auto enum_type = inst.As<SemIR::EnumDecl>();
       auto& scope = sem_ir.name_scopes().Get(enum_type.name_scope_id);
       llvm::StringRef name = "";
       if (scope.name_id.AsIdentifierId().has_value()) {
@@ -151,7 +105,6 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
         auto elem_inst_ids =
             sem_ir.inst_blocks().Get(tuple_type.element_types_id);
         for (auto elem_inst_id : elem_inst_ids) {
-          auto elem_inst = sem_ir.insts().Get(elem_inst_id);
           auto elem_type_id = sem_ir.types().GetTypeIdForTypeInstId(
               SemIR::TypeInstId::UnsafeMake(elem_inst_id));
           elem_types.push_back(context.GetType(elem_type_id));

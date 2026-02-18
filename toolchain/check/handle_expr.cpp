@@ -173,7 +173,7 @@ auto HandleIdentifierNameExpr(Context& context, Parse::NodeId node_id)
 // Handles a parenthesized expression.
 auto HandleParenExpr(Context& context, Parse::NodeId node_id)
     -> SemIR::InstId {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
     if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
@@ -186,7 +186,7 @@ auto HandleParenExpr(Context& context, Parse::NodeId node_id)
 // Handles a call expression.
 auto HandleCallExpr(Context& context, Parse::NodeId node_id)
     -> SemIR::InstId {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
 
   SemIR::InstId callee_id = SemIR::InstId::None;
   llvm::SmallVector<SemIR::InstId> arg_ids;
@@ -196,7 +196,7 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
 
     if (child_kind == Parse::NodeKind::CallExprStart) {
       // CallExprStart has the callee as its child.
-      auto start_children = context.tree_and_subtrees().children(child);
+      auto start_children = context.children_source_order(child);
       for (auto start_child : start_children) {
         if (context.node_kind(start_child)
                 .category()
@@ -219,7 +219,12 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
   // Determine return type and validate arguments.
   auto type_id = SemIR::ErrorInst::TypeId;
   if (callee_id.has_value()) {
+    // Look through NameRef to find the actual callee instruction.
+    // HandleIdentifierNameExpr returns a NameRef wrapping the FunctionDecl.
     auto callee_inst = context.insts().Get(callee_id);
+    if (auto name_ref = callee_inst.TryAs<SemIR::NameRef>()) {
+      callee_inst = context.insts().Get(name_ref->value_id);
+    }
     if (auto fn_decl = callee_inst.TryAs<SemIR::FunctionDecl>()) {
       auto& fn = context.functions().Get(fn_decl->function_id);
       if (fn.return_type_inst_id.has_value()) {
@@ -261,7 +266,7 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
 // Handles a member access expression (base.member).
 auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
     -> SemIR::InstId {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
 
   SemIR::InstId base_id = SemIR::InstId::None;
   llvm::StringRef member_name;
@@ -300,7 +305,7 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
         scope_id = struct_type->name_scope_id;
       } else if (auto class_type = type_inst.TryAs<SemIR::ClassType>()) {
         scope_id = class_type->name_scope_id;
-      } else if (auto enum_type = type_inst.TryAs<SemIR::EnumType>()) {
+      } else if (auto enum_type = type_inst.TryAs<SemIR::EnumDecl>()) {
         scope_id = enum_type->name_scope_id;
       }
 
@@ -344,7 +349,7 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
 // Handles an infix operator expression with type checking.
 auto HandleInfixOperatorExpr(Context& context, Parse::NodeId node_id)
     -> SemIR::InstId {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
 
   SemIR::InstId lhs_id = SemIR::InstId::None;
   SemIR::InstId rhs_id = SemIR::InstId::None;
@@ -372,9 +377,7 @@ auto HandleInfixOperatorExpr(Context& context, Parse::NodeId node_id)
   }
 
   bool lhs_is_float = IsFloatType(context, lhs_type);
-  bool rhs_is_float = IsFloatType(context, rhs_type);
   bool lhs_is_int = IsIntType(context, lhs_type);
-  bool rhs_is_int = IsIntType(context, rhs_type);
   bool lhs_is_bool = IsBoolType(context, lhs_type);
   bool lhs_is_string = IsStringType(context, lhs_type);
 
@@ -603,7 +606,7 @@ auto HandleInfixOperatorExpr(Context& context, Parse::NodeId node_id)
 // Handles a prefix operator expression.
 auto HandlePrefixOperatorExpr(Context& context, Parse::NodeId node_id)
     -> SemIR::InstId {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
 
   SemIR::InstId operand_id = SemIR::InstId::None;
   for (auto child : children) {
@@ -662,7 +665,7 @@ auto HandlePrefixOperatorExpr(Context& context, Parse::NodeId node_id)
 // Handles a postfix operator expression.
 auto HandlePostfixOperatorExpr(Context& context, Parse::NodeId node_id)
     -> SemIR::InstId {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
 
   SemIR::InstId operand_id = SemIR::InstId::None;
   for (auto child : children) {
@@ -680,7 +683,7 @@ auto HandlePostfixOperatorExpr(Context& context, Parse::NodeId node_id)
 // Handles an assignment expression.
 auto HandleAssignmentExpr(Context& context, Parse::NodeId node_id)
     -> SemIR::InstId {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
 
   SemIR::InstId lhs_id = SemIR::InstId::None;
   SemIR::InstId rhs_id = SemIR::InstId::None;
@@ -758,7 +761,7 @@ auto HandleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
 
   // For expression statements, unwrap.
   if (kind == Parse::NodeKind::ExprStatement) {
-    auto children = context.tree_and_subtrees().children(node_id);
+    auto children = context.children_source_order(node_id);
     for (auto child : children) {
       if (context.node_kind(child).category().HasAnyOf(
               Parse::NodeCategory::Expr)) {

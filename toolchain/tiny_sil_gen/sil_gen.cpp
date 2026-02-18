@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "llvm/ADT/DenseSet.h"
 #include "toolchain/sem_ir/function.h"
 #include "toolchain/sem_ir/typed_insts.h"
 #include "toolchain/tiny_sil/instruction.h"
@@ -91,7 +92,7 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
       kind == SemIR::InstKind::DoubleType ||
       kind == SemIR::InstKind::StructType ||
       kind == SemIR::InstKind::ClassType ||
-      kind == SemIR::InstKind::EnumType ||
+      kind == SemIR::InstKind::EnumDecl ||
       kind == SemIR::InstKind::EnumCase ||
       kind == SemIR::InstKind::EnumCaseWithPayload ||
       kind == SemIR::InstKind::TupleType ||
@@ -166,9 +167,23 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
 
   if (auto name_ref = inst.TryAs<SemIR::NameRef>()) {
     // A name reference forwards the underlying value.
-    auto value = ctx.GetValue(name_ref->value_id);
-    if (value.is_valid()) {
-      ctx.SetValue(inst_id, value);
+    // If the referenced value is mutable storage (VarStorage / alloc_stack),
+    // emit a load to get the actual stored value.
+    auto ref_inst = sem_ir.insts().Get(name_ref->value_id);
+    if (ref_inst.Is<SemIR::VarStorage>()) {
+      auto addr_value = ctx.GetValue(name_ref->value_id);
+      if (addr_value.is_valid()) {
+        auto result = AllocValue(ctx, ctx.GetSILType(name_ref->type_id));
+        auto sil_inst = MakeInst(TinySIL::SILInstKind::Load, result);
+        sil_inst->setOperand(0, addr_value);
+        ctx.emit(std::move(sil_inst));
+        ctx.SetValue(inst_id, result);
+      }
+    } else {
+      auto value = ctx.GetValue(name_ref->value_id);
+      if (value.is_valid()) {
+        ctx.SetValue(inst_id, value);
+      }
     }
     return;
   }
@@ -203,7 +218,20 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
 
   if (auto assign = inst.TryAs<SemIR::Assign>()) {
     auto rhs = ctx.GetValue(assign->rhs_id);
-    auto lhs = ctx.GetValue(assign->lhs_id);
+
+    // For the store destination, we need the raw alloca address (pointer).
+    // If lhs_id is a NameRef pointing to VarStorage, look through it to get
+    // the alloca address directly rather than the loaded value.
+    SemIR::InstId store_addr_id = assign->lhs_id;
+    auto lhs_inst = sem_ir.insts().Get(assign->lhs_id);
+    if (auto name_ref = lhs_inst.TryAs<SemIR::NameRef>()) {
+      auto ref_inst = sem_ir.insts().Get(name_ref->value_id);
+      if (ref_inst.Is<SemIR::VarStorage>()) {
+        store_addr_id = name_ref->value_id;
+      }
+    }
+    auto lhs = ctx.GetValue(store_addr_id);
+
     if (rhs.is_valid() && lhs.is_valid()) {
       auto sil_inst = MakeVoidInst(TinySIL::SILInstKind::Store);
       sil_inst->setOperand(0, rhs);
@@ -447,12 +475,18 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
   // --- Function Calls ---
 
   if (auto call = inst.TryAs<SemIR::Call>()) {
-    // Get the callee.
+    // Get the callee, looking through NameRef wrappers.
     auto callee_inst = sem_ir.insts().Get(call->callee_id);
+    if (auto name_ref = callee_inst.TryAs<SemIR::NameRef>()) {
+      callee_inst = sem_ir.insts().Get(name_ref->value_id);
+    }
 
-    // Resolve function name.
+    // Resolve function name from FunctionDecl or FunctionType.
     std::string func_name;
-    if (auto func_type = callee_inst.TryAs<SemIR::FunctionType>()) {
+    if (auto fn_decl = callee_inst.TryAs<SemIR::FunctionDecl>()) {
+      auto& function = sem_ir.functions().Get(fn_decl->function_id);
+      func_name = ctx.GetFunctionName(function);
+    } else if (auto func_type = callee_inst.TryAs<SemIR::FunctionType>()) {
       auto& function = sem_ir.functions().Get(func_type->function_id);
       func_name = ctx.GetFunctionName(function);
     } else {
@@ -851,10 +885,30 @@ auto GenerateSIL(const SemIR::File& sem_ir)
 
   Context ctx(sem_ir, *sil_module);
 
-  // Emit all functions with bodies.
+  // Build a set of function names that have bodies. When the two-pass check
+  // phase registers forward declarations in pass 1 and full definitions in
+  // pass 2, we end up with duplicate SemIR Functions (same name). We prefer
+  // the one with a body and skip pure declarations for the same name.
+  llvm::DenseSet<int32_t> names_with_bodies;
+  for (auto [func_id, function] : sem_ir.functions().enumerate()) {
+    if (!function.body_block_ids.empty()) {
+      auto id = function.name_id.AsIdentifierId();
+      if (id.has_value()) {
+        names_with_bodies.insert(id.index);
+      }
+    }
+  }
+
+  // Emit all functions, skipping declarations superseded by a body definition.
   for (auto [func_id, function] : sem_ir.functions().enumerate()) {
     auto identifier_id = function.name_id.AsIdentifierId();
     if (!identifier_id.has_value()) {
+      continue;
+    }
+    // Skip declaration-only stubs if a body-having function with the same
+    // name exists (it will be emitted later in the loop).
+    if (function.body_block_ids.empty() &&
+        names_with_bodies.count(identifier_id.index)) {
       continue;
     }
     EmitFunctionBody(ctx, func_id, function);
@@ -884,7 +938,7 @@ auto GenerateSIL(const SemIR::File& sem_ir)
           kind != SemIR::InstKind::DoubleType &&
           kind != SemIR::InstKind::StructType &&
           kind != SemIR::InstKind::ClassType &&
-          kind != SemIR::InstKind::EnumType &&
+          kind != SemIR::InstKind::EnumDecl &&
           kind != SemIR::InstKind::EnumCase &&
           kind != SemIR::InstKind::EnumCaseWithPayload &&
           kind != SemIR::InstKind::TupleType &&

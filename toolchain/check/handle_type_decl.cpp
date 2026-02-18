@@ -18,7 +18,7 @@ namespace {
 // Extracts the name from a type definition start node.
 auto ExtractTypeName(Context& context, Parse::NodeId start_node_id)
     -> std::pair<SemIR::NameId, Parse::NodeId> {
-  auto children = context.tree_and_subtrees().children(start_node_id);
+  auto children = context.children_source_order(start_node_id);
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
     if (child_kind == Parse::NodeKind::IdentifierNameNotBeforeParams ||
@@ -40,9 +40,8 @@ struct FieldInfo {
   Parse::NodeId node_id;
 };
 
-auto CollectFieldDecls(
-    Context& context,
-    llvm::iterator_range<Parse::TreeAndSubtrees::SiblingIterator> children)
+auto CollectFieldDecls(Context& context,
+                       llvm::ArrayRef<Parse::NodeId> children)
     -> llvm::SmallVector<FieldInfo> {
   llvm::SmallVector<FieldInfo> fields;
   for (auto child : children) {
@@ -60,14 +59,14 @@ auto CollectFieldDecls(
       SemIR::TypeId field_type_id = SemIR::TypeId::None;
       Parse::NodeId field_node_id = child;
 
-      auto var_children = context.tree_and_subtrees().children(child);
+      auto var_children = context.children_source_order(child);
       for (auto vc : var_children) {
         auto vc_kind = context.node_kind(vc);
         if (vc_kind == Parse::NodeKind::VariablePattern) {
-          auto vp_children = context.tree_and_subtrees().children(vc);
+          auto vp_children = context.children_source_order(vc);
           for (auto vpc : vp_children) {
             if (context.node_kind(vpc) == Parse::NodeKind::VarBindingPattern) {
-              auto bp_children = context.tree_and_subtrees().children(vpc);
+              auto bp_children = context.children_source_order(vpc);
               for (auto bpc : bp_children) {
                 auto bpc_kind = context.node_kind(bpc);
                 if (bpc_kind ==
@@ -101,10 +100,8 @@ auto CollectFieldDecls(
 }
 
 // Processes the members of a type definition body.
-auto HandleTypeMembers(
-    Context& context,
-    llvm::iterator_range<Parse::TreeAndSubtrees::SiblingIterator> children)
-    -> void {
+auto HandleTypeMembers(Context& context,
+                       llvm::ArrayRef<Parse::NodeId> children) -> void {
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
 
@@ -127,7 +124,7 @@ auto HandleTypeMembers(
 }  // namespace
 
 auto HandleStructDefinition(Context& context, Parse::NodeId node_id) -> void {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
 
   // Find the start node.
   Parse::NodeId start_node_id = Parse::NodeId::None;
@@ -158,10 +155,8 @@ auto HandleStructDefinition(Context& context, Parse::NodeId node_id) -> void {
     context.AddNameToScope(name_id, struct_type_id);
   }
 
-  // Collect field declarations before processing members, so we can emit
-  // StructField instructions with proper indices.
-  auto field_infos =
-      CollectFieldDecls(context, context.tree_and_subtrees().children(node_id));
+  // Collect field declarations before processing members.
+  auto field_infos = CollectFieldDecls(context, children);
 
   // Emit StructField instructions and register fields in the struct scope.
   context.PushScope(type_scope_id);
@@ -177,12 +172,12 @@ auto HandleStructDefinition(Context& context, Parse::NodeId node_id) -> void {
   }
 
   // Now process all members (this will handle var decls again, plus methods).
-  HandleTypeMembers(context, context.tree_and_subtrees().children(node_id));
+  HandleTypeMembers(context, children);
   context.PopScope();
 }
 
 auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
 
   Parse::NodeId start_node_id = Parse::NodeId::None;
   for (auto child : children) {
@@ -210,8 +205,7 @@ auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void {
   }
 
   // Collect and register fields.
-  auto field_infos =
-      CollectFieldDecls(context, context.tree_and_subtrees().children(node_id));
+  auto field_infos = CollectFieldDecls(context, children);
 
   context.PushScope(type_scope_id);
   int32_t field_index = 0;
@@ -225,12 +219,12 @@ auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void {
     ++field_index;
   }
 
-  HandleTypeMembers(context, context.tree_and_subtrees().children(node_id));
+  HandleTypeMembers(context, children);
   context.PopScope();
 }
 
 auto HandleEnumDefinition(Context& context, Parse::NodeId node_id) -> void {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
 
   Parse::NodeId start_node_id = Parse::NodeId::None;
   for (auto child : children) {
@@ -251,10 +245,10 @@ auto HandleEnumDefinition(Context& context, Parse::NodeId node_id) -> void {
   // Create cases block placeholder.
   auto cases_block_id = context.inst_blocks().AddPlaceholder();
 
-  // Emit EnumType instruction.
+  // Emit EnumDecl instruction.
   auto enum_type_id = context.AddInst(SemIR::LocIdAndInst(
       SemIR::LocId(name_node_id.has_value() ? name_node_id : node_id),
-      SemIR::EnumType{.type_id = SemIR::TypeType::TypeId,
+      SemIR::EnumDecl{.type_id = SemIR::TypeType::TypeId,
                       .name_scope_id = type_scope_id,
                       .cases_id = cases_block_id}));
 
@@ -277,10 +271,10 @@ auto HandleEnumDefinition(Context& context, Parse::NodeId node_id) -> void {
       continue;
     }
     if (child_kind == Parse::NodeKind::EnumCaseDecl) {
-      auto case_children = context.tree_and_subtrees().children(child);
+      auto case_children = context.children_source_order(child);
       for (auto cc : case_children) {
         if (context.node_kind(cc) == Parse::NodeKind::EnumCaseElement) {
-          auto elem_children = context.tree_and_subtrees().children(cc);
+          auto elem_children = context.children_source_order(cc);
           for (auto ec : elem_children) {
             if (context.node_kind(ec) ==
                 Parse::NodeKind::IdentifierNameNotBeforeParams) {
@@ -317,7 +311,7 @@ auto HandleEnumDefinition(Context& context, Parse::NodeId node_id) -> void {
 
 auto HandleProtocolDefinition(Context& context, Parse::NodeId node_id)
     -> void {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
 
   Parse::NodeId start_node_id = Parse::NodeId::None;
   for (auto child : children) {
@@ -346,7 +340,7 @@ auto HandleProtocolDefinition(Context& context, Parse::NodeId node_id)
   }
 
   context.PushScope(type_scope_id);
-  HandleTypeMembers(context, context.tree_and_subtrees().children(node_id));
+  HandleTypeMembers(context, children);
   context.PopScope();
 }
 
@@ -354,7 +348,7 @@ auto HandleExtensionDefinition(Context& context, Parse::NodeId node_id)
     -> void {
   // Extensions add to an existing type's scope. For now, just process members
   // in the current scope.
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
     if (child_kind == Parse::NodeKind::ExtensionDefinitionStart) {

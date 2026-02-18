@@ -28,7 +28,7 @@ struct FunctionSignature {
 auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
     -> FunctionSignature {
   FunctionSignature sig;
-  auto children = context.tree_and_subtrees().children(sig_node_id);
+  auto children = context.children_source_order(sig_node_id);
 
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
@@ -47,8 +47,8 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
     }
 
     if (child_kind == Parse::NodeKind::ExplicitParamList) {
-      // Process parameters.
-      auto param_children = context.tree_and_subtrees().children(child);
+      // Process parameters in source order.
+      auto param_children = context.children_source_order(child);
       for (auto pc : param_children) {
         auto pc_kind = context.node_kind(pc);
         if (pc_kind == Parse::NodeKind::FunctionParam) {
@@ -56,7 +56,7 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
           SemIR::NameId param_name_id = SemIR::NameId::None;
           SemIR::TypeId param_type_id = SemIR::ErrorInst::TypeId;
 
-          auto fp_children = context.tree_and_subtrees().children(pc);
+          auto fp_children = context.children_source_order(pc);
           for (auto fpc : fp_children) {
             auto fpc_kind = context.node_kind(fpc);
             if (fpc_kind == Parse::NodeKind::IdentifierNameNotBeforeParams ||
@@ -87,7 +87,7 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
     }
 
     if (child_kind == Parse::NodeKind::ReturnType) {
-      auto rt_children = context.tree_and_subtrees().children(child);
+      auto rt_children = context.children_source_order(child);
       for (auto rtc : rt_children) {
         if (context.node_kind(rtc).category().HasAnyOf(
                 Parse::NodeCategory::Type)) {
@@ -105,19 +105,18 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
 
 auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id)
     -> void {
-  auto children = context.tree_and_subtrees().children(node_id);
+  auto children = context.children_source_order(node_id);
 
   // First child should be FunctionDefinitionStart.
   Parse::NodeId sig_node_id = Parse::NodeId::None;
-  llvm::SmallVector<Parse::NodeId> body_stmt_ids;
+  Parse::NodeId body_code_block = Parse::NodeId::None;
 
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
     if (child_kind == Parse::NodeKind::FunctionDefinitionStart) {
       sig_node_id = child;
-    } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Statement |
-                                              Parse::NodeCategory::Decl)) {
-      body_stmt_ids.push_back(child);
+    } else if (child_kind == Parse::NodeKind::CodeBlock) {
+      body_code_block = child;
     }
   }
 
@@ -207,6 +206,9 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id)
     context.AddNameToScope(sig.name_id, fn_decl_id);
   }
 
+  // Track the current function for body block registration.
+  context.SetCurrentFunction(function_id);
+
   // Now process the body.
   // Push a new scope for the function body.
   auto body_scope_id = context.name_scopes().Add(
@@ -220,17 +222,18 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id)
   }
 
   // Push a new inst block for the function body.
-  context.PushInstBlock();
+  // Add the main body block to body_block_ids FIRST so it's always bb0 (entry).
+  auto body_block_id = context.PushInstBlock();
+  context.functions().Get(function_id).body_block_ids.push_back(body_block_id);
 
-  // Process body statements.
-  for (auto stmt_id : body_stmt_ids) {
-    HandleStatement(context, stmt_id);
+  // Process body statements via HandleCodeBlock which handles source ordering
+  // and condition expression association for if/while/guard.
+  if (body_code_block.has_value()) {
+    HandleCodeBlock(context, body_code_block);
   }
 
-  auto body_block_id = context.PopInstBlock();
-
-  // Store body block in the function.
-  context.functions().Get(function_id).body_block_ids.push_back(body_block_id);
+  context.PopInstBlock();
+  context.ClearCurrentFunction();
 
   context.PopScope();
 }

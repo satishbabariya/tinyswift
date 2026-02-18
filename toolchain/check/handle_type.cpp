@@ -21,7 +21,7 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
 
   if (kind == Parse::NodeKind::TypeAnnotation) {
     // TypeAnnotation has one child: the type expression.
-    auto children = context.tree_and_subtrees().children(node_id);
+    auto children = context.children_source_order(node_id);
     for (auto child : children) {
       if (context.node_kind(child).category().HasAnyOf(
               Parse::NodeCategory::Type)) {
@@ -33,7 +33,7 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
 
   if (kind == Parse::NodeKind::OptionalType) {
     // OptionalType has one child: the base type.
-    auto children = context.tree_and_subtrees().children(node_id);
+    auto children = context.children_source_order(node_id);
     SemIR::TypeId inner_type_id = SemIR::ErrorInst::TypeId;
     for (auto child : children) {
       if (context.node_kind(child).category().HasAnyOf(
@@ -55,7 +55,7 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
 
   if (kind == Parse::NodeKind::ArrayType) {
     // For now, arrays are just a pointer to the element type.
-    auto children = context.tree_and_subtrees().children(node_id);
+    auto children = context.children_source_order(node_id);
     for (auto child : children) {
       if (context.node_kind(child).category().HasAnyOf(
               Parse::NodeCategory::Type)) {
