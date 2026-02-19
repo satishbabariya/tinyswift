@@ -235,6 +235,14 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
       actual_callee_id = name_ref->value_id;
       callee_inst = context.insts().Get(name_ref->value_id);
     }
+    // Also look through ValueBinding (e.g. `let f = { x in ... }` binds a
+    // ValueBinding whose value_id is the ClosureExpr).
+    if (auto value_binding = callee_inst.TryAs<SemIR::ValueBinding>()) {
+      if (value_binding->value_id.has_value()) {
+        actual_callee_id = value_binding->value_id;
+        callee_inst = context.insts().Get(value_binding->value_id);
+      }
+    }
 
     if (auto fn_decl = callee_inst.TryAs<SemIR::FunctionDecl>()) {
       // --- Function call with label matching ---
@@ -587,6 +595,10 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
     if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
       if (!base_id.has_value()) {
         base_id = HandleExpr(context, child);
+      } else {
+        // Second Expr child in MemberAccessExpr is the member name
+        // (IdentifierNameExpr — same category as base but is just a name token).
+        member_name = context.token_text(context.node_token(child));
       }
     } else if (child_kind == Parse::NodeKind::IdentifierNameNotBeforeParams ||
                child_kind == Parse::NodeKind::IdentifierNameBeforeParams ||
@@ -1015,6 +1027,95 @@ auto HandleAssignmentExpr(Context& context, Parse::NodeId node_id)
       SemIR::Assign{.lhs_id = lhs_id, .rhs_id = rhs_id}));
 }
 
+// Handles a ternary expression: `condition ? then_expr : else_expr`.
+// Lowered to: VarStorage temp + conditional branch + store in each arm + load in merge.
+auto HandleTernaryExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
+  auto children = context.children_source_order(node_id);
+  // TernaryExpr has child_count=3: condition, then_expr, else_expr.
+  if (children.size() < 3) return SemIR::InstId::None;
+
+  auto cond_node = children[0];
+  auto then_node = children[1];
+  auto else_node = children[2];
+
+  // Evaluate condition in current block.
+  auto cond_id = HandleExpr(context, cond_node);
+
+  // Use Int as the result type (covers the common case).
+  auto result_type = context.GetBuiltinType("Int");
+
+  // Allocate a temporary VarStorage for the result.
+  auto temp_id = context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::VarStorage{.type_id = result_type,
+                        .pattern_id = SemIR::AbsoluteInstId(
+                            SemIR::InstId::None)}));
+
+  // Create blocks for then, else, and merge.
+  auto then_block_id = context.inst_blocks().AddPlaceholder();
+  auto else_block_id = context.inst_blocks().AddPlaceholder();
+  auto merge_block_id = context.inst_blocks().AddPlaceholder();
+
+  // Emit conditional branch in current block: BranchIf→then, Branch→else.
+  context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::BranchIf{.target_id = SemIR::LabelId(then_block_id),
+                       .cond_id = cond_id}));
+  context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::Branch{.target_id = SemIR::LabelId(else_block_id)}));
+
+  // Switch emission to merge block; code after the ternary continues there.
+  context.SwitchInstBlock(merge_block_id);
+  context.AddBodyBlock(merge_block_id);
+
+  // Build then block: evaluate then_expr, assign to temp, branch to merge.
+  {
+    context.PushInstBlock();
+    auto then_val = HandleExpr(context, then_node);
+    if (then_val.has_value()) {
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Assign{.lhs_id = temp_id, .rhs_id = then_val}));
+    }
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+    auto tmp = context.PopInstBlock();
+    auto insts = context.inst_blocks().Get(tmp);
+    context.inst_blocks().ReplacePlaceholder(
+        then_block_id, llvm::ArrayRef<SemIR::InstId>(insts));
+    context.AddBodyBlock(then_block_id);
+  }
+
+  // Build else block: evaluate else_expr, assign to temp, branch to merge.
+  {
+    context.PushInstBlock();
+    auto else_val = HandleExpr(context, else_node);
+    if (else_val.has_value()) {
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Assign{.lhs_id = temp_id, .rhs_id = else_val}));
+    }
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+    auto tmp = context.PopInstBlock();
+    auto insts = context.inst_blocks().Get(tmp);
+    context.inst_blocks().ReplacePlaceholder(
+        else_block_id, llvm::ArrayRef<SemIR::InstId>(insts));
+    context.AddBodyBlock(else_block_id);
+  }
+
+  // In merge block: load from temp (NameRef → SILGen emits Load).
+  auto load_id = context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::NameRef{.type_id = result_type,
+                     .name_id = SemIR::NameId::None,
+                     .value_id = temp_id}));
+  return load_id;
+}
+
 }  // namespace
 
 auto HandleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
@@ -1071,6 +1172,9 @@ auto HandleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
   }
   if (kind == Parse::NodeKind::ClosureExpr) {
     return HandleClosureExpr(context, node_id);
+  }
+  if (kind == Parse::NodeKind::TernaryExpr) {
+    return HandleTernaryExpr(context, node_id);
   }
 
   // For expression statements, unwrap.

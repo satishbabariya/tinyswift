@@ -216,21 +216,25 @@ auto HandleWhileStatement(Context& context, Parse::NodeId node_id) -> void {
     context.AddBodyBlock(cond_block_id);
   }
 
-  // Build body block: process body, then branch back to condition.
+  // Build body block: push body_block_id directly so that any nested
+  // SwitchInstBlock (from inner if/while) finalizes body_block_id with the
+  // correct first-block instructions rather than an orphaned inner block.
   {
-    context.PushInstBlock();
+    context.PushInstBlockWithId(body_block_id);
+    context.AddBodyBlock(body_block_id);
+    // Push loop context so break/continue can find their targets.
+    context.PushLoopContext(merge_block_id, cond_block_id);
     if (body_node.has_value()) {
       HandleCodeBlock(context, body_node);
     }
-    // Back-edge: loop back to condition block.
+    context.PopLoopContext();
+    // Back-edge goes into the tail block (may differ from body_block_id if
+    // inner control flow called SwitchInstBlock).
     context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
         SemIR::Branch{.target_id = SemIR::LabelId(cond_block_id)}));
-    auto tmp_id = context.PopInstBlock();
-    auto body_insts = context.inst_blocks().Get(tmp_id);
-    context.inst_blocks().ReplacePlaceholder(
-        body_block_id, llvm::ArrayRef<SemIR::InstId>(body_insts));
-    context.AddBodyBlock(body_block_id);
+    // Finalize the tail block (whatever is currently on top of the stack).
+    context.PopInstBlock();
   }
 
   // Switch emission to merge block. Code after the while goes here.
@@ -437,16 +441,24 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
     context.AddBodyBlock(cond_block_id);
   }
 
-  // Build body block.
+  // Build body block. Use PushInstBlockWithId so that nested control flow
+  // (SwitchInstBlock from inner if/while) finalizes body_block_id with the
+  // correct entry-block instructions.
   {
-    context.PushInstBlock();
+    context.PushInstBlockWithId(body_block_id);
+    context.AddBodyBlock(body_block_id);
+    // Push loop context so break/continue can find their targets.
+    context.PushLoopContext(merge_block_id, cond_block_id);
 
     // Process body statements.
     if (body_node.has_value()) {
       HandleCodeBlock(context, body_node);
     }
 
+    context.PopLoopContext();
+
     // Increment loop variable: i = i + 1.
+    // These go into the tail block (which may differ from body_block_id).
     auto loop_val_id = context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
         SemIR::NameRef{.type_id = int_type,
@@ -469,11 +481,8 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
         SemIR::LocId(node_id),
         SemIR::Branch{.target_id = SemIR::LabelId(cond_block_id)}));
 
-    auto tmp_id = context.PopInstBlock();
-    auto body_insts = context.inst_blocks().Get(tmp_id);
-    context.inst_blocks().ReplacePlaceholder(
-        body_block_id, llvm::ArrayRef<SemIR::InstId>(body_insts));
-    context.AddBodyBlock(body_block_id);
+    // Finalize the tail block.
+    context.PopInstBlock();
   }
 
   // Switch emission to merge block.
@@ -531,6 +540,26 @@ auto HandleDeferStatement(Context& context, Parse::NodeId node_id) -> void {
     if (child_kind == Parse::NodeKind::CodeBlock) {
       HandleCodeBlock(context, child);
     }
+  }
+}
+
+// Handles a break statement by branching to the enclosing loop's merge block.
+auto HandleBreakStatement(Context& context, Parse::NodeId node_id) -> void {
+  auto* loop = context.CurrentLoop();
+  if (loop) {
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(loop->break_id)}));
+  }
+}
+
+// Handles a continue statement by branching to the enclosing loop's condition.
+auto HandleContinueStatement(Context& context, Parse::NodeId node_id) -> void {
+  auto* loop = context.CurrentLoop();
+  if (loop) {
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(loop->continue_id)}));
   }
 }
 
@@ -644,6 +673,14 @@ auto HandleStatement(Context& context, Parse::NodeId node_id) -> void {
   }
   if (kind == Parse::NodeKind::ForInStatement) {
     HandleForInStatement(context, node_id);
+    return;
+  }
+  if (kind == Parse::NodeKind::BreakStatement) {
+    HandleBreakStatement(context, node_id);
+    return;
+  }
+  if (kind == Parse::NodeKind::ContinueStatement) {
+    HandleContinueStatement(context, node_id);
     return;
   }
   if (kind == Parse::NodeKind::SwitchStatement) {

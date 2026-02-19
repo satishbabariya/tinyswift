@@ -16,7 +16,24 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
   if (kind == Parse::NodeKind::IdentifierType) {
     auto token = context.node_token(node_id);
     auto text = context.token_text(token);
-    return context.GetBuiltinType(text);
+    auto result = context.GetBuiltinType(text);
+    if (result != SemIR::ErrorInst::TypeId) {
+      return result;
+    }
+    // Fall through to scope lookup for user-defined types.
+    auto ident_id = context.identifiers().Lookup(text);
+    if (ident_id.has_value()) {
+      auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+      auto inst_id = context.LookupName(name_id);
+      if (inst_id.has_value()) {
+        auto inst = context.insts().Get(inst_id);
+        if (inst.Is<SemIR::StructType>() || inst.Is<SemIR::ClassType>()) {
+          return SemIR::TypeId::ForTypeConstant(
+              SemIR::ConstantId::ForConcreteConstant(inst_id));
+        }
+      }
+    }
+    return SemIR::ErrorInst::TypeId;
   }
 
   if (kind == Parse::NodeKind::TypeAnnotation) {

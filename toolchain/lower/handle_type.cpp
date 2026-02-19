@@ -2,6 +2,8 @@
 // Exceptions. See /LICENSE for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
+#include <algorithm>
+
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Type.h"
 #include "toolchain/lower/context.h"
@@ -62,11 +64,31 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
         name = sem_ir.identifiers().Get(scope.name_id.AsIdentifierId());
       }
 
-      // Create a named struct type. Field layout is not yet tracked in
-      // NameScope (names are ephemeral during checking), so the struct body
-      // is left empty for now. Proper field layout requires adding an
-      // InstBlockId fields_id to StructType.
       auto* llvm_struct = llvm::StructType::create(context.llvm_context(), name);
+
+      // Collect StructField entries from the scope, sort by field index.
+      struct FieldEntry {
+        int32_t idx;
+        SemIR::TypeId type_id;
+      };
+      llvm::SmallVector<FieldEntry> fields;
+      for (const auto& kv : scope.names) {
+        auto fi = sem_ir.insts().Get(kv.second);
+        if (auto sf = fi.TryAs<SemIR::StructField>()) {
+          fields.push_back({sf->index.index, sf->type_id});
+        }
+      }
+      std::sort(fields.begin(), fields.end(),
+                [](const FieldEntry& a, const FieldEntry& b) {
+                  return a.idx < b.idx;
+                });
+      llvm::SmallVector<llvm::Type*> field_types;
+      for (const auto& fe : fields) {
+        field_types.push_back(context.GetType(fe.type_id));
+      }
+      if (!field_types.empty()) {
+        llvm_struct->setBody(field_types);
+      }
       return llvm_struct;
     }
 

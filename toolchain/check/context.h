@@ -110,6 +110,12 @@ class Context {
   auto AddInstToBlock(SemIR::InstBlockId block_id, SemIR::InstId inst_id)
       -> void;
 
+  // Pushes an existing placeholder block onto the instruction block stack.
+  // Unlike PushInstBlock(), this reuses an existing block ID rather than
+  // creating a new one. Used for loop body blocks so that nested control
+  // flow (via SwitchInstBlock) correctly finalizes the right block.
+  auto PushInstBlockWithId(SemIR::InstBlockId block_id) -> void;
+
   // --- Current function tracking ---
 
   // Sets the current function being checked (for adding body blocks).
@@ -125,6 +131,24 @@ class Context {
 
   // Adds a body block to the current function.
   auto AddBodyBlock(SemIR::InstBlockId block_id) -> void;
+
+  // --- Loop context (for break/continue) ---
+
+  // Tracks the break and continue targets for the current loop.
+  struct LoopContext {
+    SemIR::InstBlockId break_id;     // merge block (break target)
+    SemIR::InstBlockId continue_id;  // cond block (continue target)
+  };
+
+  // Pushes a new loop context onto the loop stack.
+  auto PushLoopContext(SemIR::InstBlockId break_id,
+                       SemIR::InstBlockId continue_id) -> void;
+
+  // Pops the innermost loop context.
+  auto PopLoopContext() -> void;
+
+  // Returns the innermost loop context, or nullptr if not in a loop.
+  auto CurrentLoop() const -> const LoopContext*;
 
   // --- Pending condition for if/while/guard ---
   // The parser places condition expressions as siblings before the statement
@@ -283,6 +307,9 @@ class Context {
 
   // Pending condition parse node for if/while/guard statements.
   Parse::NodeId pending_condition_node_id_ = Parse::NodeId::None;
+
+  // Stack of active loop contexts (for break/continue targets).
+  llvm::SmallVector<LoopContext> loop_stack_;
 };
 
 }  // namespace TinySwift::Check

@@ -405,6 +405,14 @@ auto LowerSILInst(Context& context,
       break;
     }
 
+    case TinySIL::SILInstKind::PartialApply: {
+      // For zero-capture closures: partial_apply is just a function reference.
+      // Propagate the underlying FunctionRef value directly.
+      auto fn_ref = getSILValue(inst.operands[0]);
+      if (fn_ref) setSILValue(inst.result, fn_ref);
+      break;
+    }
+
     case TinySIL::SILInstKind::Apply: {
       auto* callee = getSILValue(inst.operands[0]);
       if (!callee) break;

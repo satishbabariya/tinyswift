@@ -69,6 +69,26 @@ auto Context::AddInstToBlock(SemIR::InstBlockId block_id,
   }
 }
 
+auto Context::PushInstBlockWithId(SemIR::InstBlockId block_id) -> void {
+  inst_block_stack_.push_back({block_id, {}});
+}
+
+auto Context::PushLoopContext(SemIR::InstBlockId break_id,
+                              SemIR::InstBlockId continue_id) -> void {
+  loop_stack_.push_back({break_id, continue_id});
+}
+
+auto Context::PopLoopContext() -> void {
+  if (!loop_stack_.empty()) {
+    loop_stack_.pop_back();
+  }
+}
+
+auto Context::CurrentLoop() const -> const LoopContext* {
+  if (loop_stack_.empty()) return nullptr;
+  return &loop_stack_.back();
+}
+
 auto Context::PushScope(SemIR::NameScopeId scope_id) -> void {
   scope_stack_.emplace_back(scope_id);
 }

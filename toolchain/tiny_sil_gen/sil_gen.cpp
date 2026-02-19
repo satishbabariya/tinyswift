@@ -481,7 +481,8 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
       callee_inst = sem_ir.insts().Get(name_ref->value_id);
     }
 
-    // Resolve function name from FunctionDecl or FunctionType.
+    // Resolve function name from FunctionDecl, FunctionType, ClosureExpr,
+    // or a ValueBinding that holds a closure.
     std::string func_name;
     if (auto fn_decl = callee_inst.TryAs<SemIR::FunctionDecl>()) {
       auto& function = sem_ir.functions().Get(fn_decl->function_id);
@@ -489,6 +490,20 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     } else if (auto func_type = callee_inst.TryAs<SemIR::FunctionType>()) {
       auto& function = sem_ir.functions().Get(func_type->function_id);
       func_name = ctx.GetFunctionName(function);
+    } else if (auto closure_expr = callee_inst.TryAs<SemIR::ClosureExpr>()) {
+      // Direct closure call: `{ x in x+x }(5)`.
+      auto& function = sem_ir.functions().Get(closure_expr->function_id);
+      func_name = ctx.GetFunctionName(function);
+    } else if (auto value_binding = callee_inst.TryAs<SemIR::ValueBinding>()) {
+      // Let binding holding a closure: `let f = { x in x+x }; f(5)`.
+      if (value_binding->value_id.has_value()) {
+        auto inner_inst = sem_ir.insts().Get(value_binding->value_id);
+        if (auto closure_expr = inner_inst.TryAs<SemIR::ClosureExpr>()) {
+          auto& function = sem_ir.functions().Get(closure_expr->function_id);
+          func_name = ctx.GetFunctionName(function);
+        }
+      }
+      if (func_name.empty()) func_name = "<unknown_callee>";
     } else {
       func_name = "<unknown_callee>";
     }
