@@ -295,48 +295,190 @@ auto HandleGuardStatement(Context& context, Parse::NodeId node_id) -> void {
   context.AddBodyBlock(else_block_id);
 }
 
-// Handles a for-in statement (basic desugaring to while loop).
+// Handles a for-in statement desugared to a while-loop over an integer range.
+//
+// `for i in lo...hi { body }` desugars to:
+//   var i = lo
+//   var _hi = hi
+//   bb_entry: ... br bb_cond
+//   bb_cond:  i <= _hi ? br bb_body : br bb_merge
+//   bb_body:  body; i = i + 1; br bb_cond
+//   bb_merge: ...
+//
+// `for i in lo..<hi { body }` uses `i < _hi` as the condition.
 auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
   auto children = context.children_source_order(node_id);
 
-  // For now, emit a simple while-style loop structure.
-  // Full iterator protocol support requires stdlib integration.
+  // Extract: pattern node, sequence node, body node.
+  Parse::NodeId pattern_node = Parse::NodeId::None;
+  Parse::NodeId sequence_node = Parse::NodeId::None;
   Parse::NodeId body_node = Parse::NodeId::None;
 
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
-    if (child_kind == Parse::NodeKind::CodeBlock) {
+    if (child_kind == Parse::NodeKind::ForInIntroducer) {
+      continue;
+    }
+    if (child_kind == Parse::NodeKind::IdentifierPattern) {
+      pattern_node = child;
+    } else if (child_kind == Parse::NodeKind::CodeBlock) {
       body_node = child;
+    } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr) &&
+               !sequence_node.has_value()) {
+      sequence_node = child;
     }
   }
 
-  // Create a loop structure: condition block + body block.
-  auto cond_label = context.PushInstBlock();
-  auto body_label = context.PushInstBlock();
-
-  // For now, emit unconditional branch to body (stub).
-  auto bool_type = context.GetBuiltinType("Bool");
-  auto true_id = context.AddInst(SemIR::LocIdAndInst(
-      SemIR::LocId(node_id),
-      SemIR::BoolLiteral{.type_id = bool_type,
-                         .value = SemIR::BoolValue::From(true)}));
-
-  context.AddInst(SemIR::LocIdAndInst(
-      SemIR::LocId(node_id),
-      SemIR::BranchIf{.target_id = SemIR::LabelId(body_label),
-                       .cond_id = true_id}));
-
-  if (body_node.has_value()) {
-    HandleCodeBlock(context, body_node);
+  // Check that the sequence is a range expression (`lo...hi` or `lo..<hi`).
+  if (!sequence_node.has_value() ||
+      context.node_kind(sequence_node) != Parse::NodeKind::InfixOperatorExpr) {
+    // Unsupported sequence type — fall through with a simple body execution.
+    if (body_node.has_value()) {
+      HandleCodeBlock(context, body_node);
+    }
+    return;
   }
 
-  // Branch back to condition.
+  // Determine operator type: inclusive (`...`) or exclusive (`..<`).
+  auto op_text =
+      context.token_text(context.node_token(sequence_node));
+  bool inclusive = (op_text == "...");
+
+  // Get lower and upper bound nodes from the InfixOperatorExpr children.
+  auto range_children = context.children_source_order(sequence_node);
+  if (range_children.size() < 2) {
+    if (body_node.has_value()) HandleCodeBlock(context, body_node);
+    return;
+  }
+  Parse::NodeId lo_node = range_children[0];
+  Parse::NodeId hi_node = range_children[1];
+
+  // Evaluate lower and upper bounds in the current (entry) block.
+  auto lo_id = HandleExpr(context, lo_node);
+  auto hi_id = HandleExpr(context, hi_node);
+
+  auto int_type = context.GetBuiltinType("Int");
+  auto bool_type = context.GetBuiltinType("Bool");
+
+  // Create VarStorage for the loop variable.
+  SemIR::NameId loop_var_name_id = SemIR::NameId::None;
+  if (pattern_node.has_value()) {
+    auto token = context.node_token(pattern_node);
+    auto text = context.token_text(token);
+    auto ident_id = context.identifiers().Add(text);
+    loop_var_name_id = SemIR::NameId::ForIdentifier(ident_id);
+  }
+
+  auto var_id = context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(pattern_node.has_value() ? pattern_node : node_id),
+      SemIR::VarStorage{.type_id = int_type,
+                        .pattern_id = SemIR::AbsoluteInstId(
+                            SemIR::InstId::None)}));
+
+  // Initialize loop variable to lower bound.
+  if (lo_id.has_value()) {
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Assign{.lhs_id = var_id, .rhs_id = lo_id}));
+  }
+
+  // Register loop variable in the current scope.
+  if (loop_var_name_id.has_value()) {
+    context.AddNameToScope(loop_var_name_id, var_id);
+  }
+
+  // Create block IDs for the loop CFG.
+  auto cond_block_id = context.inst_blocks().AddPlaceholder();
+  auto body_block_id = context.inst_blocks().AddPlaceholder();
+  auto merge_block_id = context.inst_blocks().AddPlaceholder();
+
+  // Entry block: branch to condition block.
   context.AddInst(SemIR::LocIdAndInst(
       SemIR::LocId(node_id),
-      SemIR::Branch{.target_id = SemIR::LabelId(cond_label)}));
+      SemIR::Branch{.target_id = SemIR::LabelId(cond_block_id)}));
 
-  context.PopInstBlock();  // body
-  context.PopInstBlock();  // cond
+  // Build condition block.
+  {
+    context.PushInstBlock();
+
+    // Load loop variable value.
+    auto loop_val_id = context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::NameRef{.type_id = int_type,
+                       .name_id = loop_var_name_id,
+                       .value_id = var_id}));
+
+    // Emit comparison: loop_var <= hi (inclusive) or loop_var < hi (exclusive).
+    SemIR::InstId cond_id = SemIR::InstId::None;
+    if (inclusive) {
+      cond_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::IntLessEq{
+              .type_id = bool_type, .lhs_id = loop_val_id, .rhs_id = hi_id}));
+    } else {
+      cond_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::IntLess{
+              .type_id = bool_type, .lhs_id = loop_val_id, .rhs_id = hi_id}));
+    }
+
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::BranchIf{.target_id = SemIR::LabelId(body_block_id),
+                         .cond_id = cond_id}));
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+
+    auto tmp_id = context.PopInstBlock();
+    auto cond_insts = context.inst_blocks().Get(tmp_id);
+    context.inst_blocks().ReplacePlaceholder(
+        cond_block_id, llvm::ArrayRef<SemIR::InstId>(cond_insts));
+    context.AddBodyBlock(cond_block_id);
+  }
+
+  // Build body block.
+  {
+    context.PushInstBlock();
+
+    // Process body statements.
+    if (body_node.has_value()) {
+      HandleCodeBlock(context, body_node);
+    }
+
+    // Increment loop variable: i = i + 1.
+    auto loop_val_id = context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::NameRef{.type_id = int_type,
+                       .name_id = loop_var_name_id,
+                       .value_id = var_id}));
+    auto one_id = context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::IntValue{.type_id = int_type,
+                        .int_id = context.ints().Add(1)}));
+    auto inc_id = context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::IntAdd{.type_id = int_type,
+                      .lhs_id = loop_val_id, .rhs_id = one_id}));
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Assign{.lhs_id = var_id, .rhs_id = inc_id}));
+
+    // Back-edge: loop back to condition.
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(cond_block_id)}));
+
+    auto tmp_id = context.PopInstBlock();
+    auto body_insts = context.inst_blocks().Get(tmp_id);
+    context.inst_blocks().ReplacePlaceholder(
+        body_block_id, llvm::ArrayRef<SemIR::InstId>(body_insts));
+    context.AddBodyBlock(body_block_id);
+  }
+
+  // Switch emission to merge block.
+  context.SwitchInstBlock(merge_block_id);
+  context.AddBodyBlock(merge_block_id);
 }
 
 // Handles a switch statement (basic if-else chain desugaring).

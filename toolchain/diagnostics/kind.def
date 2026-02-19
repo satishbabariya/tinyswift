@@ -115,6 +115,9 @@ TINYSWIFT_DIAGNOSTIC_KIND(CannotCallNonFunction)
 TINYSWIFT_DIAGNOSTIC_KIND(AmbiguousType)
 TINYSWIFT_DIAGNOSTIC_KIND(InvalidMemberAccess)
 TINYSWIFT_DIAGNOSTIC_KIND(CannotInferType)
+TINYSWIFT_DIAGNOSTIC_KIND(ArgumentLabelMismatch)
+TINYSWIFT_DIAGNOSTIC_KIND(UnknownStructField)
+TINYSWIFT_DIAGNOSTIC_KIND(MissingStructField)
 
 // ============================================================================
 // CodeGen diagnostics

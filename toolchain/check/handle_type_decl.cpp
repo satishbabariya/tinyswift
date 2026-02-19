@@ -40,6 +40,68 @@ struct FieldInfo {
   Parse::NodeId node_id;
 };
 
+// Extracts field info from a single VariableDecl node.
+static auto ExtractFieldFromVarDecl(Context& context, Parse::NodeId child)
+    -> std::optional<FieldInfo> {
+  SemIR::NameId field_name_id = SemIR::NameId::None;
+  SemIR::TypeId field_type_id = SemIR::TypeId::None;
+  Parse::NodeId field_node_id = child;
+
+  auto var_children = context.children_source_order(child);
+  for (auto vc : var_children) {
+    auto vc_kind = context.node_kind(vc);
+
+    // Struct member style: `var x: Int` has IdentifierPattern directly.
+    if (vc_kind == Parse::NodeKind::IdentifierPattern) {
+      field_node_id = vc;
+      auto token = context.node_token(vc);
+      auto text = context.token_text(token);
+      auto ident_id = context.identifiers().Add(text);
+      field_name_id = SemIR::NameId::ForIdentifier(ident_id);
+      continue;
+    }
+
+    // Struct member type annotation: `var x: Int` has TypeAnnotation.
+    if (vc_kind == Parse::NodeKind::TypeAnnotation ||
+        vc_kind.category().HasAnyOf(Parse::NodeCategory::Type)) {
+      field_type_id = HandleTypeExpr(context, vc);
+      continue;
+    }
+
+    // Local var style: `var x: Int = ...` wraps in VariablePattern.
+    if (vc_kind == Parse::NodeKind::VariablePattern) {
+      auto vp_children = context.children_source_order(vc);
+      for (auto vpc : vp_children) {
+        if (context.node_kind(vpc) == Parse::NodeKind::VarBindingPattern) {
+          auto bp_children = context.children_source_order(vpc);
+          for (auto bpc : bp_children) {
+            auto bpc_kind = context.node_kind(bpc);
+            if (bpc_kind ==
+                Parse::NodeKind::IdentifierNameNotBeforeParams) {
+              field_node_id = bpc;
+              auto token = context.node_token(bpc);
+              auto text = context.token_text(token);
+              auto ident_id = context.identifiers().Add(text);
+              field_name_id = SemIR::NameId::ForIdentifier(ident_id);
+            } else if (bpc_kind.category().HasAnyOf(
+                           Parse::NodeCategory::Type) ||
+                       bpc_kind == Parse::NodeKind::TypeAnnotation) {
+              field_type_id = HandleTypeExpr(context, bpc);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (!field_name_id.has_value()) return std::nullopt;
+  return FieldInfo{
+      .name_id = field_name_id,
+      .type_id = field_type_id.has_value() ? field_type_id
+                                           : SemIR::ErrorInst::TypeId,
+      .node_id = field_node_id};
+}
+
 auto CollectFieldDecls(Context& context,
                        llvm::ArrayRef<Parse::NodeId> children)
     -> llvm::SmallVector<FieldInfo> {
@@ -53,46 +115,24 @@ auto CollectFieldDecls(Context& context,
       continue;
     }
 
-    // Look for VariableDecl (stored properties).
-    if (child_kind == Parse::NodeKind::VariableDecl) {
-      SemIR::NameId field_name_id = SemIR::NameId::None;
-      SemIR::TypeId field_type_id = SemIR::TypeId::None;
-      Parse::NodeId field_node_id = child;
-
-      auto var_children = context.children_source_order(child);
-      for (auto vc : var_children) {
-        auto vc_kind = context.node_kind(vc);
-        if (vc_kind == Parse::NodeKind::VariablePattern) {
-          auto vp_children = context.children_source_order(vc);
-          for (auto vpc : vp_children) {
-            if (context.node_kind(vpc) == Parse::NodeKind::VarBindingPattern) {
-              auto bp_children = context.children_source_order(vpc);
-              for (auto bpc : bp_children) {
-                auto bpc_kind = context.node_kind(bpc);
-                if (bpc_kind ==
-                    Parse::NodeKind::IdentifierNameNotBeforeParams) {
-                  field_node_id = bpc;
-                  auto token = context.node_token(bpc);
-                  auto text = context.token_text(token);
-                  auto ident_id = context.identifiers().Add(text);
-                  field_name_id = SemIR::NameId::ForIdentifier(ident_id);
-                } else if (bpc_kind.category().HasAnyOf(
-                               Parse::NodeCategory::Type) ||
-                           bpc_kind == Parse::NodeKind::TypeAnnotation) {
-                  field_type_id = HandleTypeExpr(context, bpc);
-                }
-              }
-            }
+    // Struct members may be wrapped in a CodeBlock — recurse into it.
+    if (child_kind == Parse::NodeKind::CodeBlock) {
+      auto block_children = context.children_source_order(child);
+      for (auto bc : block_children) {
+        if (context.node_kind(bc) == Parse::NodeKind::CodeBlockStart) continue;
+        if (context.node_kind(bc) == Parse::NodeKind::VariableDecl) {
+          if (auto fi = ExtractFieldFromVarDecl(context, bc)) {
+            fields.push_back(*fi);
           }
         }
       }
+      continue;
+    }
 
-      if (field_name_id.has_value()) {
-        fields.push_back(
-            {.name_id = field_name_id,
-             .type_id = field_type_id.has_value() ? field_type_id
-                                                  : SemIR::ErrorInst::TypeId,
-             .node_id = field_node_id});
+    // Look for VariableDecl (stored properties) as direct children.
+    if (child_kind == Parse::NodeKind::VariableDecl) {
+      if (auto fi = ExtractFieldFromVarDecl(context, child)) {
+        fields.push_back(*fi);
       }
     }
   }
@@ -111,6 +151,22 @@ auto HandleTypeMembers(Context& context,
         child_kind == Parse::NodeKind::EnumDefinitionStart ||
         child_kind == Parse::NodeKind::ProtocolDefinitionStart ||
         child_kind == Parse::NodeKind::ExtensionDefinitionStart) {
+      continue;
+    }
+
+    // Members may be wrapped in a CodeBlock — recurse into it.
+    if (child_kind == Parse::NodeKind::CodeBlock) {
+      auto block_children = context.children_source_order(child);
+      for (auto bc : block_children) {
+        auto bc_kind = context.node_kind(bc);
+        if (bc_kind == Parse::NodeKind::CodeBlockStart) continue;
+        // Skip VariableDecl — already registered as StructField above.
+        if (bc_kind == Parse::NodeKind::VariableDecl) continue;
+        if (bc_kind.category().HasAnyOf(Parse::NodeCategory::Statement |
+                                        Parse::NodeCategory::Decl)) {
+          HandleStatement(context, bc);
+        }
+      }
       continue;
     }
 

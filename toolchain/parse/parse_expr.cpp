@@ -60,6 +60,8 @@ static auto GetBinaryPrecedence(Context& context) -> int {
     case Lex::TokenKind::LessEqual:
     case Lex::TokenKind::GreaterEqual:
       return Prec_Comparison;
+    case Lex::TokenKind::EllipsisToken:
+      return Prec_Range;  // `...` range operator.
     case Lex::TokenKind::MinusGreater:
       return Prec_None;  // Not a binary operator in expression context.
     case Lex::TokenKind::Amp:
@@ -349,10 +351,19 @@ static auto ParsePrimaryExpr(Context& context) -> void {
     return;
   }
 
-  // Closure expression: `{ ... }`
+  // Closure expression: `{ ... }` or `{ param in ... }`
   if (kind == Lex::TokenKind::OpenCurlyBrace) {
     auto open = context.Consume();
     context.AddLeafNode(NodeKind::ClosureExprStart, open);
+
+    // Check for closure signature: `identifier in`
+    if (context.Peek() == Lex::TokenKind::Identifier &&
+        context.PeekNext() == Lex::TokenKind::InKeyword) {
+      auto param_token = context.Consume();  // identifier (param name)
+      context.AddLeafNode(NodeKind::ClosureParam, param_token);
+      auto in_token = context.Consume();  // 'in'
+      context.AddNode(NodeKind::ClosureSignature, in_token);
+    }
 
     // Parse the body as statements until `}`.
     while (context.Peek() != Lex::TokenKind::CloseCurlyBrace &&
@@ -411,13 +422,26 @@ static auto ParsePostfixExpr(Context& context) -> void {
       auto open = context.Consume();
       context.AddNode(NodeKind::CallExprStart, open);
 
-      // Parse comma-separated arguments.
+      // Parse comma-separated arguments, supporting `label: expr` syntax.
       if (context.Peek() != Lex::TokenKind::CloseParen) {
-        // Check for labeled arguments: `label: expr`
+        // First argument: check for optional `label:` prefix.
+        if (context.Peek() == Lex::TokenKind::Identifier &&
+            context.PeekNext() == Lex::TokenKind::Colon) {
+          auto label_token = context.Consume();
+          context.AddLeafNode(NodeKind::ArgumentLabel, label_token);
+          context.Consume();  // colon
+        }
         ParseExpr(context);
         while (context.Peek() == Lex::TokenKind::Comma) {
           auto comma = context.Consume();
           context.AddLeafNode(NodeKind::PatternListComma, comma);
+          // Subsequent argument: check for optional `label:` prefix.
+          if (context.Peek() == Lex::TokenKind::Identifier &&
+              context.PeekNext() == Lex::TokenKind::Colon) {
+            auto label_token = context.Consume();
+            context.AddLeafNode(NodeKind::ArgumentLabel, label_token);
+            context.Consume();  // colon
+          }
           ParseExpr(context);
         }
       }

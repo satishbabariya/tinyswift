@@ -52,6 +52,13 @@ TINYSWIFT_DIAGNOSTIC(InvalidMemberAccess, Error,
                      std::string, std::string);
 TINYSWIFT_DIAGNOSTIC(CannotInferType, Error,
                      "cannot infer type for '{0}'", std::string);
+TINYSWIFT_DIAGNOSTIC(ArgumentLabelMismatch, Error,
+                     "incorrect argument label '{0}' in call", std::string);
+TINYSWIFT_DIAGNOSTIC(UnknownStructField, Error,
+                     "value of type does not have field '{0}'", std::string);
+TINYSWIFT_DIAGNOSTIC(MissingStructField, Error,
+                     "missing field '{0}' in struct initialization",
+                     std::string);
 
 // Manages the semantic checking context for a single file.
 class Context {

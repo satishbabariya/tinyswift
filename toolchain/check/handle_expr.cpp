@@ -4,6 +4,7 @@
 
 #include "toolchain/check/handle_expr.h"
 
+#include "toolchain/check/handle_stmt.h"
 #include "toolchain/check/handle_type.h"
 #include "toolchain/parse/node_kind.h"
 #include "toolchain/parse/typed_nodes.h"
@@ -189,7 +190,14 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
   auto children = context.children_source_order(node_id);
 
   SemIR::InstId callee_id = SemIR::InstId::None;
-  llvm::SmallVector<SemIR::InstId> arg_ids;
+
+  // Labeled arguments: (label_text, value_inst_id).
+  struct LabeledArg {
+    llvm::StringRef label;
+    SemIR::InstId value_id;
+  };
+  llvm::SmallVector<LabeledArg> labeled_args;
+  llvm::StringRef pending_label;
 
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
@@ -205,41 +213,108 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
           break;
         }
       }
+    } else if (child_kind == Parse::NodeKind::ArgumentLabel) {
+      // Record the label for the next argument.
+      pending_label = context.token_text(context.node_token(child));
     } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
-      // Argument expression.
-      arg_ids.push_back(HandleExpr(context, child));
+      // Argument expression — associate with pending label.
+      labeled_args.push_back({pending_label, HandleExpr(context, child)});
+      pending_label = llvm::StringRef();
     }
   }
 
-  // Create an args block.
-  auto args_block_id = context.inst_blocks().AddPlaceholder();
-  context.inst_blocks().ReplacePlaceholder(
-      args_block_id, llvm::ArrayRef<SemIR::InstId>(arg_ids));
-
-  // Determine return type and validate arguments.
+  // Determine return type, validate arguments, and build ordered arg list.
   auto type_id = SemIR::ErrorInst::TypeId;
+  llvm::SmallVector<SemIR::InstId> ordered_args;
+
   if (callee_id.has_value()) {
     // Look through NameRef to find the actual callee instruction.
-    // HandleIdentifierNameExpr returns a NameRef wrapping the FunctionDecl.
+    SemIR::InstId actual_callee_id = callee_id;
     auto callee_inst = context.insts().Get(callee_id);
     if (auto name_ref = callee_inst.TryAs<SemIR::NameRef>()) {
+      actual_callee_id = name_ref->value_id;
       callee_inst = context.insts().Get(name_ref->value_id);
     }
+
     if (auto fn_decl = callee_inst.TryAs<SemIR::FunctionDecl>()) {
+      // --- Function call with label matching ---
       auto& fn = context.functions().Get(fn_decl->function_id);
       if (fn.return_type_inst_id.has_value()) {
         type_id = context.types().GetTypeIdForTypeInstId(
             fn.return_type_inst_id);
       }
 
-      // Check argument count.
       int expected_count = 0;
       if (fn.call_params_id.has_value() &&
           fn.call_params_id != SemIR::InstBlockId::Empty) {
-        expected_count = static_cast<int>(
-            context.sem_ir().inst_blocks().Get(fn.call_params_id).size());
+        auto param_ids =
+            context.sem_ir().inst_blocks().Get(fn.call_params_id);
+        expected_count = static_cast<int>(param_ids.size());
+
+        // Build parameter name list for label matching.
+        llvm::SmallVector<llvm::StringRef> param_names;
+        for (auto param_id : param_ids) {
+          auto param_inst = context.insts().Get(param_id);
+          if (auto vp = param_inst.TryAs<SemIR::ValueParam>()) {
+            auto ident_id = vp->pretty_name_id.AsIdentifierId();
+            if (ident_id.has_value()) {
+              param_names.push_back(context.identifiers().Get(ident_id));
+            } else {
+              param_names.push_back(llvm::StringRef());
+            }
+          } else {
+            param_names.push_back(llvm::StringRef());
+          }
+        }
+
+        // Match labeled args to parameters.
+        ordered_args.resize(expected_count, SemIR::InstId::None);
+        llvm::SmallVector<bool> param_filled(expected_count, false);
+
+        // First pass: place labeled args by name.
+        for (auto& arg : labeled_args) {
+          if (!arg.label.empty()) {
+            bool found = false;
+            for (int j = 0; j < expected_count; ++j) {
+              if (param_names[j] == arg.label) {
+                if (!param_filled[j]) {
+                  ordered_args[j] = arg.value_id;
+                  param_filled[j] = true;
+                }
+                found = true;
+                break;
+              }
+            }
+            if (!found) {
+              context.EmitError(node_id, ArgumentLabelMismatch,
+                                std::string(arg.label));
+            }
+          }
+        }
+
+        // Second pass: place unlabeled args in first unfilled slot.
+        int next_positional = 0;
+        for (auto& arg : labeled_args) {
+          if (arg.label.empty()) {
+            while (next_positional < expected_count &&
+                   param_filled[next_positional]) {
+              ++next_positional;
+            }
+            if (next_positional < expected_count) {
+              ordered_args[next_positional] = arg.value_id;
+              param_filled[next_positional] = true;
+              ++next_positional;
+            }
+          }
+        }
+      } else {
+        // No parameters — just use args as-is.
+        for (auto& arg : labeled_args) {
+          ordered_args.push_back(arg.value_id);
+        }
       }
-      int actual_count = static_cast<int>(arg_ids.size());
+
+      int actual_count = static_cast<int>(labeled_args.size());
       if (actual_count > expected_count) {
         context.EmitError(node_id, TooManyArguments,
                           expected_count, actual_count);
@@ -247,9 +322,106 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
         context.EmitError(node_id, TooFewArguments,
                           expected_count, actual_count);
       }
+
+    } else if (auto struct_type = callee_inst.TryAs<SemIR::StructType>()) {
+      // --- Struct initialization ---
+      // actual_callee_id is the InstId of the StructType instruction.
+      // The TypeId for a struct value is derived from the StructType InstId.
+      type_id = SemIR::TypeId::ForTypeConstant(
+          SemIR::ConstantId::ForConcreteConstant(actual_callee_id));
+
+      auto& scope = context.name_scopes().Get(struct_type->name_scope_id);
+
+      // Count struct fields.
+      int num_fields = 0;
+      for (auto& [name_idx, inst_id] : scope.names) {
+        auto field_inst = context.insts().Get(inst_id);
+        if (auto field = field_inst.TryAs<SemIR::StructField>()) {
+          int idx = field->index.index + 1;
+          if (idx > num_fields) num_fields = idx;
+        }
+      }
+
+      ordered_args.resize(num_fields, SemIR::InstId::None);
+
+      // Match labeled args to fields by name.
+      for (auto& arg : labeled_args) {
+        if (!arg.label.empty()) {
+          auto ident_id = context.identifiers().Lookup(arg.label);
+          if (ident_id.has_value()) {
+            auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+            auto it = scope.names.find(name_id.index);
+            if (it != scope.names.end()) {
+              auto field_inst = context.insts().Get(it->second);
+              if (auto field = field_inst.TryAs<SemIR::StructField>()) {
+                int fi = field->index.index;
+                if (fi < num_fields) {
+                  ordered_args[fi] = arg.value_id;
+                }
+              }
+            } else {
+              context.EmitError(node_id, UnknownStructField,
+                                std::string(arg.label));
+            }
+          } else {
+            context.EmitError(node_id, UnknownStructField,
+                              std::string(arg.label));
+          }
+        } else {
+          // Positional: put in first unfilled slot.
+          for (int j = 0; j < num_fields; ++j) {
+            if (!ordered_args[j].has_value()) {
+              ordered_args[j] = arg.value_id;
+              break;
+            }
+          }
+        }
+      }
+
+      // Emit missing-field diagnostics for unfilled slots.
+      for (auto& [name_idx, inst_id] : scope.names) {
+        auto field_inst = context.insts().Get(inst_id);
+        if (auto field = field_inst.TryAs<SemIR::StructField>()) {
+          int fi = field->index.index;
+          if (fi < num_fields && !ordered_args[fi].has_value()) {
+            auto ident_id_opt = field->name_id.AsIdentifierId();
+            if (ident_id_opt.has_value()) {
+              auto field_text =
+                  std::string(context.identifiers().Get(ident_id_opt));
+              context.EmitError(node_id, MissingStructField, field_text);
+            }
+          }
+        }
+      }
+
+      // Build the args block and emit StructInit.
+      llvm::SmallVector<SemIR::InstId> valid_args;
+      for (auto arg : ordered_args) {
+        valid_args.push_back(arg.has_value() ? arg
+                                             : SemIR::InstId::None);
+      }
+      auto args_block_id = context.inst_blocks().AddPlaceholder();
+      context.inst_blocks().ReplacePlaceholder(
+          args_block_id, llvm::ArrayRef<SemIR::InstId>(valid_args));
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::StructInit{.type_id = type_id, .args_id = args_block_id}));
+
+    } else if (auto closure_expr = callee_inst.TryAs<SemIR::ClosureExpr>()) {
+      // --- Closure call: apply the closure as a function ---
+      auto& fn = context.functions().Get(closure_expr->function_id);
+      if (fn.return_type_inst_id.has_value()) {
+        type_id = context.types().GetTypeIdForTypeInstId(
+            fn.return_type_inst_id);
+      }
+      for (auto& arg : labeled_args) {
+        ordered_args.push_back(arg.value_id);
+      }
     } else {
-      // Callee is not a function declaration - check if it's something callable.
-      // For now, emit error if it's not a function.
+      // Callee is not callable — emit error for non-error types.
+      for (auto& arg : labeled_args) {
+        ordered_args.push_back(arg.value_id);
+      }
       auto callee_type = GetInstType(context, callee_id);
       if (!IsErrorType(callee_type)) {
         context.EmitError(node_id, CannotCallNonFunction);
@@ -257,10 +429,149 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
     }
   }
 
+  // Remove None placeholders (unfilled params won't crash SILGen).
+  llvm::SmallVector<SemIR::InstId> valid_args;
+  for (auto arg : ordered_args) {
+    if (arg.has_value()) {
+      valid_args.push_back(arg);
+    }
+  }
+
+  auto args_block_id = context.inst_blocks().AddPlaceholder();
+  context.inst_blocks().ReplacePlaceholder(
+      args_block_id, llvm::ArrayRef<SemIR::InstId>(valid_args));
+
   return context.AddInst(SemIR::LocIdAndInst(
       SemIR::LocId(node_id),
       SemIR::Call{
-          .type_id = type_id, .callee_id = callee_id, .args_id = args_block_id}));
+          .type_id = type_id, .callee_id = callee_id,
+          .args_id = args_block_id}));
+}
+
+// Handles a closure expression `{ param in body }`.
+auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
+    -> SemIR::InstId {
+  auto children = context.children_source_order(node_id);
+
+  // Extract closure signature (parameter name) and body.
+  // ClosureParam and ClosureSignature are both leaf nodes (child_count=0) and
+  // are direct children of ClosureExpr — ClosureParam is a sibling of
+  // ClosureSignature, not a child of it.
+  SemIR::NameId param_name_id = SemIR::NameId::None;
+  bool has_signature = false;
+
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::ClosureSignature) {
+      has_signature = true;
+    } else if (child_kind == Parse::NodeKind::ClosureParam) {
+      // ClosureParam is a direct child of ClosureExpr holding the param token.
+      auto token = context.node_token(child);
+      auto text = context.token_text(token);
+      auto ident_id = context.identifiers().Add(text);
+      param_name_id = SemIR::NameId::ForIdentifier(ident_id);
+    }
+  }
+
+  // Use Int as default parameter/return type for minimal closure support.
+  auto int_type = context.GetBuiltinType("Int");
+
+  // Create a synthetic function for the closure body.
+  SemIR::Function closure_fn;
+  // Anonymous closure name. Use a static vector so StringRefs into it stay
+  // valid for the lifetime of the identifier store (i.e., this compilation).
+  {
+    static int closure_counter = 0;
+    static llvm::SmallVector<std::string>* closure_name_storage =
+        new llvm::SmallVector<std::string>();
+    closure_name_storage->push_back(
+        "__closure_" + std::to_string(closure_counter++));
+    auto ident_id =
+        context.identifiers().Add(closure_name_storage->back());
+    closure_fn.name_id = SemIR::NameId::ForIdentifier(ident_id);
+  }
+  closure_fn.parent_scope_id = context.CurrentScopeId();
+  closure_fn.return_type_inst_id = context.types().GetTypeInstId(int_type);
+
+  // Create a parameter if signature is present.
+  llvm::SmallVector<SemIR::InstId> param_ids;
+  if (has_signature && param_name_id.has_value()) {
+    auto param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::ValueParam{.type_id = int_type,
+                          .index = SemIR::CallParamIndex(0),
+                          .pretty_name_id = param_name_id}));
+    param_ids.push_back(param_id);
+
+    auto params_block_id = context.inst_blocks().AddPlaceholder();
+    context.inst_blocks().ReplacePlaceholder(
+        params_block_id, llvm::ArrayRef<SemIR::InstId>(param_ids));
+    closure_fn.call_params_id = params_block_id;
+    closure_fn.call_param_patterns_id = params_block_id;
+  }
+
+  auto decl_block_id = context.inst_blocks().AddPlaceholder();
+  context.inst_blocks().ReplacePlaceholder(decl_block_id,
+                                           llvm::ArrayRef<SemIR::InstId>());
+  closure_fn.decl_block_id = decl_block_id;
+
+  auto function_id = context.functions().Add(closure_fn);
+
+  // Save outer function state and set up closure function context.
+  auto outer_function_id = context.CurrentFunctionId();
+  context.SetCurrentFunction(function_id);
+
+  // Push a scope for the closure body.
+  auto closure_scope_id = context.name_scopes().Add(
+      SemIR::InstId::None, closure_fn.name_id, context.CurrentScopeId());
+  context.PushScope(closure_scope_id);
+
+  // Add parameter to scope.
+  if (!param_ids.empty() && param_name_id.has_value()) {
+    context.AddNameToScope(param_name_id, param_ids[0]);
+  }
+
+  // Process closure body.
+  auto body_block_id = context.PushInstBlock();
+  context.functions().Get(function_id).body_block_ids.push_back(body_block_id);
+
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::ClosureExprStart ||
+        child_kind == Parse::NodeKind::ClosureSignature ||
+        child_kind == Parse::NodeKind::ClosureParam) {
+      continue;
+    }
+    if (child_kind.category().HasAnyOf(Parse::NodeCategory::Statement |
+                                       Parse::NodeCategory::Decl)) {
+      HandleStatement(context, child);
+    } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+      // Implicit return: treat the expression as the return value.
+      auto expr_id = HandleExpr(context, child);
+      if (expr_id.has_value()) {
+        context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::ReturnExpr{.expr_id = expr_id,
+                              .dest_id = SemIR::DestInstId(SemIR::InstId::None)}));
+      }
+    }
+  }
+
+  context.PopInstBlock();
+  context.PopScope();
+  context.SetCurrentFunction(outer_function_id);
+
+  // Emit ClosureExpr instruction.
+  auto closure_type_id = context.GetBuiltinType("Int");  // simplified
+  auto captures_block_id = context.inst_blocks().AddPlaceholder();
+  context.inst_blocks().ReplacePlaceholder(captures_block_id,
+                                           llvm::ArrayRef<SemIR::InstId>());
+
+  return context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::ClosureExpr{.type_id = closure_type_id,
+                         .function_id = function_id,
+                         .captures_id = captures_block_id}));
 }
 
 // Handles a member access expression (base.member).
@@ -757,6 +1068,9 @@ auto HandleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
   }
   if (kind == Parse::NodeKind::SelfExpr) {
     return HandleIdentifierNameExpr(context, node_id);
+  }
+  if (kind == Parse::NodeKind::ClosureExpr) {
+    return HandleClosureExpr(context, node_id);
   }
 
   // For expression statements, unwrap.
