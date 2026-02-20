@@ -68,6 +68,30 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
     type_id = SemIR::ErrorInst::TypeId;
   }
 
+  // Coerce non-optional initializer to Optional<T> when the declared type is
+  // optional (e.g. `let x: Int? = 5` wraps 5 in OptionalSome).
+  if (type_id.has_value() && init_id.has_value()) {
+    auto ti = context.types().GetTypeInstId(type_id);
+    if (ti.has_value()) {
+      if (context.insts().Get(ti).Is<SemIR::OptionalType>()) {
+        auto init_inst = context.insts().Get(init_id);
+        // nil (OptionalNone) and already-wrapped values must not be re-wrapped.
+        bool already_optional =
+            init_inst.Is<SemIR::OptionalNone>() ||
+            init_inst.Is<SemIR::OptionalSome>();
+        if (!already_optional) {
+          auto init_ti = context.types().GetTypeInstId(init_inst.type_id());
+          already_optional = init_ti.has_value() &&
+              context.insts().Get(init_ti).Is<SemIR::OptionalType>();
+        }
+        if (!already_optional) {
+          init_id = context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+              SemIR::OptionalSome{.type_id = type_id, .value_id = init_id}));
+        }
+      }
+    }
+  }
+
   // Create entity name.
   auto entity_name_id = context.entity_names().Add(
       {.name_id = name_id, .parent_scope_id = context.CurrentScopeId()});
@@ -169,6 +193,30 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
   }
   if (!type_id.has_value()) {
     type_id = SemIR::ErrorInst::TypeId;
+  }
+
+  // Coerce non-optional initializer to Optional<T> when the declared type is
+  // optional (e.g. `var x: Int? = 5` wraps 5 in OptionalSome).
+  if (type_id.has_value() && init_id.has_value()) {
+    auto ti = context.types().GetTypeInstId(type_id);
+    if (ti.has_value()) {
+      if (context.insts().Get(ti).Is<SemIR::OptionalType>()) {
+        auto init_inst = context.insts().Get(init_id);
+        // nil (OptionalNone) and already-wrapped values must not be re-wrapped.
+        bool already_optional =
+            init_inst.Is<SemIR::OptionalNone>() ||
+            init_inst.Is<SemIR::OptionalSome>();
+        if (!already_optional) {
+          auto init_ti = context.types().GetTypeInstId(init_inst.type_id());
+          already_optional = init_ti.has_value() &&
+              context.insts().Get(init_ti).Is<SemIR::OptionalType>();
+        }
+        if (!already_optional) {
+          init_id = context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+              SemIR::OptionalSome{.type_id = type_id, .value_id = init_id}));
+        }
+      }
+    }
   }
 
   // Create entity name for the pattern.

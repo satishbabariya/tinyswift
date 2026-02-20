@@ -1125,7 +1125,7 @@ struct TupleElement {
 struct TupleExpr {
   static constexpr auto Kind = NodeKind::TupleExpr.Define(
       {.category = NodeCategory::Expr,
-       .bracketed_by = TupleExprStart::Kind});
+       .bracketed_by = ParenExprStart::Kind});
 
   TupleExprStartId start;
   CommaSeparatedList<AnyExprId, PatternListCommaId> elements;

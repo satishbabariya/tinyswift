@@ -164,6 +164,18 @@ class Context {
     return id;
   }
 
+  // --- Pending optional binding name for if-let ---
+  // When HandleCodeBlock sees `IdentifierPattern OBC IfStatement`, it stores
+  // the IdentifierPattern node here so HandleIfStatement can bind the name.
+  auto SetPendingOptName(Parse::NodeId node_id) -> void {
+    pending_opt_name_node_id_ = node_id;
+  }
+  auto TakePendingOptName() -> Parse::NodeId {
+    auto id = pending_opt_name_node_id_;
+    pending_opt_name_node_id_ = Parse::NodeId::None;
+    return id;
+  }
+
   // --- Name scope management ---
 
   // A name-to-InstId mapping for a scope.
@@ -307,6 +319,9 @@ class Context {
 
   // Pending condition parse node for if/while/guard statements.
   Parse::NodeId pending_condition_node_id_ = Parse::NodeId::None;
+
+  // Pending optional binding name node for if-let statements.
+  Parse::NodeId pending_opt_name_node_id_ = Parse::NodeId::None;
 
   // Stack of active loop contexts (for break/continue targets).
   llvm::SmallVector<LoopContext> loop_stack_;

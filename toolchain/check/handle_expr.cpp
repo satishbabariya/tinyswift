@@ -630,6 +630,21 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
         scope_id = class_type->name_scope_id;
       } else if (auto enum_type = type_inst.TryAs<SemIR::EnumDecl>()) {
         scope_id = enum_type->name_scope_id;
+      } else if (auto tt = type_inst.TryAs<SemIR::TupleType>()) {
+        // Numeric member access on tuple: t.0, t.1, ...
+        unsigned idx = 0;
+        if (!member_name.empty() && !member_name.getAsInteger(10, idx)) {
+          auto elems =
+              context.inst_blocks().Get(tt->element_types_id);
+          if (idx < elems.size()) {
+            auto elem_type = context.types().GetTypeIdForTypeInstId(
+                SemIR::TypeInstId::UnsafeMake(elems[idx]));
+            return context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+                SemIR::TupleAccess{.type_id = elem_type,
+                                   .tuple_id = base_id,
+                                   .index = SemIR::ElementIndex(idx)}));
+          }
+        }
       }
 
       if (scope_id.has_value() && !member_name.empty()) {
@@ -986,6 +1001,7 @@ auto HandlePrefixOperatorExpr(Context& context, Parse::NodeId node_id)
 }
 
 // Handles a postfix operator expression.
+// Implements `x!` force-unwrap for Optional<T>: extracts field 1 of {i1, T}.
 auto HandlePostfixOperatorExpr(Context& context, Parse::NodeId node_id)
     -> SemIR::InstId {
   auto children = context.children_source_order(node_id);
@@ -999,8 +1015,27 @@ auto HandlePostfixOperatorExpr(Context& context, Parse::NodeId node_id)
     }
   }
 
-  // Postfix ! (force unwrap) and ? (optional chaining) - stubs.
-  return operand_id;
+  auto op_text = context.token_text(context.node_token(node_id));
+  if (op_text == "!" && operand_id.has_value()) {
+    auto operand_type = GetInstType(context, operand_id);
+    if (operand_type.has_value() && operand_type.is_concrete()) {
+      auto ti = context.types().GetTypeInstId(operand_type);
+      if (ti.has_value()) {
+        auto type_inst = context.insts().Get(ti);
+        if (auto ot = type_inst.TryAs<SemIR::OptionalType>()) {
+          // Optional<T> is lowered as {i1, T}; payload is field index 1.
+          auto inner =
+              context.types().GetTypeIdForTypeInstId(ot->inner_type_id);
+          return context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+              SemIR::TupleAccess{.type_id = inner,
+                                 .tuple_id = operand_id,
+                                 .index = SemIR::ElementIndex(1)}));
+        }
+      }
+    }
+  }
+
+  return operand_id;  // passthrough for unrecognized postfix ops
 }
 
 // Handles an assignment expression.
@@ -1116,6 +1151,51 @@ auto HandleTernaryExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId
   return load_id;
 }
 
+// Handles a tuple expression `(a, b, ...)`.
+auto HandleTupleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
+  auto children = context.children_source_order(node_id);
+
+  // Collect element values, skipping structural markers.
+  // Note: the parser uses ParenExprStart (not TupleExprStart) as the bracket
+  // and PatternListComma (not TupleElement) for separators.
+  llvm::SmallVector<SemIR::InstId> elem_ids;
+  for (auto child : children) {
+    auto ck = context.node_kind(child);
+    if (ck == Parse::NodeKind::TupleExprStart ||
+        ck == Parse::NodeKind::ParenExprStart ||
+        ck == Parse::NodeKind::TupleElement ||
+        ck == Parse::NodeKind::PatternListComma) continue;
+    if (ck.category().HasAnyOf(Parse::NodeCategory::Expr))
+      elem_ids.push_back(HandleExpr(context, child));
+  }
+
+  // Build element-type block (each entry is the TypeInstId of the elem type).
+  llvm::SmallVector<SemIR::InstId> type_insts;
+  for (auto id : elem_ids) {
+    auto ti = context.types().GetTypeInstId(context.insts().Get(id).type_id());
+    type_insts.push_back(SemIR::InstId(ti.index));
+  }
+  auto types_block = context.inst_blocks().AddPlaceholder();
+  context.inst_blocks().ReplacePlaceholder(types_block,
+      llvm::ArrayRef<SemIR::InstId>(type_insts));
+
+  // Emit TupleType in no-block (constant type instruction).
+  auto tt_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::TupleType{.type_id = SemIR::TypeType::TypeId,
+                       .element_types_id = types_block}));
+  auto tuple_type_id = SemIR::TypeId::ForTypeConstant(
+      SemIR::ConstantId::ForConcreteConstant(tt_id));
+
+  // Emit TupleInit.
+  auto elems_block = context.inst_blocks().AddPlaceholder();
+  context.inst_blocks().ReplacePlaceholder(elems_block,
+      llvm::ArrayRef<SemIR::InstId>(elem_ids));
+  return context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::TupleInit{.type_id = tuple_type_id, .elements_id = elems_block}));
+}
+
 }  // namespace
 
 auto HandleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
@@ -1175,6 +1255,9 @@ auto HandleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
   }
   if (kind == Parse::NodeKind::TernaryExpr) {
     return HandleTernaryExpr(context, node_id);
+  }
+  if (kind == Parse::NodeKind::TupleExpr) {
+    return HandleTupleExpr(context, node_id);
   }
 
   // For expression statements, unwrap.

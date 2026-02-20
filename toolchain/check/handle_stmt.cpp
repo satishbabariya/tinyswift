@@ -49,9 +49,57 @@ auto HandleIfStatement(Context& context, Parse::NodeId node_id) -> void {
   // child_count=0, leaving the condition expression as a sibling before
   // IfStatement). Evaluate it now in the current block.
   auto cond_node = context.TakePendingCondition();
-  SemIR::InstId cond_id =
-      cond_node.has_value() ? HandleExpr(context, cond_node)
-                            : SemIR::InstId::None;
+  auto opt_name_node = context.TakePendingOptName();  // for if-let binding
+
+  SemIR::InstId cond_id = SemIR::InstId::None;
+  SemIR::InstId opt_payload_id = SemIR::InstId::None;
+  SemIR::NameId opt_binding_name_id = SemIR::NameId::None;
+  SemIR::TypeId opt_inner_type = SemIR::ErrorInst::TypeId;
+
+  if (cond_node.has_value() &&
+      context.node_kind(cond_node) ==
+          Parse::NodeKind::OptionalBindingCondition) {
+    // OBC has exactly 1 child: the optional value expression.
+    // The binding name (IdentifierPattern) is a sibling captured separately.
+    SemIR::InstId opt_val_id = SemIR::InstId::None;
+    for (auto c : context.children_source_order(cond_node)) {
+      auto ck = context.node_kind(c);
+      if (ck.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+        opt_val_id = HandleExpr(context, c);
+        break;
+      }
+    }
+
+    if (opt_val_id.has_value()) {
+      auto opt_type = context.insts().Get(opt_val_id).type_id();
+      auto bool_type = context.GetBuiltinType("Bool");
+      // Extract has-value flag: TupleAccess(opt, 0) == the i1 field.
+      cond_id = context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(cond_node),
+          SemIR::TupleAccess{.type_id = bool_type,
+                             .tuple_id = opt_val_id,
+                             .index = SemIR::ElementIndex(0)}));
+
+      // Determine inner type for payload binding in the then-block.
+      auto ti = context.types().GetTypeInstId(opt_type);
+      if (ti.has_value()) {
+        if (auto ot = context.insts().Get(ti).TryAs<SemIR::OptionalType>()) {
+          opt_inner_type =
+              context.types().GetTypeIdForTypeInstId(ot->inner_type_id);
+          opt_payload_id = opt_val_id;
+        }
+      }
+    }
+
+    // Extract binding name from the preceding IdentifierPattern sibling.
+    if (opt_name_node.has_value()) {
+      auto text = context.token_text(context.node_token(opt_name_node));
+      opt_binding_name_id = SemIR::NameId::ForIdentifier(
+          context.identifiers().Add(text));
+    }
+  } else {
+    cond_id = cond_node.has_value() ? HandleExpr(context, cond_node)
+                                    : SemIR::InstId::None;
+  }
 
   auto child_vec = context.children_source_order(node_id);
 
@@ -123,6 +171,24 @@ auto HandleIfStatement(Context& context, Parse::NodeId node_id) -> void {
   // Build the then block.
   {
     context.PushInstBlock();
+    // For `if let v = opt { ... }`, inject the unwrapped payload binding at
+    // the start of the then-block so that `v` is in scope for the body.
+    if (opt_payload_id.has_value() && opt_binding_name_id.has_value()) {
+      auto payload_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(then_block_node.has_value() ? then_block_node : node_id),
+          SemIR::TupleAccess{.type_id = opt_inner_type,
+                             .tuple_id = opt_payload_id,
+                             .index = SemIR::ElementIndex(1)}));
+      auto ename_id = context.entity_names().Add(
+          {.name_id = opt_binding_name_id,
+           .parent_scope_id = context.CurrentScopeId()});
+      auto binding_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(then_block_node.has_value() ? then_block_node : node_id),
+          SemIR::ValueBinding{.type_id = opt_inner_type,
+                              .entity_name_id = ename_id,
+                              .value_id = payload_id}));
+      context.AddNameToScope(opt_binding_name_id, binding_id);
+    }
     if (then_block_node.has_value()) {
       HandleCodeBlock(context, then_block_node);
     }
@@ -578,6 +644,24 @@ auto HandleCodeBlock(Context& context, Parse::NodeId node_id) -> void {
 
     if (child_kind == Parse::NodeKind::CodeBlockStart) {
       continue;
+    }
+
+    // If this is an OptionalBindingCondition (from `if let x = expr`), check
+    // if the next sibling is an IfStatement. If so, also capture the preceding
+    // IdentifierPattern as the binding name (it's a sibling since OBC has
+    // child_count=1 and only takes the value-expression as its child).
+    if (child_kind == Parse::NodeKind::OptionalBindingCondition) {
+      if (i + 1 < child_vec.size() &&
+          context.node_kind(child_vec[i + 1]) == Parse::NodeKind::IfStatement) {
+        // Look for the preceding IdentifierPattern sibling (the binding name).
+        if (i > 0 &&
+            context.node_kind(child_vec[i - 1]) ==
+                Parse::NodeKind::IdentifierPattern) {
+          context.SetPendingOptName(child_vec[i - 1]);
+        }
+        context.SetPendingCondition(child);
+        continue;
+      }
     }
 
     // If this is an expression node, check if the next sibling is an

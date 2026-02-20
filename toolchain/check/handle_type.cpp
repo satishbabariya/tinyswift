@@ -70,6 +70,21 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
         SemIR::ConstantId::ForConcreteConstant(inst_id));
   }
 
+  // TupleType node has child_count=0 (element types are siblings in the
+  // parent, not children of TupleType). When reached here, we return an
+  // empty tuple type; the TupleExpr handler builds the real type from values.
+  if (kind == Parse::NodeKind::TupleType) {
+    auto block = context.inst_blocks().AddPlaceholder();
+    context.inst_blocks().ReplacePlaceholder(
+        block, llvm::ArrayRef<SemIR::InstId>());
+    auto id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::TupleType{.type_id = SemIR::TypeType::TypeId,
+                         .element_types_id = block}));
+    return SemIR::TypeId::ForTypeConstant(
+        SemIR::ConstantId::ForConcreteConstant(id));
+  }
+
   if (kind == Parse::NodeKind::ArrayType) {
     // For now, arrays are just a pointer to the element type.
     auto children = context.children_source_order(node_id);

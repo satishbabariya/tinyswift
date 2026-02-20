@@ -341,8 +341,9 @@ auto LowerSILInst(Context& context,
       auto* ty = GetLLVMTypeForSIL(context, inst.result.type);
       if (ty->isVoidTy()) ty = builder.getInt64Ty();
       if (!ty->isIntegerTy()) ty = builder.getInt64Ty();
-      auto* val = llvm::ConstantInt::get(ty, inst.literal_value,
-                                         /*IsSigned=*/true);
+      // i1 (bool) uses unsigned semantics: signed range is {-1,0}, not {0,1}.
+      bool is_signed = !ty->isIntegerTy(1);
+      auto* val = llvm::ConstantInt::get(ty, inst.literal_value, is_signed);
       setSILValue(inst.result, val);
       break;
     }

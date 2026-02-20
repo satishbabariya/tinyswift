@@ -701,21 +701,64 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
   // --- Optional Operations ---
 
   if (auto opt_none = inst.TryAs<SemIR::OptionalNone>()) {
+    // Optional<T> is represented as {i1, T} — None = {false, T(zero)}.
+    auto bool_type_id = SemIR::TypeId::ForTypeConstant(
+        SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+
+    // Determine the inner type from Optional<T>.
+    SemIR::TypeId inner_type_id = opt_none->type_id;
+    auto opt_ti = sem_ir.types().GetTypeInstId(opt_none->type_id);
+    if (opt_ti.has_value()) {
+      auto opt_type_inst = sem_ir.insts().Get(opt_ti);
+      if (auto ot = opt_type_inst.TryAs<SemIR::OptionalType>()) {
+        inner_type_id =
+            sem_ir.types().GetTypeIdForTypeInstId(ot->inner_type_id);
+      }
+    }
+
+    // Emit has-value flag = i1 false.
+    auto flag_val = AllocValue(ctx, ctx.GetSILType(bool_type_id));
+    auto flag_inst = MakeInst(TinySIL::SILInstKind::IntegerLiteral, flag_val);
+    flag_inst->literal_value = 0;
+    ctx.emit(std::move(flag_inst));
+
+    // Emit zero payload for inner type.
+    auto payload_val = AllocValue(ctx, ctx.GetSILType(inner_type_id));
+    auto payload_inst =
+        MakeInst(TinySIL::SILInstKind::IntegerLiteral, payload_val);
+    payload_inst->literal_value = 0;
+    ctx.emit(std::move(payload_inst));
+
+    // Emit TupleInst {i1 false, T 0} — matches {i1, T} Optional layout.
     auto result = AllocValue(ctx, ctx.GetSILType(opt_none->type_id));
-    auto sil_inst = MakeInst(TinySIL::SILInstKind::EnumInst, result);
-    // OptionalNone is like enum .none, tag = 0.
-    sil_inst->literal_value = 0;
-    ctx.emit(std::move(sil_inst));
+    auto tuple_inst = MakeInst(TinySIL::SILInstKind::TupleInst, result);
+    tuple_inst->operand_list.push_back(flag_val);
+    tuple_inst->operand_list.push_back(payload_val);
+    ctx.emit(std::move(tuple_inst));
     ctx.SetValue(inst_id, result);
     return;
   }
 
   if (auto opt_some = inst.TryAs<SemIR::OptionalSome>()) {
+    // Optional<T> is represented as {i1, T} — Some(x) = {true, x}.
+    auto bool_type_id = SemIR::TypeId::ForTypeConstant(
+        SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+
+    // Emit has-value flag = i1 true.
+    auto flag_val = AllocValue(ctx, ctx.GetSILType(bool_type_id));
+    auto flag_inst = MakeInst(TinySIL::SILInstKind::IntegerLiteral, flag_val);
+    flag_inst->literal_value = 1;
+    ctx.emit(std::move(flag_inst));
+
+    // Emit TupleInst {i1 true, inner_value}.
+    auto inner_val = ctx.GetValue(opt_some->value_id);
     auto result = AllocValue(ctx, ctx.GetSILType(opt_some->type_id));
-    auto sil_inst = MakeInst(TinySIL::SILInstKind::EnumInst, result);
-    sil_inst->setOperand(0, ctx.GetValue(opt_some->value_id));
-    sil_inst->literal_value = 1;  // .some tag
-    ctx.emit(std::move(sil_inst));
+    auto tuple_inst = MakeInst(TinySIL::SILInstKind::TupleInst, result);
+    tuple_inst->operand_list.push_back(flag_val);
+    if (inner_val.is_valid()) {
+      tuple_inst->operand_list.push_back(inner_val);
+    }
+    ctx.emit(std::move(tuple_inst));
     ctx.SetValue(inst_id, result);
     return;
   }
