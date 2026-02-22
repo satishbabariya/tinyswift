@@ -674,6 +674,19 @@ struct FieldAccess {
   ElementIndex index;
 };
 
+// Address of a struct field (for lvalue member assignment, e.g. self.x = v).
+// base_id must be a VarStorage (struct alloca). Produces a pointer to the field.
+struct FieldAddr {
+  static constexpr auto Kind = InstKind::FieldAddr.Define<Parse::NodeId>(
+      {.ir_name = "field_addr",
+       .expr_category = ExprCategory::Value,
+       .constant_kind = InstConstantKind::Never});
+
+  TypeId type_id;   // type of the field (not a pointer type — pointer inferred at lower)
+  InstId base_id;   // VarStorage (struct alloca)
+  ElementIndex index;  // field index
+};
+
 // A struct field descriptor.
 struct StructField {
   static constexpr auto Kind = InstKind::StructField.Define<Parse::NodeId>(
@@ -845,6 +858,20 @@ struct BoundMethod {
   TypeId type_id;     // placeholder — use SemIR::TypeType::TypeId
   InstId base_id;     // the receiver object (e.g., `p`)
   InstId function_id; // the FunctionDecl instruction for the method
+};
+
+// A computed property declaration (getter-only property in a struct/class).
+// Registered in the type scope under the property name. When a member access
+// resolves to this instruction, HandleMemberAccessExpr auto-calls the getter.
+struct ComputedPropertyDecl {
+  static constexpr auto Kind =
+      InstKind::ComputedPropertyDecl.Define<Parse::NodeId>(
+          {.ir_name = "computed_property_decl",
+           .expr_category = ExprCategory::Value,
+           .constant_kind = InstConstantKind::AlwaysUnique});
+
+  TypeId type_id;     // the property's value type (e.g., Int)
+  InstId getter_id;   // the FunctionDecl InstId for the synthetic getter
 };
 
 // These concepts are an implementation detail of the library, not public API.

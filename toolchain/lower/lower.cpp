@@ -628,6 +628,21 @@ auto LowerSILInst(Context& context,
       break;
     }
 
+    case TinySIL::SILInstKind::StructElementAddr: {
+      // Compute a pointer to a struct field (GEP). The operand is a pointer
+      // to the struct (from AllocStack); the result is a pointer to the field.
+      auto* base_ptr = getSILValue(inst.operands[0]);
+      if (base_ptr && inst.element_index >= 0) {
+        auto struct_sil_type = inst.operands[0].type.getObjectType();
+        auto* struct_llvm_type = GetLLVMTypeForSIL(context, struct_sil_type);
+        auto* gep = builder.CreateStructGEP(
+            struct_llvm_type, base_ptr,
+            static_cast<unsigned>(inst.element_index));
+        setSILValue(inst.result, gep);
+      }
+      break;
+    }
+
     case TinySIL::SILInstKind::TupleInst: {
       if (inst.operand_list.empty()) {
         // Empty tuple () — used for void returns.

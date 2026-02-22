@@ -448,6 +448,63 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
 
       auto& scope = context.name_scopes().Get(struct_type->name_scope_id);
 
+      // Check for a custom init(...) function in the struct scope.
+      // If found, delegate to it rather than using memberwise initialization.
+      {
+        auto init_ident_id = context.identifiers().Lookup("init");
+        if (init_ident_id.has_value()) {
+          auto init_name_id = SemIR::NameId::ForIdentifier(init_ident_id);
+          auto init_it = scope.names.find(init_name_id.index);
+          if (init_it != scope.names.end()) {
+            auto init_decl_inst = context.insts().Get(init_it->second);
+            if (auto fn_decl = init_decl_inst.TryAs<SemIR::FunctionDecl>()) {
+              auto& fn = context.functions().Get(fn_decl->function_id);
+              // Match call-site labeled args to the init's params by name.
+              llvm::SmallVector<SemIR::InstId> init_args;
+              if (fn.call_params_id.has_value() &&
+                  fn.call_params_id != SemIR::InstBlockId::Empty) {
+                auto param_ids =
+                    context.sem_ir().inst_blocks().Get(fn.call_params_id);
+                init_args.resize(param_ids.size(), SemIR::InstId::None);
+                for (size_t pi = 0; pi < param_ids.size(); ++pi) {
+                  auto param_inst = context.insts().Get(param_ids[pi]);
+                  if (auto vp = param_inst.TryAs<SemIR::ValueParam>()) {
+                    auto p_ident = vp->pretty_name_id.AsIdentifierId();
+                    llvm::StringRef pname =
+                        p_ident.has_value()
+                            ? context.identifiers().Get(p_ident)
+                            : llvm::StringRef();
+                    for (auto& arg : labeled_args) {
+                      if (arg.label == pname) {
+                        init_args[pi] = arg.value_id;
+                        break;
+                      }
+                    }
+                  }
+                }
+              } else {
+                for (auto& arg : labeled_args) {
+                  init_args.push_back(arg.value_id);
+                }
+              }
+              llvm::SmallVector<SemIR::InstId> valid_init_args;
+              for (auto a : init_args) {
+                if (a.has_value()) valid_init_args.push_back(a);
+              }
+              auto init_args_block = context.inst_blocks().AddPlaceholder();
+              context.inst_blocks().ReplacePlaceholder(
+                  init_args_block,
+                  llvm::ArrayRef<SemIR::InstId>(valid_init_args));
+              return context.AddInst(SemIR::LocIdAndInst(
+                  SemIR::LocId(node_id),
+                  SemIR::Call{.type_id = type_id,
+                              .callee_id = init_it->second,
+                              .args_id = init_args_block}));
+            }
+          }
+        }
+      }
+
       // Count struct fields.
       int num_fields = 0;
       for (auto& [name_idx, inst_id] : scope.names) {
@@ -799,6 +856,22 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
           if (found != scope.names.end()) {
             auto member_inst_id = found->second;
             auto member_inst = context.insts().Get(member_inst_id);
+
+            // Computed property: auto-call the getter with self.
+            if (auto cpd =
+                    member_inst.TryAs<SemIR::ComputedPropertyDecl>()) {
+              // Pass base_id as self (SILGen loads VarStorage from NameRef).
+              auto args_block_id = context.inst_blocks().AddPlaceholder();
+              context.inst_blocks().ReplacePlaceholder(
+                  args_block_id,
+                  llvm::ArrayRef<SemIR::InstId>{base_id});
+              return context.AddInst(SemIR::LocIdAndInst(
+                  SemIR::LocId(node_id),
+                  SemIR::Call{.type_id = cpd->type_id,
+                              .callee_id = cpd->getter_id,
+                              .args_id = args_block_id}));
+            }
+
             // If it's a FunctionDecl, emit a BoundMethod (not a FieldAccess).
             if (member_inst.Is<SemIR::FunctionDecl>()) {
               return context.AddInst(SemIR::LocIdAndInst(
@@ -1193,18 +1266,112 @@ auto HandleAssignmentExpr(Context& context, Parse::NodeId node_id)
     -> SemIR::InstId {
   auto children = context.children_source_order(node_id);
 
-  SemIR::InstId lhs_id = SemIR::InstId::None;
-  SemIR::InstId rhs_id = SemIR::InstId::None;
-
+  // Collect LHS and RHS parse nodes without evaluating yet.
+  Parse::NodeId lhs_child = Parse::NodeId::None;
+  Parse::NodeId rhs_child = Parse::NodeId::None;
   for (auto child : children) {
     if (context.node_kind(child).category().HasAnyOf(
             Parse::NodeCategory::Expr)) {
-      if (!lhs_id.has_value()) {
-        lhs_id = HandleExpr(context, child);
+      if (!lhs_child.has_value()) {
+        lhs_child = child;
       } else {
-        rhs_id = HandleExpr(context, child);
+        rhs_child = child;
       }
     }
+  }
+
+  SemIR::InstId lhs_id = SemIR::InstId::None;
+  SemIR::InstId rhs_id = SemIR::InstId::None;
+
+  // If LHS is a MemberAccessExpr (e.g., `self.x = value` in an init body),
+  // emit FieldAddr instead of FieldAccess so the assignment writes through.
+  if (lhs_child.has_value() &&
+      context.node_kind(lhs_child) == Parse::NodeKind::MemberAccessExpr) {
+    Parse::NodeId base_child = Parse::NodeId::None;
+    llvm::StringRef member_name;
+    for (auto mc : context.children_source_order(lhs_child)) {
+      auto mc_kind = context.node_kind(mc);
+      if (mc_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+        if (!base_child.has_value()) {
+          base_child = mc;
+        } else {
+          member_name = context.token_text(context.node_token(mc));
+        }
+      } else if (mc_kind == Parse::NodeKind::IdentifierNameNotBeforeParams ||
+                 mc_kind == Parse::NodeKind::IdentifierNameBeforeParams ||
+                 mc_kind.category().HasAnyOf(Parse::NodeCategory::MemberName)) {
+        member_name = context.token_text(context.node_token(mc));
+      }
+    }
+
+    if (base_child.has_value() && !member_name.empty()) {
+      // To find the VarStorage for the base (e.g., `self`), look up the name
+      // directly in scope WITHOUT calling HandleExpr. Calling HandleExpr would
+      // emit a NameRef that sil_gen converts to a Load, causing a spurious
+      // "use before initialization" error in init bodies.
+      SemIR::InstId var_storage_id = SemIR::InstId::None;
+      auto base_kind = context.node_kind(base_child);
+      if (base_kind == Parse::NodeKind::IdentifierNameNotBeforeParams ||
+          base_kind == Parse::NodeKind::IdentifierNameBeforeParams ||
+          base_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+        auto base_text =
+            context.token_text(context.node_token(base_child));
+        auto base_ident_id = context.identifiers().Lookup(base_text);
+        if (base_ident_id.has_value()) {
+          auto base_name_id = SemIR::NameId::ForIdentifier(base_ident_id);
+          auto looked_up = context.LookupName(base_name_id);
+          if (looked_up.has_value()) {
+            auto lu_inst = context.insts().Get(looked_up);
+            if (lu_inst.Is<SemIR::VarStorage>()) {
+              var_storage_id = looked_up;
+            }
+          }
+        }
+      }
+
+      if (var_storage_id.has_value()) {
+        auto base_type_id = GetInstType(context, var_storage_id);
+        if (base_type_id.has_value() && base_type_id.is_concrete()) {
+          auto type_inst_id = context.types().GetTypeInstId(base_type_id);
+          if (type_inst_id.has_value()) {
+            auto type_inst = context.insts().Get(type_inst_id);
+            SemIR::NameScopeId scope_id = SemIR::NameScopeId::None;
+            if (auto st = type_inst.TryAs<SemIR::StructType>()) {
+              scope_id = st->name_scope_id;
+            } else if (auto ct = type_inst.TryAs<SemIR::ClassType>()) {
+              scope_id = ct->name_scope_id;
+            }
+
+            if (scope_id.has_value()) {
+              auto ident_id = context.identifiers().Lookup(member_name);
+              if (ident_id.has_value()) {
+                auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+                auto& scope = context.name_scopes().Get(scope_id);
+                auto it = scope.names.find(name_id.index);
+                if (it != scope.names.end()) {
+                  auto field_inst = context.insts().Get(it->second);
+                  if (auto field = field_inst.TryAs<SemIR::StructField>()) {
+                    lhs_id = context.AddInst(SemIR::LocIdAndInst(
+                        SemIR::LocId(node_id),
+                        SemIR::FieldAddr{.type_id = field->type_id,
+                                         .base_id = var_storage_id,
+                                         .index = field->index}));
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Fall back to regular expr evaluation for LHS if FieldAddr wasn't emitted.
+  if (!lhs_id.has_value() && lhs_child.has_value()) {
+    lhs_id = HandleExpr(context, lhs_child);
+  }
+  if (rhs_child.has_value()) {
+    rhs_id = HandleExpr(context, rhs_child);
   }
 
   return context.AddInst(SemIR::LocIdAndInst(

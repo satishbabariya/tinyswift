@@ -32,6 +32,7 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     case SemIR::InstKind::NameBindingDecl:
     case SemIR::InstKind::Namespace:
     case SemIR::InstKind::BoundMethod:
+    case SemIR::InstKind::ComputedPropertyDecl:
       // These are compile-time only or pattern metadata; nothing to lower.
       break;
 
@@ -424,6 +425,19 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
             base, {static_cast<unsigned>(access.index.index)});
         context.SetLocal(inst_id, extracted);
       }
+      break;
+    }
+
+    case SemIR::InstKind::FieldAddr: {
+      // Compute the address of a struct field (for lvalue member assignment).
+      // base_id must be a VarStorage (alloca pointer to the struct).
+      auto addr = inst.As<SemIR::FieldAddr>();
+      auto* base_ptr = context.GetLocal(addr.base_id);
+      auto base_inst = sem_ir.insts().Get(addr.base_id);
+      llvm::Type* struct_type = context.GetType(base_inst.type_id());
+      auto* gep = context.builder().CreateStructGEP(
+          struct_type, base_ptr, static_cast<unsigned>(addr.index.index));
+      context.SetLocal(inst_id, gep);
       break;
     }
 

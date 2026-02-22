@@ -76,9 +76,11 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
       kind == SemIR::InstKind::ValueBindingPattern ||
       kind == SemIR::InstKind::ValueParamPattern ||
       kind == SemIR::InstKind::SpliceBlock ||
-      kind == SemIR::InstKind::BoundMethod) {
-    // BoundMethod is a compile-time construct that is always consumed by
-    // HandleCallExpr; it never appears as a standalone runtime instruction.
+      kind == SemIR::InstKind::BoundMethod ||
+      kind == SemIR::InstKind::ComputedPropertyDecl) {
+    // BoundMethod and ComputedPropertyDecl are compile-time constructs that
+    // are always consumed by HandleCallExpr/HandleMemberAccessExpr; they
+    // never appear as standalone runtime instructions.
     return;
   }
 
@@ -633,6 +635,19 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
         MakeInst(TinySIL::SILInstKind::StructExtract, result);
     sil_inst->setOperand(0, ctx.GetValue(field_access->base_id));
     sil_inst->element_index = field_access->index.index;
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  if (auto field_addr = inst.TryAs<SemIR::FieldAddr>()) {
+    // Compute the address of a struct field (for lvalue member assignment).
+    // Result is an address type (pointer to the field's storage).
+    auto result =
+        AllocValue(ctx, ctx.GetSILType(field_addr->type_id).getAddressType());
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::StructElementAddr, result);
+    sil_inst->setOperand(0, ctx.GetValue(field_addr->base_id));
+    sil_inst->element_index = field_addr->index.index;
     ctx.emit(std::move(sil_inst));
     ctx.SetValue(inst_id, result);
     return;
