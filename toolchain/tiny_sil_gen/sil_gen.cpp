@@ -640,7 +640,11 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
   if (auto enum_init = inst.TryAs<SemIR::EnumInit>()) {
     auto result = AllocValue(ctx, ctx.GetSILType(enum_init->type_id));
     auto sil_inst = MakeInst(TinySIL::SILInstKind::EnumInst, result);
-    sil_inst->setOperand(0, ctx.GetValue(enum_init->case_id));
+    // Extract the discriminant value from the referenced EnumCase instruction.
+    auto case_inst = sem_ir.insts().Get(enum_init->case_id);
+    if (auto ec = case_inst.TryAs<SemIR::EnumCase>()) {
+      sil_inst->literal_value = ec->discriminant.index;
+    }
     ctx.emit(std::move(sil_inst));
     ctx.SetValue(inst_id, result);
     return;

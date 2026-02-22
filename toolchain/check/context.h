@@ -106,6 +106,11 @@ class Context {
   // Returns the current inst block id being built (top of stack).
   auto CurrentInstBlockId() const -> SemIR::InstBlockId;
 
+  // Returns true if the current instruction block ends with a terminator
+  // (Return or Branch). Used to avoid emitting dead branches after return
+  // statements in switch/if bodies.
+  auto IsCurrentBlockTerminated() -> bool;
+
   // Adds an instruction ID to a specific block.
   auto AddInstToBlock(SemIR::InstBlockId block_id, SemIR::InstId inst_id)
       -> void;

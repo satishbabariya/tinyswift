@@ -106,6 +106,18 @@ auto Context::LookupName(SemIR::NameId name_id) -> SemIR::InstId {
   return SemIR::InstId::None;
 }
 
+auto Context::IsCurrentBlockTerminated() -> bool {
+  if (inst_block_stack_.empty()) return false;
+  const auto& block_insts = inst_block_stack_.back().insts;
+  if (block_insts.empty()) return false;
+  auto last_id = block_insts.back();
+  auto kind = insts().Get(last_id).kind();
+  return kind == SemIR::InstKind::Return ||
+         kind == SemIR::InstKind::ReturnExpr ||
+         kind == SemIR::InstKind::Branch ||
+         kind == SemIR::InstKind::BranchIf;
+}
+
 auto Context::AddNameToScope(SemIR::NameId name_id, SemIR::InstId inst_id)
     -> void {
   if (!scope_stack_.empty()) {

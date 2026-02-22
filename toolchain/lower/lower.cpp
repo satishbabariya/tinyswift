@@ -665,10 +665,18 @@ auto LowerSILInst(Context& context,
     }
 
     case TinySIL::SILInstKind::EnumInst: {
-      // Simple enum: just an i64 tag.
-      auto* val = llvm::ConstantInt::get(builder.getInt64Ty(),
-                                         inst.literal_value);
-      setSILValue(inst.result, val);
+      // Simple enum: wrap discriminant i64 into { i64 } struct.
+      auto* tag_val = llvm::ConstantInt::get(builder.getInt64Ty(),
+                                              inst.literal_value);
+      auto* llvm_ty = GetLLVMTypeForSIL(context, inst.result.type);
+      if (llvm_ty && llvm_ty->isStructTy()) {
+        auto* st = llvm::cast<llvm::StructType>(llvm_ty);
+        auto* agg = llvm::ConstantStruct::get(st, {tag_val});
+        setSILValue(inst.result, agg);
+      } else {
+        // Fallback: just the i64 (should not happen for well-typed IR).
+        setSILValue(inst.result, tag_val);
+      }
       break;
     }
 

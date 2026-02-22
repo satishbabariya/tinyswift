@@ -8,6 +8,7 @@
 #include "toolchain/check/handle_expr.h"
 #include "toolchain/check/handle_function.h"
 #include "toolchain/check/handle_type_decl.h"
+#include "toolchain/lex/token_index.h"
 #include "toolchain/parse/node_kind.h"
 #include "toolchain/parse/typed_nodes.h"
 #include "toolchain/sem_ir/typed_insts.h"
@@ -556,39 +557,268 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
   context.AddBodyBlock(merge_block_id);
 }
 
-// Handles a switch statement (basic if-else chain desugaring).
+// Handles a switch statement desugared to an if-else comparison chain.
+//
+// CFG structure:
+//   entry: scrutinee + cond1; BranchIf(cond1, body1), Branch(check2)
+//   check2: cond2; BranchIf(cond2, body2), Branch(check3 or merge)
+//   ...
+//   body1: case1 stmts; Branch(merge)
+//   body2: case2 stmts; Branch(merge)
+//   merge: code after switch
+//
+// Pattern expressions for integer cases appear as loose Expr children of
+// SwitchStatement in the parse tree (from ExprPattern's child_count=0).
+// Enum dot-pattern cases (`.red`) use EnumCasePattern inside SwitchCaseLabel.
 auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
   auto children = context.children_source_order(node_id);
 
-  // Extract the scrutinee expression.
+  // ---- Phase 1: Collect scrutinee and arms ----
   SemIR::InstId scrutinee_id = SemIR::InstId::None;
+  bool found_scrutinee = false;
+
+  struct CaseArm {
+    SemIR::InstId pattern_id = SemIR::InstId::None;  // Loose expr pattern (None if default or dot-syntax)
+    bool is_default = false;
+    bool is_dot_enum = false;               // True if arm uses EnumCasePattern (.red syntax)
+    llvm::StringRef dot_case_name;  // Case name for dot-syntax enum patterns
+    Parse::NodeId body_node = Parse::NodeId::None;  // SwitchCaseBody parse node
+  };
+  llvm::SmallVector<CaseArm> arms;
+  SemIR::InstId pending_pattern_id = SemIR::InstId::None;
+
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
+
     if (child_kind == Parse::NodeKind::SwitchIntroducer) {
       continue;
     }
+
+    if (!found_scrutinee) {
+      if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+        scrutinee_id = HandleExpr(context, child);
+        found_scrutinee = true;
+      }
+      continue;
+    }
+
+    // Loose Expr children (from ExprPattern's child_count=0) are pattern values.
     if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
-      scrutinee_id = HandleExpr(context, child);
-      break;
+      pending_pattern_id = HandleExpr(context, child);
+      continue;
+    }
+
+    if (child_kind == Parse::NodeKind::SwitchCaseBody) {
+      CaseArm arm;
+      arm.pattern_id = pending_pattern_id;
+      pending_pattern_id = SemIR::InstId::None;
+      arm.is_default = false;
+      arm.is_dot_enum = false;
+      arm.body_node = child;
+
+      // Inspect label to detect default vs case, and dot-enum patterns.
+      for (auto bc : context.children_source_order(child)) {
+        auto bck = context.node_kind(bc);
+        if (bck == Parse::NodeKind::SwitchDefaultLabel) {
+          arm.is_default = true;
+        } else if (bck == Parse::NodeKind::SwitchCaseLabel) {
+          for (auto lc : context.children_source_order(bc)) {
+            if (context.node_kind(lc) == Parse::NodeKind::EnumCasePattern) {
+              arm.is_dot_enum = true;
+              // EnumCasePattern token is '.'; case name is the next token.
+              auto dot_tok = context.node_token(lc);
+              auto name_tok = Lex::TokenIndex(dot_tok.index + 1);
+              arm.dot_case_name = context.token_text(name_tok);
+              break;
+            }
+          }
+        }
+      }
+
+      arms.push_back(arm);
     }
   }
 
-  // Process each case as a BranchIf chain.
-  for (auto child : children) {
-    auto child_kind = context.node_kind(child);
-    if (child_kind == Parse::NodeKind::SwitchCaseLabel ||
-        child_kind == Parse::NodeKind::SwitchDefaultLabel) {
-      // Process the code block following this label.
-      continue;
+  if (!found_scrutinee || arms.empty()) {
+    return;
+  }
+
+  // ---- Phase 2: Determine scrutinee type ----
+  auto int_type = context.GetBuiltinType("Int");
+  auto bool_type = context.GetBuiltinType("Bool");
+
+  bool scrutinee_is_enum = false;
+  SemIR::TypeId scrutinee_type = SemIR::ErrorInst::TypeId;
+  SemIR::NameScopeId enum_name_scope_id = SemIR::NameScopeId::None;
+
+  if (scrutinee_id.has_value()) {
+    scrutinee_type = context.insts().Get(scrutinee_id).type_id();
+    if (scrutinee_type.has_value() && scrutinee_type.is_concrete()) {
+      auto ti = context.types().GetTypeInstId(scrutinee_type);
+      if (ti.has_value()) {
+        auto type_inst = context.insts().Get(ti);
+        if (auto ed = type_inst.TryAs<SemIR::EnumDecl>()) {
+          scrutinee_is_enum = true;
+          enum_name_scope_id = ed->name_scope_id;
+        }
+      }
     }
-    if (child_kind == Parse::NodeKind::CodeBlock) {
-      auto case_label = context.PushInstBlock();
+  }
+
+  // ---- Phase 3: Emit discriminant extraction for enum scrutinee ----
+  // For enum scrutinee: extract field 0 (i64 tag) once for reuse.
+  SemIR::InstId scrutinee_disc_id = SemIR::InstId::None;
+  if (scrutinee_is_enum) {
+    scrutinee_disc_id = context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::TupleAccess{.type_id = int_type,
+                           .tuple_id = scrutinee_id,
+                           .index = SemIR::ElementIndex(0)}));
+  }
+
+  // ---- Phase 4: Pre-allocate body block IDs ----
+  auto merge_block_id = context.inst_blocks().AddPlaceholder();
+  llvm::SmallVector<SemIR::InstBlockId> body_block_ids;
+  for (size_t i = 0; i < arms.size(); ++i) {
+    body_block_ids.push_back(context.inst_blocks().AddPlaceholder());
+  }
+
+  // ---- Phase 5: Build comparison chain ----
+  // For each arm (except the last):
+  //   emit comparison in current block, BranchIf→body, Branch→next_check
+  //   SwitchInstBlock(next_check) + AddBodyBlock(next_check)
+  // For the last arm:
+  //   emit Branch→body (default) or BranchIf+Branch (case), SwitchInstBlock(merge)
+  for (size_t i = 0; i < arms.size(); ++i) {
+    auto& arm = arms[i];
+    auto body_id = body_block_ids[i];
+
+    SemIR::InstBlockId next_check_id = merge_block_id;
+    bool has_next = (i + 1 < arms.size());
+    if (has_next) {
+      next_check_id = context.inst_blocks().AddPlaceholder();
+    }
+
+    if (!arm.is_default) {
+      // Build comparison expression.
+      SemIR::InstId cond_id = SemIR::InstId::None;
+
+      if (scrutinee_is_enum) {
+        // Enum scrutinee: compare discriminants.
+        SemIR::InstId pattern_disc_id = SemIR::InstId::None;
+
+        if (arm.is_dot_enum && enum_name_scope_id.has_value()) {
+          // Dot-syntax pattern (.red): look up case by name in enum scope.
+          auto ident_id = context.identifiers().Lookup(arm.dot_case_name);
+          if (ident_id.has_value()) {
+            auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+            auto& scope = context.name_scopes().Get(enum_name_scope_id);
+            auto it = scope.names.find(name_id.index);
+            if (it != scope.names.end()) {
+              auto case_inst = context.insts().Get(it->second);
+              if (auto ec = case_inst.TryAs<SemIR::EnumCase>()) {
+                pattern_disc_id = context.AddInst(SemIR::LocIdAndInst(
+                    SemIR::LocId(node_id),
+                    SemIR::IntValue{
+                        .type_id = int_type,
+                        .int_id = context.ints().Add(ec->discriminant.index)}));
+              }
+            }
+          }
+        } else if (arm.pattern_id.has_value()) {
+          // Qualified pattern (Color.red via MemberAccessExpr → EnumInit):
+          // look through EnumInit to get its discriminant.
+          auto pat_inst = context.insts().Get(arm.pattern_id);
+          if (auto ei = pat_inst.TryAs<SemIR::EnumInit>()) {
+            auto case_inst = context.insts().Get(ei->case_id);
+            if (auto ec = case_inst.TryAs<SemIR::EnumCase>()) {
+              pattern_disc_id = context.AddInst(SemIR::LocIdAndInst(
+                  SemIR::LocId(node_id),
+                  SemIR::IntValue{
+                      .type_id = int_type,
+                      .int_id = context.ints().Add(ec->discriminant.index)}));
+            }
+          }
+        }
+
+        if (scrutinee_disc_id.has_value() && pattern_disc_id.has_value()) {
+          cond_id = context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::IntEq{.type_id = bool_type,
+                           .lhs_id = scrutinee_disc_id,
+                           .rhs_id = pattern_disc_id}));
+        }
+      } else if (arm.pattern_id.has_value()) {
+        // Integer scrutinee: direct equality comparison.
+        cond_id = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntEq{.type_id = bool_type,
+                         .lhs_id = scrutinee_id,
+                         .rhs_id = arm.pattern_id}));
+      }
+
+      if (cond_id.has_value()) {
+        context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::BranchIf{.target_id = SemIR::LabelId(body_id),
+                             .cond_id = cond_id}));
+        context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::Branch{.target_id = SemIR::LabelId(next_check_id)}));
+      } else {
+        // Fallback: unconditional branch to body (pattern not analyzable).
+        context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::Branch{.target_id = SemIR::LabelId(body_id)}));
+      }
+    } else {
+      // Default arm: unconditional branch to body.
       context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
-          SemIR::Branch{.target_id = SemIR::LabelId(case_label)}));
-      HandleCodeBlock(context, child);
-      context.PopInstBlock();
+          SemIR::Branch{.target_id = SemIR::LabelId(body_id)}));
     }
+
+    if (has_next) {
+      context.SwitchInstBlock(next_check_id);
+      context.AddBodyBlock(next_check_id);
+    } else {
+      context.SwitchInstBlock(merge_block_id);
+      context.AddBodyBlock(merge_block_id);
+    }
+  }
+
+  // ---- Phase 6: Build body blocks ----
+  for (size_t i = 0; i < arms.size(); ++i) {
+    context.PushInstBlock();
+
+    // Process body statements (children of SwitchCaseBody, skipping the label).
+    for (auto bc : context.children_source_order(arms[i].body_node)) {
+      auto bck = context.node_kind(bc);
+      if (bck == Parse::NodeKind::SwitchCaseLabel ||
+          bck == Parse::NodeKind::SwitchDefaultLabel) {
+        continue;
+      }
+      if (bck.category().HasAnyOf(Parse::NodeCategory::Statement |
+                                   Parse::NodeCategory::Decl)) {
+        HandleStatement(context, bc);
+      } else if (bck.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+        HandleExpr(context, bc);
+      }
+    }
+
+    // Add branch to merge only if the body didn't already terminate
+    // (e.g., via a return statement).
+    if (!context.IsCurrentBlockTerminated()) {
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+    }
+
+    auto tmp_id = context.PopInstBlock();
+    auto body_insts = context.inst_blocks().Get(tmp_id);
+    context.inst_blocks().ReplacePlaceholder(
+        body_block_ids[i], llvm::ArrayRef<SemIR::InstId>(body_insts));
+    context.AddBodyBlock(body_block_ids[i]);
   }
 }
 

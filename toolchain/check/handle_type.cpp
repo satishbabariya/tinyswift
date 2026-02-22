@@ -27,7 +27,8 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
       auto inst_id = context.LookupName(name_id);
       if (inst_id.has_value()) {
         auto inst = context.insts().Get(inst_id);
-        if (inst.Is<SemIR::StructType>() || inst.Is<SemIR::ClassType>()) {
+        if (inst.Is<SemIR::StructType>() || inst.Is<SemIR::ClassType>() ||
+            inst.Is<SemIR::EnumDecl>()) {
           return SemIR::TypeId::ForTypeConstant(
               SemIR::ConstantId::ForConcreteConstant(inst_id));
         }
@@ -117,7 +118,8 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
     auto inst_id = context.LookupName(name_id);
     if (inst_id.has_value()) {
       auto inst = context.insts().Get(inst_id);
-      if (inst.Is<SemIR::StructType>() || inst.Is<SemIR::ClassType>()) {
+      if (inst.Is<SemIR::StructType>() || inst.Is<SemIR::ClassType>() ||
+          inst.Is<SemIR::EnumDecl>()) {
         return SemIR::TypeId::ForTypeConstant(
             SemIR::ConstantId::ForConcreteConstant(inst_id));
       }

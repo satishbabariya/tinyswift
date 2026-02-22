@@ -53,6 +53,12 @@ TreeAndSubtrees::TreeAndSubtrees(const Lex::TokenizedBuffer& tokens,
         if (kind.bracket() == tree.node_kind(child)) {
           break;
         }
+        // SwitchCaseBody can be bracketed by either SwitchCaseLabel or
+        // SwitchDefaultLabel (for default arms).
+        if (kind == NodeKind::SwitchCaseBody &&
+            tree.node_kind(child) == NodeKind::SwitchDefaultLabel) {
+          break;
+        }
       }
     }
     size_stack.push_back(n);

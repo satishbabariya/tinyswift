@@ -22,11 +22,23 @@ auto TypeStore::GetTypeIdForTypeConstantId(ConstantId constant_id) const
 
 auto TypeStore::GetTypeIdForTypeInstId(InstId inst_id) const -> TypeId {
   auto constant_id = file_->constant_values().Get(inst_id);
+  // AlwaysUnique type instructions (StructType, ClassType, EnumDecl, etc.) are
+  // not explicitly registered in constant_values (only singletons are). For a
+  // concrete instruction (index >= 0) with no registered constant, synthesize
+  // the concrete ConstantId directly from the instruction index.
+  if (!constant_id.is_constant() && inst_id.has_value() && inst_id.index >= 0) {
+    return TypeId::ForTypeConstant(ConstantId::ForConcreteConstant(inst_id));
+  }
   return TypeId::ForTypeConstant(constant_id);
 }
 
 auto TypeStore::GetTypeIdForTypeInstId(TypeInstId inst_id) const -> TypeId {
   auto constant_id = file_->constant_values().Get(inst_id);
+  // Same fallback as the InstId overload above.
+  if (!constant_id.is_constant() && inst_id.index >= 0) {
+    return TypeId::ForTypeConstant(
+        ConstantId::ForConcreteConstant(InstId(inst_id.index)));
+  }
   return TypeId::ForTypeConstant(constant_id);
 }
 

@@ -50,9 +50,22 @@ auto CheckParseTrees(
     }
     std::reverse(roots_vec.begin(), roots_vec.end());
 
-    // Pass 1: Pre-register all top-level function and type names.
-    // This enables forward references and mutual recursion across top-level
-    // declarations (functions calling each other, types referencing each other).
+    // Pass 1a: Process all top-level type definitions (enum, struct, class)
+    // first so their names are in scope when function signatures are resolved.
+    // Track which roots were processed here so Pass 2 can skip them.
+    llvm::DenseSet<uint32_t> processed_type_roots;
+    for (auto root : roots_vec) {
+      auto kind = context.node_kind(root);
+      if (kind == Parse::NodeKind::EnumDefinition ||
+          kind == Parse::NodeKind::StructDefinition ||
+          kind == Parse::NodeKind::ClassDefinition) {
+        HandleStatement(context, root);
+        processed_type_roots.insert(root.index);
+      }
+    }
+
+    // Pass 1b: Pre-register all top-level function names (now that type names
+    // are in scope, return types referencing enums/structs resolve correctly).
     for (auto root : roots_vec) {
       auto kind = context.node_kind(root);
       if (kind == Parse::NodeKind::FunctionDefinition) {
@@ -70,17 +83,21 @@ auto CheckParseTrees(
       } else if (kind == Parse::NodeKind::FunctionDecl) {
         HandleFunctionDecl(context, root);
       }
-      // Note: struct/class/enum type names could be pre-registered here too
-      // for mutual type references, but we defer that to when needed.
     }
 
     // Pass 2: Process all top-level declarations fully (including bodies).
+    // Type definitions were already processed in Pass 1a — skip them here.
     for (auto root : roots_vec) {
       auto kind = context.node_kind(root);
 
       // Skip FileStart and FileEnd.
       if (kind == Parse::NodeKind::FileStart ||
           kind == Parse::NodeKind::FileEnd) {
+        continue;
+      }
+
+      // Skip type definitions already processed in Pass 1a.
+      if (processed_type_roots.count(root.index)) {
         continue;
       }
 

@@ -318,43 +318,59 @@ auto HandleEnumDefinition(Context& context, Parse::NodeId node_id) -> void {
 
   context.PushScope(type_scope_id);
 
-  // Process enum cases.
+  // Process enum cases. EnumCaseDecl nodes live inside a CodeBlock child
+  // of EnumDefinition, NOT as direct children (same pattern as struct fields).
+  // Helper lambda to process a list of potential enum case nodes.
   llvm::SmallVector<SemIR::InstId> case_inst_ids;
   int32_t discriminant = 0;
+
+  auto ProcessEnumCaseNodes = [&](auto& node_children) {
+    for (auto child : node_children) {
+      auto child_kind = context.node_kind(child);
+      if (child_kind == Parse::NodeKind::EnumCaseDecl) {
+        auto case_children = context.children_source_order(child);
+        for (auto cc : case_children) {
+          if (context.node_kind(cc) == Parse::NodeKind::EnumCaseElement) {
+            auto elem_children = context.children_source_order(cc);
+            for (auto ec : elem_children) {
+              if (context.node_kind(ec) ==
+                  Parse::NodeKind::IdentifierNameNotBeforeParams) {
+                auto token = context.node_token(ec);
+                auto text = context.token_text(token);
+                auto ident_id = context.identifiers().Add(text);
+                auto case_name_id = SemIR::NameId::ForIdentifier(ident_id);
+
+                // Emit EnumCase instruction.
+                auto case_id = context.AddInst(SemIR::LocIdAndInst(
+                    SemIR::LocId(ec),
+                    SemIR::EnumCase{
+                        .type_id = enum_value_type_id,
+                        .name_id = case_name_id,
+                        .discriminant = SemIR::ElementIndex(discriminant)}));
+                case_inst_ids.push_back(case_id);
+                context.AddNameToScope(case_name_id, case_id);
+                ++discriminant;
+              }
+            }
+          }
+        }
+      }
+    }
+  };
+
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
     if (child_kind == Parse::NodeKind::EnumDefinitionStart) {
       continue;
     }
-    if (child_kind == Parse::NodeKind::EnumCaseDecl) {
-      auto case_children = context.children_source_order(child);
-      for (auto cc : case_children) {
-        if (context.node_kind(cc) == Parse::NodeKind::EnumCaseElement) {
-          auto elem_children = context.children_source_order(cc);
-          for (auto ec : elem_children) {
-            if (context.node_kind(ec) ==
-                Parse::NodeKind::IdentifierNameNotBeforeParams) {
-              auto token = context.node_token(ec);
-              auto text = context.token_text(token);
-              auto ident_id = context.identifiers().Add(text);
-              auto case_name_id = SemIR::NameId::ForIdentifier(ident_id);
-
-              // Emit EnumCase instruction.
-              auto case_id = context.AddInst(SemIR::LocIdAndInst(
-                  SemIR::LocId(ec),
-                  SemIR::EnumCase{
-                      .type_id = enum_value_type_id,
-                      .name_id = case_name_id,
-                      .discriminant = SemIR::ElementIndex(discriminant)}));
-              case_inst_ids.push_back(case_id);
-              context.AddNameToScope(case_name_id, case_id);
-              ++discriminant;
-            }
-          }
-        }
-      }
-    } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Decl)) {
-      HandleStatement(context, child);
+    if (child_kind == Parse::NodeKind::CodeBlock) {
+      // EnumCaseDecl nodes are inside the CodeBlock, not direct children.
+      auto block_children = context.children_source_order(child);
+      ProcessEnumCaseNodes(block_children);
+    } else if (child_kind == Parse::NodeKind::EnumCaseDecl) {
+      // Direct EnumCaseDecl (if parser ever emits them without CodeBlock).
+      auto single = llvm::SmallVector<Parse::NodeId>{child};
+      ProcessEnumCaseNodes(single);
     }
   }
 

@@ -608,6 +608,40 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
     }
   }
 
+  // Check if base is a NameRef pointing to an EnumDecl (e.g. `Color.red`).
+  // In this case, treat it as a static enum case access and emit EnumInit.
+  if (base_id.has_value() && !member_name.empty()) {
+    auto base_inst = context.insts().Get(base_id);
+    SemIR::InstId actual_base_id = base_id;
+    if (auto name_ref = base_inst.TryAs<SemIR::NameRef>()) {
+      actual_base_id = name_ref->value_id;
+    }
+    if (actual_base_id.has_value()) {
+      auto actual_inst = context.insts().Get(actual_base_id);
+      if (auto enum_decl = actual_inst.TryAs<SemIR::EnumDecl>()) {
+        auto& scope = context.name_scopes().Get(enum_decl->name_scope_id);
+        auto ident_id = context.identifiers().Lookup(member_name);
+        if (ident_id.has_value()) {
+          auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+          auto it = scope.names.find(name_id.index);
+          if (it != scope.names.end()) {
+            auto case_inst = context.insts().Get(it->second);
+            if (auto ec = case_inst.TryAs<SemIR::EnumCase>()) {
+              return context.AddInst(SemIR::LocIdAndInst(
+                  SemIR::LocId(node_id),
+                  SemIR::EnumInit{.type_id = ec->type_id,
+                                  .case_id = it->second}));
+            }
+          }
+        }
+        context.EmitError(node_id, InvalidMemberAccess,
+                          std::string("enum"), std::string(member_name));
+        return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+            SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+      }
+    }
+  }
+
   auto base_type_id = GetInstType(context, base_id);
   auto type_id = SemIR::ErrorInst::TypeId;
   SemIR::ElementIndex element_index(0);
