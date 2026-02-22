@@ -31,6 +31,7 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     case SemIR::InstKind::ValueParamPattern:
     case SemIR::InstKind::NameBindingDecl:
     case SemIR::InstKind::Namespace:
+    case SemIR::InstKind::BoundMethod:
       // These are compile-time only or pattern metadata; nothing to lower.
       break;
 

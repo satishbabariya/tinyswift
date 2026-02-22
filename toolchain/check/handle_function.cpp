@@ -126,9 +126,63 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id)
 
   auto sig = ExtractFunctionSignature(context, sig_node_id);
 
+  // Check if we're inside a type (struct/class). If so, synthesize `self`
+  // and mangle the function name as "TypeName.methodName".
+  auto enclosing_type_id = context.CurrentTypeInstId();
+  int param_index_offset = 0;
+  SemIR::InstId self_param_id = SemIR::InstId::None;
+  SemIR::NameId self_name_id = SemIR::NameId::None;
+  SemIR::NameId original_name_id = sig.name_id;
+
+  if (enclosing_type_id.has_value()) {
+    // Determine the type name for mangling.
+    auto type_inst = context.insts().Get(enclosing_type_id);
+    llvm::StringRef type_name;
+    if (auto st = type_inst.TryAs<SemIR::StructType>()) {
+      auto& scope = context.name_scopes().Get(st->name_scope_id);
+      auto ident_opt = scope.name_id.AsIdentifierId();
+      if (ident_opt.has_value()) {
+        type_name = context.identifiers().Get(ident_opt);
+      }
+    } else if (auto ct = type_inst.TryAs<SemIR::ClassType>()) {
+      auto& scope = context.name_scopes().Get(ct->name_scope_id);
+      auto ident_opt = scope.name_id.AsIdentifierId();
+      if (ident_opt.has_value()) {
+        type_name = context.identifiers().Get(ident_opt);
+      }
+    }
+
+    if (!type_name.empty() && sig.name_id.has_value() &&
+        sig.name_id.AsIdentifierId().has_value()) {
+      auto method_name = context.identifiers().Get(sig.name_id.AsIdentifierId());
+      // Build "TypeName.methodName" using persistent heap storage so the
+      // StringRef remains valid for the lifetime of the identifier store.
+      static llvm::SmallVector<std::string>* method_name_storage =
+          new llvm::SmallVector<std::string>();
+      method_name_storage->push_back(
+          std::string(type_name) + "." + std::string(method_name));
+      auto mangled_ident_id =
+          context.identifiers().Add(method_name_storage->back());
+      sig.name_id = SemIR::NameId::ForIdentifier(mangled_ident_id);
+    }
+
+    // Synthesize a `self` parameter as the first parameter (index 0).
+    auto self_type_id = SemIR::TypeId::ForTypeConstant(
+        SemIR::ConstantId::ForConcreteConstant(enclosing_type_id));
+    auto self_ident_id = context.identifiers().Add("self");
+    self_name_id = SemIR::NameId::ForIdentifier(self_ident_id);
+
+    self_param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+        SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id : node_id),
+        SemIR::ValueParam{.type_id = self_type_id,
+                          .index = SemIR::CallParamIndex(0),
+                          .pretty_name_id = self_name_id}));
+    param_index_offset = 1;
+  }
+
   // Create a new function in the function store.
   SemIR::Function fn;
-  fn.name_id = sig.name_id;
+  fn.name_id = sig.name_id;  // mangled name if inside a type, else original
   fn.parent_scope_id = context.CurrentScopeId();
 
   // Create parameter patterns and params.
@@ -137,7 +191,8 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id)
 
   for (size_t i = 0; i < sig.params.size(); ++i) {
     auto [param_name_id, param_type_id] = sig.params[i];
-    auto param_index = SemIR::CallParamIndex(static_cast<int32_t>(i));
+    auto param_index =
+        SemIR::CallParamIndex(static_cast<int32_t>(i) + param_index_offset);
 
     auto entity_name_id = context.entity_names().Add(
         {.name_id = param_name_id, .parent_scope_id = context.CurrentScopeId()});
@@ -167,18 +222,28 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id)
     param_ids.push_back(param_id);
   }
 
-  // Store param patterns and params as blocks.
-  if (!param_pattern_ids.empty()) {
-    auto patterns_block_id = context.inst_blocks().AddPlaceholder();
-    context.inst_blocks().ReplacePlaceholder(
-        patterns_block_id,
-        llvm::ArrayRef<SemIR::InstId>(param_pattern_ids));
-    fn.call_param_patterns_id = patterns_block_id;
+  // Store param patterns and params as blocks. Prepend `self` if in a method.
+  {
+    llvm::SmallVector<SemIR::InstId> all_param_ids;
+    if (self_param_id.has_value()) {
+      all_param_ids.push_back(self_param_id);
+    }
+    all_param_ids.append(param_ids.begin(), param_ids.end());
 
-    auto params_block_id = context.inst_blocks().AddPlaceholder();
-    context.inst_blocks().ReplacePlaceholder(
-        params_block_id, llvm::ArrayRef<SemIR::InstId>(param_ids));
-    fn.call_params_id = params_block_id;
+    if (!all_param_ids.empty()) {
+      auto params_block_id = context.inst_blocks().AddPlaceholder();
+      context.inst_blocks().ReplacePlaceholder(
+          params_block_id, llvm::ArrayRef<SemIR::InstId>(all_param_ids));
+      fn.call_params_id = params_block_id;
+    }
+
+    if (!param_pattern_ids.empty()) {
+      auto patterns_block_id = context.inst_blocks().AddPlaceholder();
+      context.inst_blocks().ReplacePlaceholder(
+          patterns_block_id,
+          llvm::ArrayRef<SemIR::InstId>(param_pattern_ids));
+      fn.call_param_patterns_id = patterns_block_id;
+    }
   }
 
   // Set return type.
@@ -201,9 +266,10 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id)
                           .function_id = function_id,
                           .decl_block_id = decl_block_id}));
 
-  // Register function name in scope.
-  if (sig.name_id.has_value()) {
-    context.AddNameToScope(sig.name_id, fn_decl_id);
+  // Register function name in scope. Use the ORIGINAL (unmangled) name so
+  // that `p.method` lookup in HandleMemberAccessExpr works correctly.
+  if (original_name_id.has_value()) {
+    context.AddNameToScope(original_name_id, fn_decl_id);
   }
 
   // Track the current function for body block registration.
@@ -215,7 +281,12 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id)
       fn_decl_id, sig.name_id, context.CurrentScopeId());
   context.PushScope(body_scope_id);
 
-  // Add parameters to the function's scope.
+  // If this is a method, add `self` to the function body scope.
+  if (self_param_id.has_value() && self_name_id.has_value()) {
+    context.AddNameToScope(self_name_id, self_param_id);
+  }
+
+  // Add regular parameters to the function's scope.
   for (size_t i = 0; i < sig.params.size(); ++i) {
     auto [param_name_id, param_type_id] = sig.params[i];
     context.AddNameToScope(param_name_id, param_ids[i]);

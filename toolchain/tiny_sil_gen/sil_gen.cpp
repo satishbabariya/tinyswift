@@ -75,7 +75,10 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
       kind == SemIR::InstKind::NameBindingDecl ||
       kind == SemIR::InstKind::ValueBindingPattern ||
       kind == SemIR::InstKind::ValueParamPattern ||
-      kind == SemIR::InstKind::SpliceBlock) {
+      kind == SemIR::InstKind::SpliceBlock ||
+      kind == SemIR::InstKind::BoundMethod) {
+    // BoundMethod is a compile-time construct that is always consumed by
+    // HandleCallExpr; it never appears as a standalone runtime instruction.
     return;
   }
 
@@ -1006,6 +1009,7 @@ auto GenerateSIL(const SemIR::File& sem_ir)
           kind != SemIR::InstKind::TupleType &&
           kind != SemIR::InstKind::OptionalType &&
           kind != SemIR::InstKind::StructField &&
+          kind != SemIR::InstKind::BoundMethod &&
           kind != SemIR::InstKind::ValueBindingPattern &&
           kind != SemIR::InstKind::ValueParamPattern) {
         has_runtime = true;

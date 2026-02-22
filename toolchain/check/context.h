@@ -134,6 +134,14 @@ class Context {
     return current_function_id_;
   }
 
+  // Tracks the enclosing struct/class type during HandleTypeMembers.
+  // Set before processing type members so methods can synthesize `self`.
+  auto SetCurrentType(SemIR::InstId type_inst_id) -> void {
+    current_type_id_ = type_inst_id;
+  }
+  auto ClearCurrentType() -> void { current_type_id_ = SemIR::InstId::None; }
+  auto CurrentTypeInstId() const -> SemIR::InstId { return current_type_id_; }
+
   // Adds a body block to the current function.
   auto AddBodyBlock(SemIR::InstBlockId block_id) -> void;
 
@@ -321,6 +329,9 @@ class Context {
 
   // Current function being checked.
   SemIR::FunctionId current_function_id_ = SemIR::FunctionId::None;
+
+  // Current enclosing struct/class type (set during HandleTypeMembers).
+  SemIR::InstId current_type_id_ = SemIR::InstId::None;
 
   // Pending condition parse node for if/while/guard statements.
   Parse::NodeId pending_condition_node_id_ = Parse::NodeId::None;

@@ -228,7 +228,10 @@ auto HandleStructDefinition(Context& context, Parse::NodeId node_id) -> void {
   }
 
   // Now process all members (this will handle var decls again, plus methods).
+  // Set the current type so HandleFunctionDefinition can synthesize `self`.
+  context.SetCurrentType(struct_type_id);
   HandleTypeMembers(context, children);
+  context.ClearCurrentType();
   context.PopScope();
 }
 
@@ -275,7 +278,9 @@ auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void {
     ++field_index;
   }
 
+  context.SetCurrentType(class_type_id);
   HandleTypeMembers(context, children);
+  context.ClearCurrentType();
   context.PopScope();
 }
 

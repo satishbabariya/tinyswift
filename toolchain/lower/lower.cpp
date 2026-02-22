@@ -195,7 +195,8 @@ static auto LowerTopLevelInsts(Context& context) -> void {
         kind == SemIR::InstKind::EnumCaseWithPayload ||
         kind == SemIR::InstKind::TupleType ||
         kind == SemIR::InstKind::OptionalType ||
-        kind == SemIR::InstKind::StructField) {
+        kind == SemIR::InstKind::StructField ||
+        kind == SemIR::InstKind::BoundMethod) {
       continue;
     }
     // Non-lowered patterns.

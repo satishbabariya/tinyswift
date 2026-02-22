@@ -244,6 +244,114 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
       }
     }
 
+    if (auto bm = callee_inst.TryAs<SemIR::BoundMethod>()) {
+      // --- Method call: p.method(args...) → MethodName(self: p, args...) ---
+      auto fn_decl_inst = context.insts().Get(bm->function_id);
+      if (auto fn_decl = fn_decl_inst.TryAs<SemIR::FunctionDecl>()) {
+        auto& fn = context.functions().Get(fn_decl->function_id);
+        if (fn.return_type_inst_id.has_value()) {
+          type_id = context.types().GetTypeIdForTypeInstId(
+              fn.return_type_inst_id);
+        }
+
+        // The self arg is the base object (e.g., NameRef pointing to p).
+        auto self_arg_id = bm->base_id;
+
+        if (fn.call_params_id.has_value() &&
+            fn.call_params_id != SemIR::InstBlockId::Empty) {
+          auto param_ids =
+              context.sem_ir().inst_blocks().Get(fn.call_params_id);
+          int total_params = static_cast<int>(param_ids.size());
+          int user_params = total_params - 1;  // exclude self at index 0
+
+          ordered_args.resize(total_params, SemIR::InstId::None);
+          ordered_args[0] = self_arg_id;  // self is always first
+
+          // Build param name list for regular params (indices 1..N).
+          llvm::SmallVector<llvm::StringRef> param_names;
+          for (int i = 1; i < total_params; ++i) {
+            auto param_inst = context.insts().Get(param_ids[i]);
+            if (auto vp = param_inst.TryAs<SemIR::ValueParam>()) {
+              auto ident_id = vp->pretty_name_id.AsIdentifierId();
+              if (ident_id.has_value()) {
+                param_names.push_back(context.identifiers().Get(ident_id));
+              } else {
+                param_names.push_back(llvm::StringRef());
+              }
+            } else {
+              param_names.push_back(llvm::StringRef());
+            }
+          }
+
+          // Match labeled args to regular params.
+          llvm::SmallVector<bool> param_filled(total_params, false);
+          param_filled[0] = true;  // self already filled
+
+          for (auto& arg : labeled_args) {
+            if (!arg.label.empty()) {
+              bool found = false;
+              for (int j = 0; j < user_params; ++j) {
+                if (param_names[j] == arg.label) {
+                  if (!param_filled[j + 1]) {
+                    ordered_args[j + 1] = arg.value_id;
+                    param_filled[j + 1] = true;
+                  }
+                  found = true;
+                  break;
+                }
+              }
+              if (!found) {
+                context.EmitError(node_id, ArgumentLabelMismatch,
+                                  std::string(arg.label));
+              }
+            }
+          }
+
+          // Place unlabeled args in first unfilled regular-param slot.
+          int next_positional = 1;
+          for (auto& arg : labeled_args) {
+            if (arg.label.empty()) {
+              while (next_positional < total_params &&
+                     param_filled[next_positional]) {
+                ++next_positional;
+              }
+              if (next_positional < total_params) {
+                ordered_args[next_positional] = arg.value_id;
+                param_filled[next_positional] = true;
+                ++next_positional;
+              }
+            }
+          }
+
+          int actual_count = static_cast<int>(labeled_args.size());
+          if (actual_count > user_params) {
+            context.EmitError(node_id, TooManyArguments,
+                              user_params, actual_count);
+          } else if (actual_count < user_params) {
+            context.EmitError(node_id, TooFewArguments,
+                              user_params, actual_count);
+          }
+        } else {
+          // Zero-param method: args = [self].
+          ordered_args.push_back(self_arg_id);
+        }
+
+        // Build the arg block and emit Call with the FunctionDecl as callee.
+        llvm::SmallVector<SemIR::InstId> valid_args;
+        for (auto arg : ordered_args) {
+          if (arg.has_value()) valid_args.push_back(arg);
+        }
+        auto args_block_id = context.inst_blocks().AddPlaceholder();
+        context.inst_blocks().ReplacePlaceholder(
+            args_block_id, llvm::ArrayRef<SemIR::InstId>(valid_args));
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::Call{.type_id = type_id,
+                        .callee_id = bm->function_id,
+                        .args_id = args_block_id}));
+      }
+    }
+
     if (auto fn_decl = callee_inst.TryAs<SemIR::FunctionDecl>()) {
       // --- Function call with label matching ---
       auto& fn = context.functions().Get(fn_decl->function_id);
@@ -691,6 +799,14 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
           if (found != scope.names.end()) {
             auto member_inst_id = found->second;
             auto member_inst = context.insts().Get(member_inst_id);
+            // If it's a FunctionDecl, emit a BoundMethod (not a FieldAccess).
+            if (member_inst.Is<SemIR::FunctionDecl>()) {
+              return context.AddInst(SemIR::LocIdAndInst(
+                  SemIR::LocId(node_id),
+                  SemIR::BoundMethod{.type_id = SemIR::TypeType::TypeId,
+                                     .base_id = base_id,
+                                     .function_id = member_inst_id}));
+            }
             // If it's a StructField, use its index and type.
             if (auto field = member_inst.TryAs<SemIR::StructField>()) {
               type_id = field->type_id;

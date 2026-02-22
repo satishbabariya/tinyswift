@@ -34,6 +34,35 @@ auto HandleReturnStatement(Context& context, Parse::NodeId node_id) -> void {
   }
 
   if (expr_id.has_value()) {
+    // Coerce return value to Optional<T> when function return type is optional
+    // and the expression is not already optional (same pattern as let/var decls).
+    auto fn_id = context.CurrentFunctionId();
+    if (fn_id.has_value()) {
+      auto& fn = context.functions().Get(fn_id);
+      if (fn.return_type_inst_id.has_value()) {
+        auto ret_inst = context.insts().Get(fn.return_type_inst_id);
+        if (ret_inst.Is<SemIR::OptionalType>()) {
+          auto expr_inst = context.insts().Get(expr_id);
+          bool already_optional =
+              expr_inst.Is<SemIR::OptionalNone>() ||
+              expr_inst.Is<SemIR::OptionalSome>();
+          if (!already_optional) {
+            auto expr_ti = context.types().GetTypeInstId(expr_inst.type_id());
+            already_optional = expr_ti.has_value() &&
+                context.insts().Get(expr_ti).Is<SemIR::OptionalType>();
+          }
+          if (!already_optional) {
+            auto opt_type_id = context.types().GetTypeIdForTypeInstId(
+                fn.return_type_inst_id);
+            expr_id = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::OptionalSome{.type_id = opt_type_id,
+                                    .value_id = expr_id}));
+          }
+        }
+      }
+    }
+
     context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
         SemIR::ReturnExpr{.expr_id = expr_id,

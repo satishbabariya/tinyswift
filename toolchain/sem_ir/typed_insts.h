@@ -833,6 +833,20 @@ struct CasePattern {
   InstBlockId body_id;
 };
 
+// A bound method: a function reference tied to a base object.
+// Created when `p.method` is resolved and the member is a FunctionDecl.
+// In HandleCallExpr, this is unwrapped to emit Call{callee=FunctionDecl, args=[self,...]}
+struct BoundMethod {
+  static constexpr auto Kind = InstKind::BoundMethod.Define<Parse::NodeId>(
+      {.ir_name = "bound_method",
+       .expr_category = ExprCategory::Value,
+       .constant_kind = InstConstantKind::AlwaysUnique});
+
+  TypeId type_id;     // placeholder — use SemIR::TypeType::TypeId
+  InstId base_id;     // the receiver object (e.g., `p`)
+  InstId function_id; // the FunctionDecl instruction for the method
+};
+
 // These concepts are an implementation detail of the library, not public API.
 namespace Internal {
 
