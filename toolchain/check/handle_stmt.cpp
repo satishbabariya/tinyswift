@@ -611,6 +611,7 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
     bool is_default = false;
     bool is_dot_enum = false;               // True if arm uses EnumCasePattern (.red syntax)
     llvm::StringRef dot_case_name;  // Case name for dot-syntax enum patterns
+    llvm::StringRef payload_binding_name;  // Binding name for `(let v)` payload
     Parse::NodeId body_node = Parse::NodeId::None;  // SwitchCaseBody parse node
   };
   llvm::SmallVector<CaseArm> arms;
@@ -655,9 +656,24 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
             if (context.node_kind(lc) == Parse::NodeKind::EnumCasePattern) {
               arm.is_dot_enum = true;
               // EnumCasePattern token is '.'; case name is the next token.
+              // EnumCasePattern is always a leaf (child_count=0), so children
+              // iteration finds nothing. Instead use token arithmetic:
+              //   dot+0='.'  dot+1=case_name  dot+2='('?  dot+3='let'/'var'/name  dot+4=name
               auto dot_tok = context.node_token(lc);
               auto name_tok = Lex::TokenIndex(dot_tok.index + 1);
               arm.dot_case_name = context.token_text(name_tok);
+              // Check for payload binding via token arithmetic.
+              auto maybe_open = Lex::TokenIndex(dot_tok.index + 2);
+              if (context.token_text(maybe_open) == "(") {
+                auto maybe_kw = Lex::TokenIndex(dot_tok.index + 3);
+                auto kw_text = context.token_text(maybe_kw);
+                if (kw_text == "let" || kw_text == "var") {
+                  arm.payload_binding_name =
+                      context.token_text(Lex::TokenIndex(dot_tok.index + 4));
+                } else {
+                  arm.payload_binding_name = kw_text;
+                }
+              }
               break;
             }
           }
@@ -737,7 +753,7 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
         SemIR::InstId pattern_disc_id = SemIR::InstId::None;
 
         if (arm.is_dot_enum && enum_name_scope_id.has_value()) {
-          // Dot-syntax pattern (.red): look up case by name in enum scope.
+          // Dot-syntax pattern (.red or .success(let v)): look up case by name.
           auto ident_id = context.identifiers().Lookup(arm.dot_case_name);
           if (ident_id.has_value()) {
             auto name_id = SemIR::NameId::ForIdentifier(ident_id);
@@ -751,6 +767,14 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
                     SemIR::IntValue{
                         .type_id = int_type,
                         .int_id = context.ints().Add(ec->discriminant.index)}));
+              } else if (auto ecwp =
+                             case_inst.TryAs<SemIR::EnumCaseWithPayload>()) {
+                pattern_disc_id = context.AddInst(SemIR::LocIdAndInst(
+                    SemIR::LocId(node_id),
+                    SemIR::IntValue{
+                        .type_id = int_type,
+                        .int_id = context.ints().Add(
+                            ecwp->discriminant.index)}));
               }
             }
           }
@@ -820,6 +844,47 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
   for (size_t i = 0; i < arms.size(); ++i) {
     context.PushInstBlock();
 
+    // If this arm has an enum payload binding (e.g., `.success(let v)`),
+    // inject the binding at the start of the body block.
+    auto& arm = arms[i];
+    if (arm.is_dot_enum && !arm.payload_binding_name.empty() &&
+        enum_name_scope_id.has_value() && scrutinee_id.has_value()) {
+      // Look up the case in the enum scope.
+      auto payload_ident_id = context.identifiers().Lookup(arm.dot_case_name);
+      if (payload_ident_id.has_value()) {
+        auto payload_name_id = SemIR::NameId::ForIdentifier(payload_ident_id);
+        auto& scope = context.name_scopes().Get(enum_name_scope_id);
+        auto case_it = scope.names.find(payload_name_id.index);
+        if (case_it != scope.names.end()) {
+          auto case_inst = context.insts().Get(case_it->second);
+          if (auto ecwp = case_inst.TryAs<SemIR::EnumCaseWithPayload>()) {
+            // Determine payload type.
+            auto payload_type_id = context.types().GetTypeIdForTypeInstId(
+                SemIR::TypeInstId::UnsafeMake(ecwp->payload_type_id));
+            // Extract payload from scrutinee: TupleAccess(scrutinee, 1).
+            auto payload_val_id = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::TupleAccess{.type_id = payload_type_id,
+                                   .tuple_id = scrutinee_id,
+                                   .index = SemIR::ElementIndex(1)}));
+            // Create binding for the payload variable.
+            auto bind_ident_id =
+                context.identifiers().Add(arm.payload_binding_name);
+            auto bind_name_id = SemIR::NameId::ForIdentifier(bind_ident_id);
+            auto ename_id = context.entity_names().Add(
+                {.name_id = bind_name_id,
+                 .parent_scope_id = context.CurrentScopeId()});
+            auto binding_id = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::ValueBinding{.type_id = payload_type_id,
+                                    .entity_name_id = ename_id,
+                                    .value_id = payload_val_id}));
+            context.AddNameToScope(bind_name_id, binding_id);
+          }
+        }
+      }
+    }
+
     // Process body statements (children of SwitchCaseBody, skipping the label).
     for (auto bc : context.children_source_order(arms[i].body_node)) {
       auto bck = context.node_kind(bc);
@@ -849,6 +914,100 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
         body_block_ids[i], llvm::ArrayRef<SemIR::InstId>(body_insts));
     context.AddBodyBlock(body_block_ids[i]);
   }
+}
+
+// Handles a repeat-while statement.
+//
+// CFG structure (body executes before condition is checked):
+//
+//   bb_entry:  <code before repeat-while>
+//     br bb_body
+//
+//   bb_body:
+//     <body statements>
+//     br bb_cond           ← continues to condition check
+//
+//   bb_cond:
+//     %cond = <evaluate condition>
+//     cond_br %cond, bb_body, bb_merge   ← loop back-edge or exit
+//
+//   bb_merge:
+//     <code after repeat-while>
+//
+// NOTE: The condition is a DIRECT CHILD of RepeatWhileStatement (not a sibling
+// stored via SetPendingCondition like WhileCondition). It must be extracted
+// from the node's own children, not via TakePendingCondition().
+auto HandleRepeatWhileStatement(Context& context, Parse::NodeId node_id)
+    -> void {
+  auto children = context.children_source_order(node_id);
+
+  Parse::NodeId body_node = Parse::NodeId::None;
+  Parse::NodeId cond_node = Parse::NodeId::None;
+
+  // Children in source order: CodeBlock (body) then Expr (condition).
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::CodeBlock) {
+      body_node = child;
+    } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr) &&
+               !cond_node.has_value()) {
+      cond_node = child;
+    }
+  }
+
+  // Create the three block IDs.
+  auto body_block_id = context.inst_blocks().AddPlaceholder();
+  auto cond_block_id = context.inst_blocks().AddPlaceholder();
+  auto merge_block_id = context.inst_blocks().AddPlaceholder();
+
+  // Entry block branches unconditionally to the body (body runs first).
+  context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::Branch{.target_id = SemIR::LabelId(body_block_id)}));
+
+  // Build body block. Use PushInstBlockWithId so that nested control flow
+  // (SwitchInstBlock from inner if/while) uses body_block_id as the entry.
+  {
+    context.PushInstBlockWithId(body_block_id);
+    context.AddBodyBlock(body_block_id);
+    // break → merge_block; continue → cond_block (re-check condition).
+    context.PushLoopContext(merge_block_id, cond_block_id);
+    if (body_node.has_value()) {
+      HandleCodeBlock(context, body_node);
+    }
+    context.PopLoopContext();
+    // After body, fall through to condition check.
+    if (!context.IsCurrentBlockTerminated()) {
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(cond_block_id)}));
+    }
+    context.PopInstBlock();
+  }
+
+  // Build condition block: evaluate condition and branch.
+  {
+    context.PushInstBlock();
+    SemIR::InstId cond_id =
+        cond_node.has_value() ? HandleExpr(context, cond_node)
+                              : SemIR::InstId::None;
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::BranchIf{.target_id = SemIR::LabelId(body_block_id),
+                         .cond_id = cond_id}));
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+    auto tmp_id = context.PopInstBlock();
+    auto cond_insts = context.inst_blocks().Get(tmp_id);
+    context.inst_blocks().ReplacePlaceholder(
+        cond_block_id, llvm::ArrayRef<SemIR::InstId>(cond_insts));
+    context.AddBodyBlock(cond_block_id);
+  }
+
+  // Switch emission to merge block. Code after the repeat-while goes here.
+  context.SwitchInstBlock(merge_block_id);
+  context.AddBodyBlock(merge_block_id);
 }
 
 // Handles a defer statement.
@@ -996,6 +1155,10 @@ auto HandleStatement(Context& context, Parse::NodeId node_id) -> void {
     HandleExtensionDefinition(context, node_id);
     return;
   }
+  if (kind == Parse::NodeKind::TypealiasDecl) {
+    HandleTypealiasDecl(context, node_id);
+    return;
+  }
 
   // Statements.
   if (kind == Parse::NodeKind::ReturnStatement) {
@@ -1016,6 +1179,10 @@ auto HandleStatement(Context& context, Parse::NodeId node_id) -> void {
   }
   if (kind == Parse::NodeKind::ForInStatement) {
     HandleForInStatement(context, node_id);
+    return;
+  }
+  if (kind == Parse::NodeKind::RepeatWhileStatement) {
+    HandleRepeatWhileStatement(context, node_id);
     return;
   }
   if (kind == Parse::NodeKind::BreakStatement) {

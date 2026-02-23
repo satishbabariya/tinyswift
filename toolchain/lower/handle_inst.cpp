@@ -686,6 +686,54 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     case SemIR::InstKind::CasePattern:
       // Pattern matching will be properly lowered via TinySIL.
       break;
+
+    // -----------------------------------------------------------------------
+    // Array literals and subscript access
+    // -----------------------------------------------------------------------
+    case SemIR::InstKind::ArrayLiteralInit: {
+      auto op = inst.As<SemIR::ArrayLiteralInit>();
+      auto* elem_type = context.GetType(op.type_id);
+      size_t count = 0;
+      llvm::SmallVector<llvm::Value*> elem_vals;
+      if (op.elements_id.has_value() &&
+          op.elements_id != SemIR::InstBlockId::Empty) {
+        auto elem_ids = sem_ir.inst_blocks().Get(op.elements_id);
+        count = elem_ids.size();
+        for (auto eid : elem_ids) {
+          elem_vals.push_back(context.GetLocal(eid));
+        }
+      }
+      // Alloca [count x elem_type] on the stack.
+      auto* array_type = llvm::ArrayType::get(elem_type, count);
+      auto* alloca = context.builder().CreateAlloca(array_type);
+      auto* zero = llvm::ConstantInt::get(
+          llvm::Type::getInt64Ty(context.llvm_context()), 0);
+      for (size_t i = 0; i < elem_vals.size(); ++i) {
+        auto* idx = llvm::ConstantInt::get(
+            llvm::Type::getInt64Ty(context.llvm_context()),
+            static_cast<uint64_t>(i));
+        auto* gep = context.builder().CreateGEP(
+            array_type, alloca,
+            {zero, idx});
+        context.builder().CreateStore(elem_vals[i], gep);
+      }
+      // Return the alloca pointer (arrays are accessed by pointer).
+      context.SetLocal(inst_id, alloca);
+      break;
+    }
+
+    case SemIR::InstKind::ArrayAccess: {
+      auto op = inst.As<SemIR::ArrayAccess>();
+      auto* elem_type = context.GetType(op.type_id);
+      auto* array_ptr = context.GetLocal(op.array_id);
+      auto* index_val = context.GetLocal(op.index_id);
+      // GEP(elem_type, array_ptr, index) — treats array as flat elem array.
+      auto* gep = context.builder().CreateGEP(elem_type, array_ptr,
+                                              {index_val});
+      auto* loaded = context.builder().CreateLoad(elem_type, gep);
+      context.SetLocal(inst_id, loaded);
+      break;
+    }
   }
 }
 

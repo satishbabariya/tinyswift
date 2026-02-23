@@ -50,15 +50,17 @@ auto CheckParseTrees(
     }
     std::reverse(roots_vec.begin(), roots_vec.end());
 
-    // Pass 1a: Process all top-level type definitions (enum, struct, class)
-    // first so their names are in scope when function signatures are resolved.
-    // Track which roots were processed here so Pass 2 can skip them.
+    // Pass 1a: Process all top-level type definitions (enum, struct, class) and
+    // typealias declarations first so their names are in scope when function
+    // signatures are resolved. Track which roots were processed here so Pass 2
+    // can skip them.
     llvm::DenseSet<uint32_t> processed_type_roots;
     for (auto root : roots_vec) {
       auto kind = context.node_kind(root);
       if (kind == Parse::NodeKind::EnumDefinition ||
           kind == Parse::NodeKind::StructDefinition ||
-          kind == Parse::NodeKind::ClassDefinition) {
+          kind == Parse::NodeKind::ClassDefinition ||
+          kind == Parse::NodeKind::TypealiasDecl) {
         HandleStatement(context, root);
         processed_type_roots.insert(root.index);
       }
@@ -82,6 +84,19 @@ auto CheckParseTrees(
         }
       } else if (kind == Parse::NodeKind::FunctionDecl) {
         HandleFunctionDecl(context, root);
+      }
+    }
+
+    // Pass 1c: Process all top-level extension definitions.
+    // Extensions must run after all type names are registered (Pass 1a) and
+    // function stubs are registered (Pass 1b), but BEFORE function bodies are
+    // processed in Pass 2. This ensures that extension methods are visible to
+    // any function body that calls them, regardless of source order.
+    for (auto root : roots_vec) {
+      auto kind = context.node_kind(root);
+      if (kind == Parse::NodeKind::ExtensionDefinition) {
+        HandleStatement(context, root);
+        processed_type_roots.insert(root.index);
       }
     }
 

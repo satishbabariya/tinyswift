@@ -341,6 +341,14 @@ class Context {
 
   // Stack of active loop contexts (for break/continue targets).
   llvm::SmallVector<LoopContext> loop_stack_;
+
+  // Map from NameId.index to TypeId for typealias declarations.
+  llvm::DenseMap<int32_t, SemIR::TypeId> typealias_map_;
+
+ public:
+  auto typealias_map() -> llvm::DenseMap<int32_t, SemIR::TypeId>& {
+    return typealias_map_;
+  }
 };
 
 }  // namespace TinySwift::Check

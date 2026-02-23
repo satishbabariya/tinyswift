@@ -68,11 +68,30 @@ auto ParsePattern(Context& context) -> void {
     return;
   }
 
-  // Enum case pattern: `.case(associated)`
+  // Enum case pattern: `.case` or `.case(let binding)`.
+  // EnumCasePattern is always a leaf node (child_count=0). When a payload
+  // binding is present like `.success(let v)`, the binding name is extracted
+  // by the check phase via token arithmetic (dot+2='(', dot+3='let'/name,
+  // dot+4=name if 'let' was present). No IdentifierPattern child is emitted.
   if (kind == Lex::TokenKind::Period) {
     auto dot = context.Consume();
     if (context.Peek() == Lex::TokenKind::Identifier) {
       context.Consume();  // case name
+    }
+    // Consume optional payload binding `(let v)` or `(v)` without emitting
+    // any child nodes — binding name is recovered via token arithmetic.
+    if (context.Peek() == Lex::TokenKind::OpenParen) {
+      context.Consume();  // '('
+      if (context.Peek() == Lex::TokenKind::LetKeyword ||
+          context.Peek() == Lex::TokenKind::VarKeyword) {
+        context.Consume();  // 'let' or 'var'
+      }
+      if (context.Peek() == Lex::TokenKind::Identifier) {
+        context.Consume();  // binding name
+      }
+      if (context.Peek() == Lex::TokenKind::CloseParen) {
+        context.Consume();  // ')'
+      }
     }
     context.AddLeafNode(NodeKind::EnumCasePattern, dot);
     return;

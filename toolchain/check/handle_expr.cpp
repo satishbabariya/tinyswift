@@ -199,6 +199,10 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
   llvm::SmallVector<LabeledArg> labeled_args;
   llvm::StringRef pending_label;
 
+  // Detect builtin type coercion calls: Int(expr) and Double(expr).
+  // Check the callee name before calling HandleExpr to avoid spurious errors.
+  llvm::StringRef coercion_target;
+
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
 
@@ -209,6 +213,15 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
         if (context.node_kind(start_child)
                 .category()
                 .HasAnyOf(Parse::NodeCategory::Expr)) {
+          // Check for Int(...) / Double(...) type coercions before lookup.
+          if (context.node_kind(start_child) ==
+              Parse::NodeKind::IdentifierNameExpr) {
+            auto text = context.token_text(context.node_token(start_child));
+            if (text == "Int" || text == "Double") {
+              coercion_target = text;
+              break;  // Don't call HandleExpr — skip normal callee resolution.
+            }
+          }
           callee_id = HandleExpr(context, start_child);
           break;
         }
@@ -221,6 +234,30 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
       labeled_args.push_back({pending_label, HandleExpr(context, child)});
       pending_label = llvm::StringRef();
     }
+  }
+
+  // Handle builtin type coercions: Int(floatExpr) and Double(intExpr).
+  if (!coercion_target.empty() && labeled_args.size() == 1) {
+    auto arg_id = labeled_args[0].value_id;
+    if (arg_id.has_value()) {
+      auto arg_type = context.insts().Get(arg_id).type_id();
+      if (coercion_target == "Int" && IsFloatType(context, arg_type)) {
+        auto int_type = context.GetBuiltinType("Int");
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::FloatToInt{.type_id = int_type, .operand_id = arg_id}));
+      }
+      if (coercion_target == "Double" && IsIntType(context, arg_type)) {
+        auto double_type = context.GetBuiltinType("Double");
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntToFloat{.type_id = double_type, .operand_id = arg_id}));
+      }
+    }
+    // Coercion target name was recognized but arg type didn't match.
+    context.EmitError(node_id, UndefinedName, std::string(coercion_target));
+    return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+        SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
   }
 
   // Determine return type, validate arguments, and build ordered arg list.
@@ -242,6 +279,33 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
         actual_callee_id = value_binding->value_id;
         callee_inst = context.insts().Get(value_binding->value_id);
       }
+    }
+
+    // Enum case with payload: `Result.success(42)` → TupleInit{tag, payload}.
+    if (auto ecwp = callee_inst.TryAs<SemIR::EnumCaseWithPayload>()) {
+      type_id = ecwp->type_id;
+      auto int_type = context.GetBuiltinType("Int");
+      // Emit an integer constant for the discriminant tag.
+      auto disc_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::IntValue{.type_id = int_type,
+                          .int_id = context.ints().Add(
+                              ecwp->discriminant.index)}));
+      // The payload is the first (and only) call argument.
+      SemIR::InstId payload_id = SemIR::InstId::None;
+      if (!labeled_args.empty()) {
+        payload_id = labeled_args[0].value_id;
+      }
+      llvm::SmallVector<SemIR::InstId> elems{disc_id};
+      if (payload_id.has_value()) {
+        elems.push_back(payload_id);
+      }
+      auto block_id = context.inst_blocks().AddPlaceholder();
+      context.inst_blocks().ReplacePlaceholder(
+          block_id, llvm::ArrayRef<SemIR::InstId>(elems));
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::TupleInit{.type_id = type_id, .elements_id = block_id}));
     }
 
     if (auto bm = callee_inst.TryAs<SemIR::BoundMethod>()) {
@@ -435,8 +499,25 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
         context.EmitError(node_id, TooManyArguments,
                           expected_count, actual_count);
       } else if (actual_count < expected_count) {
-        context.EmitError(node_id, TooFewArguments,
-                          expected_count, actual_count);
+        // Try to fill missing args from default parameter values.
+        auto& fn2 = context.functions().Get(fn_decl->function_id);
+        bool all_filled = true;
+        for (int j = 0; j < expected_count; ++j) {
+          if (!ordered_args[j].has_value()) {
+            // Check if this param has a default.
+            if (j < static_cast<int>(fn2.param_default_nodes.size()) &&
+                fn2.param_default_nodes[j].has_value()) {
+              ordered_args[j] =
+                  HandleExpr(context, fn2.param_default_nodes[j]);
+            } else {
+              all_filled = false;
+            }
+          }
+        }
+        if (!all_filled) {
+          context.EmitError(node_id, TooFewArguments,
+                            expected_count, actual_count);
+        }
       }
 
     } else if (auto struct_type = callee_inst.TryAs<SemIR::StructType>()) {
@@ -797,12 +878,46 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
                   SemIR::EnumInit{.type_id = ec->type_id,
                                   .case_id = it->second}));
             }
+            // Enum case with payload (e.g., `Result.success`): emit a NameRef
+            // so HandleCallExpr can see EnumCaseWithPayload as the callee.
+            if (auto ecwp = case_inst.TryAs<SemIR::EnumCaseWithPayload>()) {
+              return context.AddInst(SemIR::LocIdAndInst(
+                  SemIR::LocId(node_id),
+                  SemIR::NameRef{.type_id = ecwp->type_id,
+                                 .name_id = name_id,
+                                 .value_id = it->second}));
+            }
           }
         }
         context.EmitError(node_id, InvalidMemberAccess,
                           std::string("enum"), std::string(member_name));
         return context.AddInst(SemIR::LocIdAndInst::NoLoc(
             SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+      }
+
+      // Also handle static method access on a struct/class type name
+      // (e.g. `Geometry.square(5)` where Geometry is a NameRef → StructType).
+      if (auto struct_type = actual_inst.TryAs<SemIR::StructType>()) {
+        auto& scope = context.name_scopes().Get(struct_type->name_scope_id);
+        auto ident_id = context.identifiers().Lookup(member_name);
+        if (ident_id.has_value()) {
+          auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+          auto it = scope.names.find(name_id.index);
+          if (it != scope.names.end()) {
+            auto member_inst_id = it->second;
+            auto member_inst = context.insts().Get(member_inst_id);
+            if (auto fn_decl = member_inst.TryAs<SemIR::FunctionDecl>()) {
+              auto& fn = context.functions().Get(fn_decl->function_id);
+              if (fn.is_static) {
+                return context.AddInst(SemIR::LocIdAndInst(
+                    SemIR::LocId(node_id),
+                    SemIR::NameRef{.type_id = SemIR::TypeType::TypeId,
+                                   .name_id = name_id,
+                                   .value_id = member_inst_id}));
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -872,8 +987,20 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
                               .args_id = args_block_id}));
             }
 
-            // If it's a FunctionDecl, emit a BoundMethod (not a FieldAccess).
-            if (member_inst.Is<SemIR::FunctionDecl>()) {
+            // If it's a FunctionDecl, emit BoundMethod for instance methods
+            // or NameRef for static methods (no receiver).
+            if (auto fn_decl = member_inst.TryAs<SemIR::FunctionDecl>()) {
+              auto& fn = context.functions().Get(fn_decl->function_id);
+              if (fn.is_static) {
+                // Static method: no receiver — emit a plain NameRef so
+                // HandleCallExpr sees FunctionDecl directly (no self prepend).
+                return context.AddInst(SemIR::LocIdAndInst(
+                    SemIR::LocId(node_id),
+                    SemIR::NameRef{.type_id = SemIR::TypeType::TypeId,
+                                   .name_id = name_id,
+                                   .value_id = member_inst_id}));
+              }
+              // Instance method: emit BoundMethod (receiver + method).
               return context.AddInst(SemIR::LocIdAndInst(
                   SemIR::LocId(node_id),
                   SemIR::BoundMethod{.type_id = SemIR::TypeType::TypeId,
@@ -930,6 +1057,103 @@ auto HandleInfixOperatorExpr(Context& context, Parse::NodeId node_id)
   auto lhs_type = GetInstType(context, lhs_id);
   auto rhs_type = GetInstType(context, rhs_id);
   auto bool_type = context.GetBuiltinType("Bool");
+
+  // Nil coalescing operator `??`: checked BEFORE the error-type propagation
+  // because nil literal has ErrorInst::TypeId (no Optional type assigned).
+  // `lhs ?? rhs` desugars to: lhs.hasValue ? lhs! : rhs
+  // Both LHS and RHS have already been evaluated (no short-circuit for M23).
+  if (op_text == "??") {
+    auto result_type = rhs_type;
+    if (IsErrorType(result_type)) {
+      // Both operands are errors — propagate.
+      return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+          SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+    }
+
+    // If LHS is a nil literal (OptionalNone), always return RHS.
+    if (lhs_id.has_value()) {
+      auto lhs_inst = context.insts().Get(lhs_id);
+      if (lhs_inst.Is<SemIR::OptionalNone>()) {
+        return rhs_id;
+      }
+    }
+
+    // General case: LHS is Optional<T> = {i1, T}.
+    // Extract has-value flag (field 0).
+    auto has_value_id = context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::TupleAccess{.type_id = bool_type,
+                           .tuple_id = lhs_id,
+                           .index = SemIR::ElementIndex(0)}));
+
+    // Allocate a temporary VarStorage for the result.
+    auto temp_id = context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::VarStorage{.type_id = result_type,
+                          .pattern_id = SemIR::AbsoluteInstId(
+                              SemIR::InstId::None)}));
+
+    auto then_block_id = context.inst_blocks().AddPlaceholder();
+    auto else_block_id = context.inst_blocks().AddPlaceholder();
+    auto merge_block_id = context.inst_blocks().AddPlaceholder();
+
+    // Emit conditional branch: has_value → then, else → else_block.
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::BranchIf{.target_id = SemIR::LabelId(then_block_id),
+                         .cond_id = has_value_id}));
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(else_block_id)}));
+
+    // Switch emission to merge block.
+    context.SwitchInstBlock(merge_block_id);
+    context.AddBodyBlock(merge_block_id);
+
+    // Then block: extract payload (field 1), assign to temp, branch merge.
+    {
+      context.PushInstBlock();
+      auto payload_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::TupleAccess{.type_id = result_type,
+                             .tuple_id = lhs_id,
+                             .index = SemIR::ElementIndex(1)}));
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Assign{.lhs_id = temp_id, .rhs_id = payload_id}));
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+      auto tmp = context.PopInstBlock();
+      auto insts = context.inst_blocks().Get(tmp);
+      context.inst_blocks().ReplacePlaceholder(
+          then_block_id, llvm::ArrayRef<SemIR::InstId>(insts));
+      context.AddBodyBlock(then_block_id);
+    }
+
+    // Else block: assign RHS to temp, branch merge.
+    {
+      context.PushInstBlock();
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Assign{.lhs_id = temp_id, .rhs_id = rhs_id}));
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+      auto tmp = context.PopInstBlock();
+      auto insts = context.inst_blocks().Get(tmp);
+      context.inst_blocks().ReplacePlaceholder(
+          else_block_id, llvm::ArrayRef<SemIR::InstId>(insts));
+      context.AddBodyBlock(else_block_id);
+    }
+
+    // In merge block: load result from temp (NameRef → SILGen emits Load).
+    return context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::NameRef{.type_id = result_type,
+                       .name_id = SemIR::NameId::None,
+                       .value_id = temp_id}));
+  }
 
   // If either operand is an error, propagate without further checking.
   if (IsErrorType(lhs_type) || IsErrorType(rhs_type)) {
@@ -1513,6 +1737,96 @@ auto HandleTupleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
       SemIR::TupleInit{.type_id = tuple_type_id, .elements_id = elems_block}));
 }
 
+// Handles an array literal expression: [5, 10, 15, 20].
+// Children: ArrayExprStart, element exprs, PatternListComma separators.
+auto HandleArrayExpr(Context& context, Parse::NodeId node_id)
+    -> SemIR::InstId {
+  auto children = context.children_source_order(node_id);
+  llvm::SmallVector<SemIR::InstId> elem_ids;
+
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::ArrayExprStart ||
+        child_kind == Parse::NodeKind::PatternListComma) {
+      continue;
+    }
+    if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+      elem_ids.push_back(HandleExpr(context, child));
+    }
+  }
+
+  // Infer element type from first element.
+  SemIR::TypeId elem_type_id = SemIR::ErrorInst::TypeId;
+  if (!elem_ids.empty() && elem_ids[0].has_value()) {
+    elem_type_id = context.insts().Get(elem_ids[0]).type_id();
+  }
+
+  auto block_id = context.inst_blocks().AddPlaceholder();
+  context.inst_blocks().ReplacePlaceholder(
+      block_id, llvm::ArrayRef<SemIR::InstId>(elem_ids));
+
+  return context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::ArrayLiteralInit{.type_id = elem_type_id,
+                              .elements_id = block_id}));
+}
+
+// Handles an array subscript access expression: arr[index].
+// SubscriptExprStart has subtree_size >= 2 (contains base expr as child).
+// Remaining children of SubscriptExpr: the index expression.
+auto HandleSubscriptExpr(Context& context, Parse::NodeId node_id)
+    -> SemIR::InstId {
+  auto children = context.children_source_order(node_id);
+
+  SemIR::InstId array_id = SemIR::InstId::None;
+  SemIR::InstId index_id = SemIR::InstId::None;
+
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::SubscriptExprStart) {
+      // SubscriptExprStart contains the array expression as its child.
+      auto start_children = context.children_source_order(child);
+      for (auto sc : start_children) {
+        if (context.node_kind(sc).category().HasAnyOf(
+                Parse::NodeCategory::Expr)) {
+          array_id = HandleExpr(context, sc);
+          break;
+        }
+      }
+    } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+      // The index expression (after SubscriptExprStart).
+      index_id = HandleExpr(context, child);
+    }
+  }
+
+  // Get element type from the ArrayLiteralInit's type_id.
+  SemIR::TypeId elem_type_id = SemIR::ErrorInst::TypeId;
+  if (array_id.has_value()) {
+    // Look through NameRef → ValueBinding → ArrayLiteralInit to get elem type.
+    auto arr_inst = context.insts().Get(array_id);
+    SemIR::InstId real_arr_id = array_id;
+    if (auto nr = arr_inst.TryAs<SemIR::NameRef>()) {
+      real_arr_id = nr->value_id;
+      arr_inst = context.insts().Get(real_arr_id);
+    }
+    if (auto vb = arr_inst.TryAs<SemIR::ValueBinding>()) {
+      if (vb->value_id.has_value()) {
+        real_arr_id = vb->value_id;
+        arr_inst = context.insts().Get(real_arr_id);
+      }
+    }
+    if (auto ali = arr_inst.TryAs<SemIR::ArrayLiteralInit>()) {
+      elem_type_id = ali->type_id;
+    }
+  }
+
+  return context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::ArrayAccess{.type_id = elem_type_id,
+                         .array_id = array_id,
+                         .index_id = index_id}));
+}
+
 }  // namespace
 
 auto HandleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
@@ -1575,6 +1889,13 @@ auto HandleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
   }
   if (kind == Parse::NodeKind::TupleExpr) {
     return HandleTupleExpr(context, node_id);
+  }
+
+  if (kind == Parse::NodeKind::ArrayExpr) {
+    return HandleArrayExpr(context, node_id);
+  }
+  if (kind == Parse::NodeKind::SubscriptExpr) {
+    return HandleSubscriptExpr(context, node_id);
   }
 
   // For expression statements, unwrap.

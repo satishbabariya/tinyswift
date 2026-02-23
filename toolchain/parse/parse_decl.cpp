@@ -480,20 +480,44 @@ static auto ParseEnumDecl(Context& context) -> void {
         // Parse case elements (comma-separated).
         auto ParseCaseElement = [&]() {
           auto elem_start = context.position();
+
+          // Consume the case name.
+          std::optional<Lex::TokenIndex> name_tok;
           if (context.Peek() == Lex::TokenKind::Identifier) {
-            auto name = context.Consume();
-            context.AddLeafNode(NodeKind::IdentifierNameNotBeforeParams, name);
+            name_tok = context.Consume();
           }
 
-          // Optional associated values: `(Type, Type)`
+          // Consume optional associated value `(Type)`.
+          // We emit IdentifierType BEFORE IdentifierNameNotBeforeParams so
+          // that EnumCaseElement.child_count=1 picks up the name as its child,
+          // and IdentifierType falls through to become an EnumCaseDecl child.
+          // This avoids FunctionParam.child_count=2 bracket-validation issues.
+          std::optional<Lex::TokenIndex> type_tok;
           if (context.Peek() == Lex::TokenKind::OpenParen) {
-            ParseParamList(context);
+            context.Consume();  // '('
+            if (context.Peek() == Lex::TokenKind::Identifier ||
+                context.Peek() == Lex::TokenKind::AnyKeyword ||
+                context.Peek() == Lex::TokenKind::CapitalSelfKeyword) {
+              type_tok = context.Consume();
+            }
+            if (context.Peek() == Lex::TokenKind::CloseParen) {
+              context.Consume();  // ')'
+            }
           }
 
           // Optional raw value: `= value`
           if (context.Peek() == Lex::TokenKind::Equal) {
             context.Consume();
             ParseExpr(context);
+          }
+
+          // Emit in reverse order: type first (→ EnumCaseDecl child),
+          // name second (→ EnumCaseElement child via child_count=1).
+          if (type_tok.has_value()) {
+            context.AddLeafNode(NodeKind::IdentifierType, *type_tok);
+          }
+          if (name_tok.has_value()) {
+            context.AddLeafNode(NodeKind::IdentifierNameNotBeforeParams, *name_tok);
           }
 
           context.AddNode(NodeKind::EnumCaseElement, elem_start);

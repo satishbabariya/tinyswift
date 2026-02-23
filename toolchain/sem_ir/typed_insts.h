@@ -734,17 +734,19 @@ struct EnumCase {
   ElementIndex discriminant;
 };
 
-// An enum case with payload.
+// An enum case with associated payload value (e.g., `case success(Int)`).
+// The case name is NOT stored here — it is registered in the enum's name scope
+// by the check phase. The payload type is stored as an InstId (TypeInstId).
+// Layout: type_id (enum type) + discriminant + payload_type_id.
 struct EnumCaseWithPayload {
   static constexpr auto Kind =
       InstKind::EnumCaseWithPayload.Define<Parse::NodeId>(
           {.ir_name = "enum_case_payload",
            .constant_kind = InstConstantKind::Always});
 
-  TypeId type_id;
-  NameId name_id;
-  // Discriminant is packed in the ElementIndex.
-  ElementIndex discriminant;
+  TypeId type_id;             // The enum type this case belongs to.
+  ElementIndex discriminant;  // Case discriminant (integer tag).
+  InstId payload_type_id;     // TypeInstId of the associated value type.
 };
 
 // Construct an enum value.
@@ -872,6 +874,30 @@ struct ComputedPropertyDecl {
 
   TypeId type_id;     // the property's value type (e.g., Int)
   InstId getter_id;   // the FunctionDecl InstId for the synthetic getter
+};
+
+// An array literal initialization.
+// type_id is the element type (e.g., Int for [5, 10, 15]).
+// elements_id holds the InstIds of the element values.
+struct ArrayLiteralInit {
+  static constexpr auto Kind = InstKind::ArrayLiteralInit.Define<Parse::NodeId>(
+      {.ir_name = "array_literal_init"});
+
+  TypeId type_id;          // element type
+  InstBlockId elements_id; // element values
+};
+
+// An array subscript access: arr[index].
+// type_id is the element type.
+// array_id is the array value (alloca pointer from ArrayLiteralInit).
+// index_id is the integer index.
+struct ArrayAccess {
+  static constexpr auto Kind = InstKind::ArrayAccess.Define<Parse::NodeId>(
+      {.ir_name = "array_access"});
+
+  TypeId type_id;  // element type
+  InstId array_id;
+  InstId index_id;
 };
 
 // These concepts are an implementation detail of the library, not public API.

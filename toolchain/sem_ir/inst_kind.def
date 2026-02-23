@@ -150,4 +150,8 @@ TINYSWIFT_SEM_IR_INST_KIND(BoundMethod)
 // Computed properties
 TINYSWIFT_SEM_IR_INST_KIND(ComputedPropertyDecl)
 
+// Array literals and subscript access
+TINYSWIFT_SEM_IR_INST_KIND(ArrayLiteralInit)
+TINYSWIFT_SEM_IR_INST_KIND(ArrayAccess)
+
 #undef TINYSWIFT_SEM_IR_INST_KIND

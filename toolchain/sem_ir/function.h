@@ -36,6 +36,14 @@ struct Function : public Printable<Function> {
   // The return type instruction.
   TypeInstId return_type_inst_id = TypeInstId::None;
 
+  // Whether this is a static method (no implicit `self` parameter).
+  // Set for functions declared with the `static` modifier inside a type.
+  bool is_static = false;
+
+  // Default value parse nodes for parameters, indexed by param position
+  // (0-based, after self is excluded). NodeId::None means no default.
+  llvm::SmallVector<Parse::NodeId> param_default_nodes = {};
+
   // A list of the statically reachable code blocks in the body of the
   // function, in lexical order. The first block is the entry block. This will
   // be empty for declarations that don't have a visible definition.

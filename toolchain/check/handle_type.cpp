@@ -16,6 +16,17 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
   if (kind == Parse::NodeKind::IdentifierType) {
     auto token = context.node_token(node_id);
     auto text = context.token_text(token);
+
+    // Check typealias map first.
+    auto ident_id_opt = context.identifiers().Lookup(text);
+    if (ident_id_opt.has_value()) {
+      auto name_id = SemIR::NameId::ForIdentifier(ident_id_opt);
+      auto alias_it = context.typealias_map().find(name_id.index);
+      if (alias_it != context.typealias_map().end()) {
+        return alias_it->second;
+      }
+    }
+
     auto result = context.GetBuiltinType(text);
     if (result != SemIR::ErrorInst::TypeId) {
       return result;

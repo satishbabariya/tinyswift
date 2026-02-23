@@ -70,6 +70,7 @@ TINYSWIFT_SYMBOL_TOKEN(GreaterEqual,        ">=")
 TINYSWIFT_SYMBOL_TOKEN(LessEqual,           "<=")
 TINYSWIFT_SYMBOL_TOKEN(MinusGreater,        "->")
 TINYSWIFT_SYMBOL_TOKEN(ColonColon,          "::")
+TINYSWIFT_SYMBOL_TOKEN(QuestionQuestion,    "??")
 
 // ============================================================================
 // Symbols - single character

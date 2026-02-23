@@ -720,6 +720,44 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     return;
   }
 
+  // --- Array Operations ---
+
+  if (auto ali = inst.TryAs<SemIR::ArrayLiteralInit>()) {
+    // Allocate [N x T] on stack, store elements, produce pointer to array.
+    // Result uses address type (pointer convention, like AllocStack).
+    auto elem_sil_type = ctx.GetSILType(ali->type_id);
+    auto result = AllocValue(ctx, elem_sil_type.getAddressType());
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "array_literal_init";
+    sil_inst->alloc_type = elem_sil_type;  // element SIL type
+    if (ali->elements_id.has_value() &&
+        ali->elements_id != SemIR::InstBlockId::Empty) {
+      auto elem_ids = sem_ir.inst_blocks().Get(ali->elements_id);
+      sil_inst->literal_value = static_cast<int64_t>(elem_ids.size());
+      for (auto elem_id : elem_ids) {
+        auto elem_val = ctx.GetValue(elem_id);
+        if (elem_val.is_valid()) {
+          sil_inst->operand_list.push_back(elem_val);
+        }
+      }
+    }
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  if (auto aa = inst.TryAs<SemIR::ArrayAccess>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(aa->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "array_access";
+    sil_inst->alloc_type = ctx.GetSILType(aa->type_id);  // element type
+    sil_inst->setOperand(0, ctx.GetValue(aa->array_id));
+    sil_inst->setOperand(1, ctx.GetValue(aa->index_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
   // --- Optional Operations ---
 
   if (auto opt_none = inst.TryAs<SemIR::OptionalNone>()) {

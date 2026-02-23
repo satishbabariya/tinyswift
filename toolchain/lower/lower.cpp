@@ -596,6 +596,37 @@ auto LowerSILInst(Context& context,
         auto* op = getSILValue(inst.operands[0]);
         if (op) setSILValue(inst.result,
                             builder.CreateFPToSI(op, builder.getInt64Ty()));
+
+      // Array operations.
+      } else if (name == "array_literal_init") {
+        auto* elem_type = GetLLVMTypeForSIL(context, inst.alloc_type);
+        if (!elem_type || elem_type->isVoidTy()) elem_type = builder.getInt64Ty();
+        size_t count = inst.operand_list.size();
+        if (count == 0) count = 1;  // Minimum 1-element alloca.
+        auto* array_type = llvm::ArrayType::get(elem_type, count);
+        auto* alloca = builder.CreateAlloca(array_type, nullptr, "arr");
+        auto* zero = llvm::ConstantInt::get(builder.getInt64Ty(), 0);
+        for (size_t i = 0; i < inst.operand_list.size(); ++i) {
+          auto* elem_val = getSILValue(inst.operand_list[i]);
+          if (!elem_val) continue;
+          auto* idx = llvm::ConstantInt::get(builder.getInt64Ty(),
+                                             static_cast<int64_t>(i));
+          llvm::Value* indices[] = {zero, idx};
+          auto* gep = builder.CreateGEP(array_type, alloca, indices);
+          builder.CreateStore(elem_val, gep);
+        }
+        setSILValue(inst.result, alloca);
+      } else if (name == "array_access") {
+        auto* array_ptr = getSILValue(inst.operands[0]);
+        auto* index_val = getSILValue(inst.operands[1]);
+        if (array_ptr && index_val) {
+          auto* elem_type = GetLLVMTypeForSIL(context, inst.alloc_type);
+          if (!elem_type || elem_type->isVoidTy()) elem_type = builder.getInt64Ty();
+          // GEP treats array_ptr as T* — element i is at ptr + i * sizeof(T).
+          auto* gep = builder.CreateGEP(elem_type, array_ptr, {index_val});
+          auto* loaded = builder.CreateLoad(elem_type, gep);
+          setSILValue(inst.result, loaded);
+        }
       }
       break;
     }
@@ -650,17 +681,24 @@ auto LowerSILInst(Context& context,
                     llvm::UndefValue::get(builder.getVoidTy()));
         break;
       }
-      // Build a struct of element values.
-      llvm::SmallVector<llvm::Type*> elem_types;
+      // Use the result's declared SIL type to get the correct LLVM struct type.
+      // This ensures named struct types (e.g. enum payloads) are preserved
+      // rather than creating a new anonymous struct from the elements.
       llvm::SmallVector<llvm::Value*> elem_vals;
       for (const auto& elem : inst.operand_list) {
         auto* val = getSILValue(elem);
-        if (val) {
-          elem_types.push_back(val->getType());
-          elem_vals.push_back(val);
-        }
+        if (val) elem_vals.push_back(val);
       }
-      auto* tuple_ty = llvm::StructType::get(context.llvm_context(), elem_types);
+      auto* declared_ty = GetLLVMTypeForSIL(context, inst.result.type);
+      llvm::StructType* tuple_ty = nullptr;
+      if (declared_ty && declared_ty->isStructTy()) {
+        tuple_ty = llvm::cast<llvm::StructType>(declared_ty);
+      } else {
+        // Fallback: infer from element types.
+        llvm::SmallVector<llvm::Type*> elem_types;
+        for (auto* v : elem_vals) elem_types.push_back(v->getType());
+        tuple_ty = llvm::StructType::get(context.llvm_context(), elem_types);
+      }
       llvm::Value* agg = llvm::UndefValue::get(tuple_ty);
       for (size_t i = 0; i < elem_vals.size(); ++i) {
         agg = builder.CreateInsertValue(agg, elem_vals[i],
@@ -681,13 +719,21 @@ auto LowerSILInst(Context& context,
     }
 
     case TinySIL::SILInstKind::EnumInst: {
-      // Simple enum: wrap discriminant i64 into { i64 } struct.
+      // Enum case without payload: wrap discriminant into { i64, ... } struct.
+      // For mixed enums (some cases have payload), the struct has 2+ fields;
+      // fill the payload slot(s) with zero.
       auto* tag_val = llvm::ConstantInt::get(builder.getInt64Ty(),
                                               inst.literal_value);
       auto* llvm_ty = GetLLVMTypeForSIL(context, inst.result.type);
       if (llvm_ty && llvm_ty->isStructTy()) {
         auto* st = llvm::cast<llvm::StructType>(llvm_ty);
-        auto* agg = llvm::ConstantStruct::get(st, {tag_val});
+        llvm::SmallVector<llvm::Constant*> vals;
+        vals.push_back(tag_val);
+        // Fill remaining fields with zeroes (mixed-enum payload slots).
+        for (unsigned i = 1; i < st->getNumElements(); ++i) {
+          vals.push_back(llvm::Constant::getNullValue(st->getElementType(i)));
+        }
+        auto* agg = llvm::ConstantStruct::get(st, vals);
         setSILValue(inst.result, agg);
       } else {
         // Fallback: just the i64 (should not happen for well-typed IR).

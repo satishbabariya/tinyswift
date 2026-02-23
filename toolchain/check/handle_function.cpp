@@ -21,6 +21,8 @@ namespace {
 struct FunctionSignature {
   SemIR::NameId name_id = SemIR::NameId::None;
   llvm::SmallVector<std::pair<SemIR::NameId, SemIR::TypeId>> params;
+  // Default value parse node for each param (Parse::NodeId::None if no default).
+  llvm::SmallVector<Parse::NodeId> param_defaults;
   SemIR::TypeId return_type_id = SemIR::TypeId::None;
   Parse::NodeId name_node_id = Parse::NodeId::None;
 };
@@ -52,16 +54,25 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
       for (auto pc : param_children) {
         auto pc_kind = context.node_kind(pc);
         if (pc_kind == Parse::NodeKind::FunctionParam) {
-          // FunctionParam has name and type annotation.
+          // FunctionParam has name, type annotation, and optional default.
           SemIR::NameId param_name_id = SemIR::NameId::None;
           SemIR::TypeId param_type_id = SemIR::ErrorInst::TypeId;
+          Parse::NodeId default_node = Parse::NodeId::None;
 
           auto fp_children = context.children_source_order(pc);
           for (auto fpc : fp_children) {
             auto fpc_kind = context.node_kind(fpc);
-            if (fpc_kind == Parse::NodeKind::IdentifierNameNotBeforeParams ||
-                fpc_kind == Parse::NodeKind::IdentifierNameBeforeParams) {
-              // This is the parameter name.
+            if (fpc_kind == Parse::NodeKind::ExternalParamName) {
+              // External label (`_` or `label`) — skip for body name.
+            } else if (fpc_kind == Parse::NodeKind::IdentifierNameNotBeforeParams ||
+                       fpc_kind == Parse::NodeKind::IdentifierNameBeforeParams) {
+              // Internal parameter name (single-name case: `name: Type`).
+              auto token = context.node_token(fpc);
+              auto text = context.token_text(token);
+              auto ident_id = context.identifiers().Add(text);
+              param_name_id = SemIR::NameId::ForIdentifier(ident_id);
+            } else if (fpc_kind == Parse::NodeKind::IdentifierPattern) {
+              // Internal name after external label (`_ n: Type` or `label n: Type`).
               auto token = context.node_token(fpc);
               auto text = context.token_text(token);
               auto ident_id = context.identifiers().Add(text);
@@ -70,6 +81,9 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
                        fpc_kind.category().HasAnyOf(
                            Parse::NodeCategory::Type)) {
               param_type_id = HandleTypeExpr(context, fpc);
+            } else if (fpc_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+              // Trailing expr child is the default value expression.
+              default_node = fpc;
             }
           }
 
@@ -82,6 +96,7 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
           }
 
           sig.params.push_back({param_name_id, param_type_id});
+          sig.param_defaults.push_back(default_node);
         }
       }
     }
@@ -103,13 +118,16 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
 
 }  // namespace
 
-auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id)
-    -> void {
+auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
+                              bool is_static_hint) -> void {
   auto children = context.children_source_order(node_id);
 
   // First child should be FunctionDefinitionStart.
+  // StaticModifier is a SIBLING of FunctionDefinition in the parent CodeBlock,
+  // NOT a child — it's detected by HandleTypeMembers and passed via is_static_hint.
   Parse::NodeId sig_node_id = Parse::NodeId::None;
   Parse::NodeId body_code_block = Parse::NodeId::None;
+  bool is_static = is_static_hint;
 
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
@@ -126,8 +144,8 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id)
 
   auto sig = ExtractFunctionSignature(context, sig_node_id);
 
-  // Check if we're inside a type (struct/class). If so, synthesize `self`
-  // and mangle the function name as "TypeName.methodName".
+  // Check if we're inside a type (struct/class). If so, either synthesize
+  // `self` (instance method) or skip it (static method), and mangle the name.
   auto enclosing_type_id = context.CurrentTypeInstId();
   int param_index_offset = 0;
   SemIR::InstId self_param_id = SemIR::InstId::None;
@@ -166,24 +184,30 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id)
       sig.name_id = SemIR::NameId::ForIdentifier(mangled_ident_id);
     }
 
-    // Synthesize a `self` parameter as the first parameter (index 0).
-    auto self_type_id = SemIR::TypeId::ForTypeConstant(
-        SemIR::ConstantId::ForConcreteConstant(enclosing_type_id));
-    auto self_ident_id = context.identifiers().Add("self");
-    self_name_id = SemIR::NameId::ForIdentifier(self_ident_id);
+    // For instance methods only: synthesize a `self` parameter at index 0.
+    // Static methods do NOT get a self parameter.
+    if (!is_static) {
+      auto self_type_id = SemIR::TypeId::ForTypeConstant(
+          SemIR::ConstantId::ForConcreteConstant(enclosing_type_id));
+      auto self_ident_id = context.identifiers().Add("self");
+      self_name_id = SemIR::NameId::ForIdentifier(self_ident_id);
 
-    self_param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
-        SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id : node_id),
-        SemIR::ValueParam{.type_id = self_type_id,
-                          .index = SemIR::CallParamIndex(0),
-                          .pretty_name_id = self_name_id}));
-    param_index_offset = 1;
+      self_param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+          SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id
+                                                     : node_id),
+          SemIR::ValueParam{.type_id = self_type_id,
+                            .index = SemIR::CallParamIndex(0),
+                            .pretty_name_id = self_name_id}));
+      param_index_offset = 1;
+    }
   }
 
   // Create a new function in the function store.
   SemIR::Function fn;
   fn.name_id = sig.name_id;  // mangled name if inside a type, else original
   fn.parent_scope_id = context.CurrentScopeId();
+  fn.is_static = is_static;
+  fn.param_default_nodes = sig.param_defaults;
 
   // Create parameter patterns and params.
   llvm::SmallVector<SemIR::InstId> param_pattern_ids;
@@ -316,6 +340,7 @@ auto HandleFunctionDecl(Context& context, Parse::NodeId node_id) -> void {
   SemIR::Function fn;
   fn.name_id = sig.name_id;
   fn.parent_scope_id = context.CurrentScopeId();
+  fn.param_default_nodes = sig.param_defaults;
 
   if (sig.return_type_id.has_value()) {
     fn.return_type_inst_id = context.types().GetTypeInstId(sig.return_type_id);

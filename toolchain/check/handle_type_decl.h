@@ -15,6 +15,7 @@ auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void;
 auto HandleEnumDefinition(Context& context, Parse::NodeId node_id) -> void;
 auto HandleProtocolDefinition(Context& context, Parse::NodeId node_id) -> void;
 auto HandleExtensionDefinition(Context& context, Parse::NodeId node_id) -> void;
+auto HandleTypealiasDecl(Context& context, Parse::NodeId node_id) -> void;
 
 }  // namespace TinySwift::Check
 

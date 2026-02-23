@@ -5,6 +5,7 @@
 #include "toolchain/check/handle_type_decl.h"
 
 #include "toolchain/check/handle_expr.h"
+#include "toolchain/check/handle_function.h"
 #include "toolchain/check/handle_stmt.h"
 #include "toolchain/check/handle_type.h"
 #include "toolchain/parse/node_kind.h"
@@ -477,9 +478,21 @@ auto HandleTypeMembers(Context& context,
     // Members may be wrapped in a CodeBlock — recurse into it.
     if (child_kind == Parse::NodeKind::CodeBlock) {
       auto block_children = context.children_source_order(child);
+      bool next_is_static = false;
       for (auto bc : block_children) {
         auto bc_kind = context.node_kind(bc);
         if (bc_kind == Parse::NodeKind::CodeBlockStart) continue;
+
+        // StaticModifier is a sibling of FunctionDefinition in the CodeBlock.
+        // Track it so the next FunctionDefinition can use it.
+        if (bc_kind == Parse::NodeKind::StaticModifier) {
+          next_is_static = true;
+          continue;
+        }
+
+        // Reset static flag after consuming it for a function.
+        bool this_is_static = next_is_static;
+        next_is_static = false;
 
         if (bc_kind == Parse::NodeKind::VariableDecl) {
           // Check for computed property (has AccessorBlock child).
@@ -514,6 +527,12 @@ auto HandleTypeMembers(Context& context,
         // Custom initializer.
         if (bc_kind == Parse::NodeKind::InitDefinition) {
           HandleInitDefinition(context, bc);
+          continue;
+        }
+
+        // FunctionDefinition: pass static hint directly.
+        if (bc_kind == Parse::NodeKind::FunctionDefinition) {
+          HandleFunctionDefinition(context, bc, this_is_static);
           continue;
         }
 
@@ -695,29 +714,76 @@ auto HandleEnumDefinition(Context& context, Parse::NodeId node_id) -> void {
       auto child_kind = context.node_kind(child);
       if (child_kind == Parse::NodeKind::EnumCaseDecl) {
         auto case_children = context.children_source_order(child);
+        // For enum cases with associated values, the parser emits IdentifierType
+        // BEFORE IdentifierNameNotBeforeParams so that EnumCaseElement.child_count=1
+        // captures the name as its child. The IdentifierType ends up as a direct
+        // child of EnumCaseDecl (not EnumCaseElement). We collect it here.
+        SemIR::TypeId pending_payload_type = SemIR::TypeId::None;
         for (auto cc : case_children) {
-          if (context.node_kind(cc) == Parse::NodeKind::EnumCaseElement) {
+          auto cc_kind = context.node_kind(cc);
+          // IdentifierType at EnumCaseDecl level = associated value type
+          // (emitted before the name in the parse tree due to ordering).
+          if (cc_kind == Parse::NodeKind::IdentifierType ||
+              cc_kind.category().HasAnyOf(Parse::NodeCategory::Type)) {
+            if (!pending_payload_type.has_value()) {
+              pending_payload_type = HandleTypeExpr(context, cc);
+            }
+          }
+          if (cc_kind == Parse::NodeKind::EnumCaseElement) {
             auto elem_children = context.children_source_order(cc);
-            for (auto ec : elem_children) {
-              if (context.node_kind(ec) ==
-                  Parse::NodeKind::IdentifierNameNotBeforeParams) {
-                auto token = context.node_token(ec);
-                auto text = context.token_text(token);
-                auto ident_id = context.identifiers().Add(text);
-                auto case_name_id = SemIR::NameId::ForIdentifier(ident_id);
 
-                // Emit EnumCase instruction.
-                auto case_id = context.AddInst(SemIR::LocIdAndInst(
-                    SemIR::LocId(ec),
-                    SemIR::EnumCase{
-                        .type_id = enum_value_type_id,
-                        .name_id = case_name_id,
-                        .discriminant = SemIR::ElementIndex(discriminant)}));
-                case_inst_ids.push_back(case_id);
-                context.AddNameToScope(case_name_id, case_id);
-                ++discriminant;
+            // Collect name from the element's single child (IdentifierNameNotBeforeParams).
+            llvm::StringRef case_text;
+            Parse::NodeId case_name_node = Parse::NodeId::None;
+            SemIR::TypeId payload_type_id = pending_payload_type;
+            pending_payload_type = SemIR::TypeId::None;  // consume
+
+            for (auto ec : elem_children) {
+              auto ec_kind = context.node_kind(ec);
+              if (ec_kind == Parse::NodeKind::IdentifierNameNotBeforeParams) {
+                case_name_node = ec;
+                case_text = context.token_text(context.node_token(ec));
+              } else if (ec_kind == Parse::NodeKind::IdentifierType ||
+                         ec_kind.category().HasAnyOf(Parse::NodeCategory::Type)) {
+                // Fallback: type directly in elem_children (alternative ordering).
+                if (!payload_type_id.has_value()) {
+                  payload_type_id = HandleTypeExpr(context, ec);
+                }
               }
             }
+
+            if (case_text.empty()) continue;
+
+            auto ident_id = context.identifiers().Add(case_text);
+            auto case_name_id = SemIR::NameId::ForIdentifier(ident_id);
+            auto loc = SemIR::LocId(
+                case_name_node.has_value() ? case_name_node : cc);
+
+            SemIR::InstId case_id = SemIR::InstId::None;
+            if (payload_type_id.has_value()) {
+              // Case with associated value — emit EnumCaseWithPayload.
+              auto payload_type_inst_id =
+                  context.types().GetTypeInstId(payload_type_id);
+              case_id = context.AddInst(SemIR::LocIdAndInst(
+                  loc,
+                  SemIR::EnumCaseWithPayload{
+                      .type_id = enum_value_type_id,
+                      .discriminant = SemIR::ElementIndex(discriminant),
+                      .payload_type_id = SemIR::InstId(
+                          payload_type_inst_id.index)}));
+            } else {
+              // Simple case (no payload) — emit EnumCase.
+              case_id = context.AddInst(SemIR::LocIdAndInst(
+                  loc,
+                  SemIR::EnumCase{
+                      .type_id = enum_value_type_id,
+                      .name_id = case_name_id,
+                      .discriminant = SemIR::ElementIndex(discriminant)}));
+            }
+
+            case_inst_ids.push_back(case_id);
+            context.AddNameToScope(case_name_id, case_id);
+            ++discriminant;
           }
         }
       }
@@ -784,18 +850,96 @@ auto HandleProtocolDefinition(Context& context, Parse::NodeId node_id)
 
 auto HandleExtensionDefinition(Context& context, Parse::NodeId node_id)
     -> void {
-  // Extensions add to an existing type's scope. For now, just process members
-  // in the current scope.
+  auto children = context.children_source_order(node_id);
+
+  // Find the extended type name.
+  // Parse tree: ExtensionDefinition → [ExtensionDefinitionStart, CodeBlock]
+  //             ExtensionDefinitionStart → [ExtensionIntroducer, IdentifierType]
+  // IdentifierType is inside ExtensionDefinitionStart, not a direct child.
+  llvm::StringRef type_name;
+  for (auto child : children) {
+    if (context.node_kind(child) == Parse::NodeKind::ExtensionDefinitionStart) {
+      // Look inside the start node for IdentifierType.
+      for (auto sc : context.children_source_order(child)) {
+        if (context.node_kind(sc) == Parse::NodeKind::IdentifierType) {
+          type_name = context.token_text(context.node_token(sc));
+          break;
+        }
+      }
+      break;
+    }
+  }
+
+  if (type_name.empty()) {
+    // Fallback: process members in current scope.
+    for (auto child : children) {
+      auto child_kind = context.node_kind(child);
+      if (child_kind == Parse::NodeKind::ExtensionDefinitionStart) continue;
+      if (child_kind.category().HasAnyOf(Parse::NodeCategory::Statement |
+                                         Parse::NodeCategory::Decl)) {
+        HandleStatement(context, child);
+      }
+    }
+    return;
+  }
+
+  // Look up the extended type by name in the current scope.
+  auto ident_id = context.identifiers().Lookup(type_name);
+  if (!ident_id.has_value()) return;  // Unknown type — skip.
+
+  auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+  auto type_inst_id = context.LookupName(name_id);
+  if (!type_inst_id.has_value()) return;  // Not in scope — skip.
+
+  // Determine the type's name scope.
+  auto type_inst = context.insts().Get(type_inst_id);
+  SemIR::NameScopeId type_scope_id = SemIR::NameScopeId::None;
+  if (auto st = type_inst.TryAs<SemIR::StructType>()) {
+    type_scope_id = st->name_scope_id;
+  } else if (auto ct = type_inst.TryAs<SemIR::ClassType>()) {
+    type_scope_id = ct->name_scope_id;
+  } else if (auto ed = type_inst.TryAs<SemIR::EnumDecl>()) {
+    type_scope_id = ed->name_scope_id;
+  }
+
+  if (!type_scope_id.has_value()) {
+    // Not a known composite type — skip.
+    return;
+  }
+
+  // Push the type's existing scope so newly-registered members land in it.
+  context.PushScope(type_scope_id);
+  // Set enclosing type so HandleFunctionDefinition synthesizes `self` correctly.
+  context.SetCurrentType(type_inst_id);
+
+  // Process members — reuses existing logic for FunctionDefinition, etc.
+  HandleTypeMembers(context, children);
+
+  context.ClearCurrentType();
+  context.PopScope();
+}
+
+auto HandleTypealiasDecl(Context& context, Parse::NodeId node_id) -> void {
+  SemIR::NameId alias_name_id = SemIR::NameId::None;
+  SemIR::TypeId aliased_type_id = SemIR::ErrorInst::TypeId;
+
   auto children = context.children_source_order(node_id);
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
-    if (child_kind == Parse::NodeKind::ExtensionDefinitionStart) {
-      continue;
+    if (child_kind == Parse::NodeKind::IdentifierNameNotBeforeParams ||
+        child_kind == Parse::NodeKind::IdentifierNameBeforeParams) {
+      auto token = context.node_token(child);
+      auto text = context.token_text(token);
+      auto ident_id = context.identifiers().Add(text);
+      alias_name_id = SemIR::NameId::ForIdentifier(ident_id);
+    } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Type)) {
+      aliased_type_id = HandleTypeExpr(context, child);
     }
-    if (child_kind.category().HasAnyOf(Parse::NodeCategory::Statement |
-                                       Parse::NodeCategory::Decl)) {
-      HandleStatement(context, child);
-    }
+  }
+
+  if (alias_name_id.has_value() &&
+      aliased_type_id != SemIR::ErrorInst::TypeId) {
+    context.typealias_map().insert({alias_name_id.index, aliased_type_id});
   }
 }
 

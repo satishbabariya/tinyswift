@@ -111,9 +111,28 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
       if (scope.name_id.AsIdentifierId().has_value()) {
         name = sem_ir.identifiers().Get(scope.name_id.AsIdentifierId());
       }
-      // Tagged union: { i64 discriminant, [payload_size x i8] }
-      // For simple enums (no payload), just use { i64 }.
       auto* tag_type = llvm::Type::getInt64Ty(context.llvm_context());
+
+      // Check if any case has an associated payload. If so, use
+      // { i64 tag, payload_type } layout; otherwise just { i64 }.
+      llvm::Type* payload_type = nullptr;
+      for (const auto& kv : scope.names) {
+        auto case_inst = sem_ir.insts().Get(kv.second);
+        if (auto ecwp = case_inst.TryAs<SemIR::EnumCaseWithPayload>()) {
+          // Get the payload LLVM type from its TypeInstId.
+          auto pt_id = sem_ir.types().GetTypeIdForTypeInstId(
+              SemIR::TypeInstId::UnsafeMake(ecwp->payload_type_id));
+          payload_type = context.GetType(pt_id);
+          break;  // All payload cases share the same LLVM layout.
+        }
+      }
+
+      if (payload_type) {
+        auto* llvm_struct = llvm::StructType::create(
+            context.llvm_context(), {tag_type, payload_type}, name);
+        return llvm_struct;
+      }
+      // Simple enum (no payload): { i64 }.
       auto* llvm_struct = llvm::StructType::create(
           context.llvm_context(), {tag_type}, name);
       return llvm_struct;

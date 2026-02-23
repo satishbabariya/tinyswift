@@ -15,6 +15,95 @@ namespace TinySwift::Check {
 auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
   auto children = context.children_source_order(node_id);
 
+  // Pre-scan: detect tuple pattern destructuring `let (a, b) = expr`.
+  // Children in source order: LetIntroducer, IdentifierPattern*, TuplePattern,
+  // <RHS expr>, LetInitializer.
+  bool is_tuple_pattern = false;
+  llvm::SmallVector<Parse::NodeId> tuple_elem_names;
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::TuplePattern) {
+      is_tuple_pattern = true;
+      break;
+    } else if (child_kind == Parse::NodeKind::IdentifierPattern) {
+      tuple_elem_names.push_back(child);
+    }
+  }
+
+  if (is_tuple_pattern) {
+    // Evaluate the RHS expression (the Expr child after TuplePattern).
+    SemIR::InstId init_id = SemIR::InstId::None;
+    bool past_tuple_pattern = false;
+    for (auto child : children) {
+      auto child_kind = context.node_kind(child);
+      if (child_kind == Parse::NodeKind::TuplePattern) {
+        past_tuple_pattern = true;
+        continue;
+      }
+      if (!past_tuple_pattern) continue;
+      if (child_kind == Parse::NodeKind::LetInitializer) continue;
+      if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+        init_id = HandleExpr(context, child);
+        break;
+      }
+    }
+
+    // For each element name at index i, emit TupleAccess + ValueBinding.
+    for (size_t i = 0; i < tuple_elem_names.size(); ++i) {
+      auto elem_name_node = tuple_elem_names[i];
+      auto token = context.node_token(elem_name_node);
+      auto text = context.token_text(token);
+      auto ident_id = context.identifiers().Add(text);
+      auto elem_name_id = SemIR::NameId::ForIdentifier(ident_id);
+
+      // Infer element type from the TupleInit's element at index i.
+      SemIR::TypeId elem_type_id = SemIR::ErrorInst::TypeId;
+      if (init_id.has_value()) {
+        auto init_inst = context.insts().Get(init_id);
+        if (auto ti = init_inst.TryAs<SemIR::TupleInit>()) {
+          auto elem_ids = context.inst_blocks().Get(ti->elements_id);
+          if (i < elem_ids.size()) {
+            elem_type_id = context.insts().Get(elem_ids[i]).type_id();
+          }
+        }
+      }
+
+      // Emit TupleAccess for element i.
+      auto elem_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(elem_name_node),
+          SemIR::TupleAccess{.type_id = elem_type_id,
+                             .tuple_id = init_id,
+                             .index = SemIR::ElementIndex(
+                                 static_cast<int32_t>(i))}));
+
+      // Create ValueBinding and register name.
+      auto entity_name_id = context.entity_names().Add(
+          {.name_id = elem_name_id,
+           .parent_scope_id = context.CurrentScopeId()});
+
+      auto pattern_block_id = context.inst_blocks().AddPlaceholder();
+      auto pattern_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+          SemIR::LocId(elem_name_node),
+          SemIR::ValueBindingPattern{.type_id = elem_type_id,
+                                     .entity_name_id = entity_name_id}));
+      context.inst_blocks().ReplacePlaceholder(
+          pattern_block_id, llvm::ArrayRef<SemIR::InstId>({pattern_id}));
+
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(elem_name_node),
+          SemIR::NameBindingDecl{.pattern_block_id = pattern_block_id}));
+
+      auto binding_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(elem_name_node),
+          SemIR::ValueBinding{.type_id = elem_type_id,
+                              .entity_name_id = entity_name_id,
+                              .value_id = elem_id}));
+
+      context.AddNameToScope(elem_name_id, binding_id);
+    }
+    return;
+  }
+
   SemIR::NameId name_id = SemIR::NameId::None;
   SemIR::TypeId type_id = SemIR::TypeId::None;
   SemIR::InstId init_id = SemIR::InstId::None;

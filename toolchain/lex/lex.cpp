@@ -157,9 +157,15 @@ class Lexer {
           LexEscapedIdentifier(leading_space);
           continue;
 
-        // Question mark: single-char punctuator (not an operator char).
+        // Question mark: either '??' (nil coalescing) or single '?'.
         case '?':
-          EmitOneCharSymbol(TokenKind::Question, leading_space);
+          if (cursor_ + 1 < end_ && cursor_[1] == '?') {
+            int32_t offset = static_cast<int32_t>(cursor_ - source_text_.data());
+            buffer_.AddToken(TokenInfo(TokenKind::QuestionQuestion, leading_space, offset));
+            cursor_ += 2;
+          } else {
+            EmitOneCharSymbol(TokenKind::Question, leading_space);
+          }
           continue;
 
         // Operator characters: these go through operator/punctuator

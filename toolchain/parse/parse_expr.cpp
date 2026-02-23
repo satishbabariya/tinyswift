@@ -68,6 +68,8 @@ static auto GetBinaryPrecedence(Context& context) -> int {
       return Prec_None;  // Protocol composition in type context only.
     case Lex::TokenKind::Question:
       return Prec_Ternary;
+    case Lex::TokenKind::QuestionQuestion:
+      return Prec_NilCoalescing;
     case Lex::TokenKind::AsKeyword:
       return Prec_Cast;
     case Lex::TokenKind::IsKeyword:
