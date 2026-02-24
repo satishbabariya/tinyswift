@@ -63,11 +63,28 @@ auto HandleReturnStatement(Context& context, Parse::NodeId node_id) -> void {
       }
     }
 
+    // M51: Emit deferred blocks LIFO before returning.
+    // The return expression has already been evaluated (expr_id is set above),
+    // so deferred code runs AFTER the return value is captured.
+    {
+      const auto& deferred = context.GetDeferredBlocks();
+      for (int i = static_cast<int>(deferred.size()) - 1; i >= 0; --i) {
+        HandleCodeBlock(context, deferred[i]);
+      }
+    }
+
     context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
         SemIR::ReturnExpr{.expr_id = expr_id,
                           .dest_id = SemIR::DestInstId(SemIR::InstId::None)}));
   } else {
+    // M51: Emit deferred blocks LIFO before void return.
+    {
+      const auto& deferred = context.GetDeferredBlocks();
+      for (int i = static_cast<int>(deferred.size()) - 1; i >= 0; --i) {
+        HandleCodeBlock(context, deferred[i]);
+      }
+    }
     context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
                                         SemIR::Return{}));
   }
@@ -269,6 +286,8 @@ auto HandleIfStatement(Context& context, Parse::NodeId node_id) -> void {
 auto HandleWhileStatement(Context& context, Parse::NodeId node_id) -> void {
   // The condition parse node was stored by HandleCodeBlock.
   auto cond_node = context.TakePendingCondition();
+  // M50: may be set if condition is OptionalBindingCondition (while let).
+  auto opt_name_node = context.TakePendingOptName();
 
   auto child_vec = context.children_source_order(node_id);
   Parse::NodeId body_node = Parse::NodeId::None;
@@ -293,11 +312,58 @@ auto HandleWhileStatement(Context& context, Parse::NodeId node_id) -> void {
       SemIR::Branch{.target_id = SemIR::LabelId(cond_block_id)}));
 
   // Build condition block: evaluate condition, emit cond_br.
+  // For `while let v = opt`: evaluate the optional, extract has_value flag.
+  SemIR::InstId opt_val_id = SemIR::InstId::None;  // M50: optional value from cond
+  SemIR::TypeId opt_inner_type = SemIR::ErrorInst::TypeId;
+  SemIR::NameId opt_binding_name_id = SemIR::NameId::None;
+  bool is_while_let = false;
+
   {
     context.PushInstBlock();
-    SemIR::InstId cond_id =
-        cond_node.has_value() ? HandleExpr(context, cond_node)
-                              : SemIR::InstId::None;
+
+    SemIR::InstId cond_id = SemIR::InstId::None;
+
+    if (cond_node.has_value() &&
+        context.node_kind(cond_node) ==
+            Parse::NodeKind::OptionalBindingCondition) {
+      // M50: `while let v = opt { ... }`
+      is_while_let = true;
+      // OBC has exactly 1 child: the optional value expression.
+      for (auto c : context.children_source_order(cond_node)) {
+        if (context.node_kind(c).category().HasAnyOf(Parse::NodeCategory::Expr)) {
+          opt_val_id = HandleExpr(context, c);
+          break;
+        }
+      }
+      if (opt_val_id.has_value()) {
+        auto opt_type = context.insts().Get(opt_val_id).type_id();
+        auto bool_type = context.GetBuiltinType("Bool");
+        // Extract has-value flag: TupleAccess(opt, 0) == the i1 field.
+        cond_id = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(cond_node),
+            SemIR::TupleAccess{.type_id = bool_type,
+                               .tuple_id = opt_val_id,
+                               .index = SemIR::ElementIndex(0)}));
+        // Determine inner type for payload binding in the body block.
+        auto ti = context.types().GetTypeInstId(opt_type);
+        if (ti.has_value()) {
+          if (auto ot = context.insts().Get(ti).TryAs<SemIR::OptionalType>()) {
+            opt_inner_type =
+                context.types().GetTypeIdForTypeInstId(ot->inner_type_id);
+          }
+        }
+      }
+      // Extract binding name from the preceding IdentifierPattern sibling.
+      if (opt_name_node.has_value()) {
+        auto text = context.token_text(context.node_token(opt_name_node));
+        opt_binding_name_id = SemIR::NameId::ForIdentifier(
+            context.identifiers().Add(text));
+      }
+    } else {
+      cond_id = cond_node.has_value() ? HandleExpr(context, cond_node)
+                                      : SemIR::InstId::None;
+    }
+
     context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
         SemIR::BranchIf{.target_id = SemIR::LabelId(body_block_id),
@@ -318,6 +384,26 @@ auto HandleWhileStatement(Context& context, Parse::NodeId node_id) -> void {
   {
     context.PushInstBlockWithId(body_block_id);
     context.AddBodyBlock(body_block_id);
+
+    // M50: For `while let v = opt`, inject the unwrapped payload binding at
+    // the start of the body block so that `v` is in scope for the body.
+    if (is_while_let && opt_val_id.has_value() && opt_binding_name_id.has_value()) {
+      auto payload_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(body_node.has_value() ? body_node : node_id),
+          SemIR::TupleAccess{.type_id = opt_inner_type,
+                             .tuple_id = opt_val_id,
+                             .index = SemIR::ElementIndex(1)}));
+      auto ename_id = context.entity_names().Add(
+          {.name_id = opt_binding_name_id,
+           .parent_scope_id = context.CurrentScopeId()});
+      auto binding_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(body_node.has_value() ? body_node : node_id),
+          SemIR::ValueBinding{.type_id = opt_inner_type,
+                              .entity_name_id = ename_id,
+                              .value_id = payload_id}));
+      context.AddNameToScope(opt_binding_name_id, binding_id);
+    }
+
     // Push loop context so break/continue can find their targets.
     context.PushLoopContext(merge_block_id, cond_block_id);
     if (body_node.has_value()) {
@@ -326,9 +412,11 @@ auto HandleWhileStatement(Context& context, Parse::NodeId node_id) -> void {
     context.PopLoopContext();
     // Back-edge goes into the tail block (may differ from body_block_id if
     // inner control flow called SwitchInstBlock).
-    context.AddInst(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::Branch{.target_id = SemIR::LabelId(cond_block_id)}));
+    if (!context.IsCurrentBlockTerminated()) {
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(cond_block_id)}));
+    }
     // Finalize the tail block (whatever is currently on top of the stack).
     context.PopInstBlock();
   }
@@ -1186,19 +1274,20 @@ auto HandleRepeatWhileStatement(Context& context, Parse::NodeId node_id)
   context.AddBodyBlock(merge_block_id);
 }
 
-// Handles a defer statement.
+// Handles a defer statement (M51).
+// Instead of executing the body inline, we push the CodeBlock parse node
+// onto the deferred_blocks_ stack. Each return statement will emit all
+// deferred blocks LIFO before emitting its ReturnExpr/Return.
 auto HandleDeferStatement(Context& context, Parse::NodeId node_id) -> void {
   auto children = context.children_source_order(node_id);
-
-  // For now, just process the deferred body inline at the current position.
-  // Proper defer semantics (execute at scope exit) will be implemented in SIL.
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
     if (child_kind == Parse::NodeKind::DeferStatementStart) {
       continue;
     }
     if (child_kind == Parse::NodeKind::CodeBlock) {
-      HandleCodeBlock(context, child);
+      context.PushDeferredBlock(child);
+      return;
     }
   }
 }
@@ -1283,16 +1372,19 @@ auto HandleCodeBlock(Context& context, Parse::NodeId node_id) -> void {
     // IdentifierPattern as the binding name (it's a sibling since OBC has
     // child_count=1 and only takes the value-expression as its child).
     if (child_kind == Parse::NodeKind::OptionalBindingCondition) {
-      if (i + 1 < child_vec.size() &&
-          context.node_kind(child_vec[i + 1]) == Parse::NodeKind::IfStatement) {
-        // Look for the preceding IdentifierPattern sibling (the binding name).
-        if (i > 0 &&
-            context.node_kind(child_vec[i - 1]) ==
-                Parse::NodeKind::IdentifierPattern) {
-          context.SetPendingOptName(child_vec[i - 1]);
+      if (i + 1 < child_vec.size()) {
+        auto next_kind = context.node_kind(child_vec[i + 1]);
+        if (next_kind == Parse::NodeKind::IfStatement ||
+            next_kind == Parse::NodeKind::WhileStatement) {  // M50: while let
+          // Look for the preceding IdentifierPattern sibling (the binding name).
+          if (i > 0 &&
+              context.node_kind(child_vec[i - 1]) ==
+                  Parse::NodeKind::IdentifierPattern) {
+            context.SetPendingOptName(child_vec[i - 1]);
+          }
+          context.SetPendingCondition(child);
+          continue;
         }
-        context.SetPendingCondition(child);
-        continue;
       }
     }
 

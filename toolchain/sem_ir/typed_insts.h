@@ -1040,6 +1040,14 @@ struct StringNeq {
   InstId rhs_id;
 };
 
+// M49: Get the length of a String value as an Int.
+struct StringLen {
+  static constexpr auto Kind = InstKind::StringLen.Define<Parse::NodeId>(
+      {.ir_name = "string_len"});
+  TypeId type_id;    // Int
+  InstId operand_id; // the String value
+};
+
 // These concepts are an implementation detail of the library, not public API.
 namespace Internal {
 

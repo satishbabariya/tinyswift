@@ -1171,6 +1171,37 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
     }
   }
 
+  // M49: Intercept `.count` and `.isEmpty` on String values.
+  if (base_id.has_value() && !member_name.empty()) {
+    auto base_type_check = GetInstType(context, base_id);
+    if (IsStringType(context, base_type_check)) {
+      auto int_type = context.GetBuiltinType("Int");
+      if (member_name == "count") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::StringLen{.type_id = int_type, .operand_id = base_id}));
+      }
+      if (member_name == "isEmpty") {
+        // Desugar: string_len(s) == 0
+        auto len_id = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::StringLen{.type_id = int_type, .operand_id = base_id}));
+        auto zero_id = context.AddInst(SemIR::LocIdAndInst::NoLoc(
+            SemIR::IntValue{
+                .type_id = int_type,
+                .int_id = context.ints().Add(static_cast<int64_t>(0))}));
+        auto bool_type = SemIR::TypeId::ForTypeConstant(
+            SemIR::ConstantId::ForConcreteConstant(
+                SemIR::BoolType::TypeInstId));
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntEq{.type_id = bool_type,
+                         .lhs_id = len_id,
+                         .rhs_id = zero_id}));
+      }
+    }
+  }
+
   auto base_type_id = GetInstType(context, base_id);
   auto type_id = SemIR::ErrorInst::TypeId;
   SemIR::ElementIndex element_index(0);

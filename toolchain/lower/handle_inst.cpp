@@ -775,6 +775,10 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     case SemIR::InstKind::StringEq:
     case SemIR::InstKind::StringNeq:
       break;
+
+    // M49: String length — handled via SILGen path.
+    case SemIR::InstKind::StringLen:
+      break;
   }
 }
 

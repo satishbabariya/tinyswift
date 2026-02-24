@@ -837,8 +837,7 @@ using DeferStatementStart =
 struct DeferStatement {
   static constexpr auto Kind = NodeKind::DeferStatement.Define(
       {.category = NodeCategory::Statement,
-       .bracketed_by = DeferStatementStart::Kind,
-       .child_count = 1});
+       .bracketed_by = DeferStatementStart::Kind});
 
   DeferStatementStartId introducer;
   CodeBlockId body;

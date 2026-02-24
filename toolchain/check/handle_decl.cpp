@@ -378,6 +378,10 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
           name_id = SemIR::NameId::ForIdentifier(ident_id);
         }
       }
+    } else if (child_kind == Parse::NodeKind::TypeAnnotation) {
+      // Direct type annotation for `var name: Type = expr` when IdentifierPattern
+      // is used directly (not wrapped in VariablePattern).
+      type_id = HandleTypeExpr(context, child);
     } else if (child_kind == Parse::NodeKind::VariableInitializer) {
       continue;
     } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {

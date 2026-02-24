@@ -201,6 +201,17 @@ class Context {
     return id;
   }
 
+  // --- Deferred blocks for defer statement (M51) ---
+  // `defer { ... }` pushes the CodeBlock parse node here. Each return
+  // statement emits deferred blocks LIFO before its ReturnExpr.
+  auto PushDeferredBlock(Parse::NodeId node_id) -> void {
+    deferred_blocks_.push_back(node_id);
+  }
+  auto GetDeferredBlocks() const -> const llvm::SmallVector<Parse::NodeId>& {
+    return deferred_blocks_;
+  }
+  auto ClearDeferredBlocks() -> void { deferred_blocks_.clear(); }
+
   // --- Name scope management ---
 
   // A name-to-InstId mapping for a scope.
@@ -356,6 +367,11 @@ class Context {
 
   // Stack of active loop contexts (for break/continue targets).
   llvm::SmallVector<LoopContext> loop_stack_;
+
+  // Stack of deferred CodeBlock parse nodes (M51: defer statement).
+  // Each `defer { ... }` pushes its CodeBlock here.
+  // Each return statement emits these LIFO before emitting ReturnExpr/Return.
+  llvm::SmallVector<Parse::NodeId> deferred_blocks_;
 
   // Map from NameId.index to TypeId for typealias declarations.
   llvm::DenseMap<int32_t, SemIR::TypeId> typealias_map_;

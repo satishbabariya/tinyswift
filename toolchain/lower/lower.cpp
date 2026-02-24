@@ -698,6 +698,16 @@ auto LowerSILInst(Context& context,
               "__tinyswift_string_concat", fn_type);
           setSILValue(inst.result, builder.CreateCall(callee, {lhs, rhs}));
         }
+      } else if (name == "string_len") {
+        // M49: string_len(s) → int64_t strlen(s)
+        auto* str_ptr = getSILValue(inst.operands[0]);
+        if (str_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getInt64Ty(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_string_len", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {str_ptr}));
+        }
       } else if (name == "int_to_string") {
         auto* val = getSILValue(inst.operands[0]);
         if (val) {

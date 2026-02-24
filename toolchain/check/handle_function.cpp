@@ -213,6 +213,15 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
 
 auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
                               bool is_static_hint) -> void {
+  // M52: Save outer function context so nested function definitions don't
+  // clobber the outer function's state.
+  auto outer_function_id = context.CurrentFunctionId();
+  // Save and clear deferred blocks for the outer function (M51 × M52 interaction).
+  // The nested function gets its own empty defer stack; the outer function's
+  // deferred blocks are restored after the nested function is processed.
+  auto outer_deferred_blocks = context.GetDeferredBlocks();
+  context.ClearDeferredBlocks();
+
   auto children = context.children_source_order(node_id);
 
   // First child should be FunctionDefinitionStart.
@@ -295,9 +304,25 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
     }
   }
 
+  // M52: If this is a nested function (inside another function, not inside a type),
+  // mangle the name for LLVM symbol uniqueness to avoid conflicts between nested
+  // functions with the same name in different outer functions.
+  if (outer_function_id.has_value() && !enclosing_type_id.has_value() &&
+      sig.name_id.has_value() && sig.name_id.AsIdentifierId().has_value()) {
+    static int nested_counter = 0;
+    static auto* nested_name_storage = new llvm::SmallVector<std::string>();
+    auto orig = context.identifiers().Get(sig.name_id.AsIdentifierId());
+    nested_name_storage->push_back(
+        "__nested_" + std::to_string(nested_counter++) + "_" + orig.str());
+    sig.name_id = SemIR::NameId::ForIdentifier(
+        context.identifiers().Add(nested_name_storage->back()));
+    // original_name_id stays unmangled and is registered in scope for
+    // call-site lookup.
+  }
+
   // Create a new function in the function store.
   SemIR::Function fn;
-  fn.name_id = sig.name_id;  // mangled name if inside a type, else original
+  fn.name_id = sig.name_id;  // mangled name if inside a type/nested, else original
   fn.parent_scope_id = context.CurrentScopeId();
   fn.is_static = is_static;
   fn.is_throwing = sig.is_throwing;
@@ -433,7 +458,18 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
   }
 
   context.PopInstBlock();
-  context.ClearCurrentFunction();
+
+  // M51: Clear this function's deferred blocks (they have been emitted at each
+  // return site already).
+  context.ClearDeferredBlocks();
+
+  // M51/M52: Restore outer function's deferred blocks.
+  for (auto block : outer_deferred_blocks) {
+    context.PushDeferredBlock(block);
+  }
+
+  // M52: Restore outer function instead of clearing (supports nested functions).
+  context.SetCurrentFunction(outer_function_id);
 
   context.PopScope();
 }

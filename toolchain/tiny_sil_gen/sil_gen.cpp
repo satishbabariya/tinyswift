@@ -1113,6 +1113,17 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     return;
   }
 
+  // M49: StringLen — call __tinyswift_string_len(s) -> Int.
+  if (auto sl = inst.TryAs<SemIR::StringLen>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(sl->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "string_len";
+    sil_inst->setOperand(0, ctx.GetValue(sl->operand_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
   // M40: InoutParam — like ValueParam, but tracks as pointer.
   if (auto inout_param = inst.TryAs<SemIR::InoutParam>()) {
     if (!ctx.HasValue(inst_id)) {
