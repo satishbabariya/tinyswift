@@ -115,7 +115,8 @@ auto Context::IsCurrentBlockTerminated() -> bool {
   return kind == SemIR::InstKind::Return ||
          kind == SemIR::InstKind::ReturnExpr ||
          kind == SemIR::InstKind::Branch ||
-         kind == SemIR::InstKind::BranchIf;
+         kind == SemIR::InstKind::BranchIf ||
+         kind == SemIR::InstKind::ThrowValue;
 }
 
 auto Context::AddNameToScope(SemIR::NameId name_id, SemIR::InstId inst_id)

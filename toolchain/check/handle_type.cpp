@@ -110,8 +110,16 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
   }
 
   if (kind == Parse::NodeKind::FunctionType) {
-    // Stub: function types not fully supported yet.
-    return SemIR::ErrorInst::TypeId;
+    // Function types are represented as opaque pointers at runtime (in LLVM 20,
+    // all pointers are ptr).  Create a PointerType to Int as a stand-in — it
+    // lowers to ptr, which is the correct ABI for function pointers.
+    auto int_type_inst_id =
+        context.types().GetTypeInstId(context.GetBuiltinType("Int"));
+    auto inst_id = context.AddInstInNoBlock(SemIR::LocIdAndInst::NoLoc(
+        SemIR::PointerType{.type_id = SemIR::TypeType::TypeId,
+                           .pointee_id = int_type_inst_id}));
+    return SemIR::TypeId::ForTypeConstant(
+        SemIR::ConstantId::ForConcreteConstant(inst_id));
   }
 
   // Fallback: try to treat as an identifier.

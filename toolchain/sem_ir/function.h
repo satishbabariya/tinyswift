@@ -40,6 +40,9 @@ struct Function : public Printable<Function> {
   // Set for functions declared with the `static` modifier inside a type.
   bool is_static = false;
 
+  // Whether this function is declared with `throws`.
+  bool is_throwing = false;
+
   // Default value parse nodes for parameters, indexed by param position
   // (0-based, after self is excluded). NodeId::None means no default.
   llvm::SmallVector<Parse::NodeId> param_default_nodes = {};

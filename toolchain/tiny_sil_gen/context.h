@@ -6,6 +6,7 @@
 #define TINYSWIFT_TOOLCHAIN_TINY_SIL_GEN_CONTEXT_H_
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringRef.h"
 #include "toolchain/sem_ir/file.h"
 #include "toolchain/sem_ir/ids.h"
@@ -65,6 +66,16 @@ class Context {
   // Clear per-function state for the next function.
   auto clearFunctionState() -> void;
 
+  // --- Array var tracking ---
+  // VarStorage InstIds that are array-backed (initialized via ArrayLiteralInit).
+  // NameRef → these VarStorages should NOT emit a Load (the ALI is used directly).
+  auto MarkArrayVar(int32_t var_storage_raw_id) -> void {
+    array_var_ids_.insert(var_storage_raw_id);
+  }
+  auto IsArrayVar(int32_t var_storage_raw_id) const -> bool {
+    return array_var_ids_.count(var_storage_raw_id) > 0;
+  }
+
  private:
   const SemIR::File& sem_ir_;
   TinySIL::SILModule& sil_module_;
@@ -74,6 +85,8 @@ class Context {
   TinySIL::SILBasicBlock* current_block_ = nullptr;
   llvm::DenseMap<int32_t, TinySIL::SILValue> value_map_;
   llvm::DenseMap<int32_t, int32_t> block_map_;
+  // VarStorage InstIds backed by an ArrayLiteralInit (no Store needed).
+  llvm::DenseSet<int32_t> array_var_ids_;
 };
 
 }  // namespace TinySwift::TinySILGen

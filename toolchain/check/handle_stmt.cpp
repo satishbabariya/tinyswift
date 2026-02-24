@@ -429,13 +429,189 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
     }
   }
 
-  // Check that the sequence is a range expression (`lo...hi` or `lo..<hi`).
-  if (!sequence_node.has_value() ||
-      context.node_kind(sequence_node) != Parse::NodeKind::InfixOperatorExpr) {
-    // Unsupported sequence type — fall through with a simple body execution.
-    if (body_node.has_value()) {
-      HandleCodeBlock(context, body_node);
+  // Determine if the sequence is a range or array for-in.
+  bool is_range = sequence_node.has_value() &&
+      context.node_kind(sequence_node) == Parse::NodeKind::InfixOperatorExpr;
+
+  // Array for-in: sequence is an IdentifierNameExpr (or non-range expression).
+  if (!is_range && sequence_node.has_value()) {
+    // Evaluate the array expression.
+    auto array_ref_id = HandleExpr(context, sequence_node);
+
+    // Look through NameRef → VarStorage/ValueBinding → ArrayLiteralInit
+    // to find the element count and type.
+    SemIR::InstId ali_id = SemIR::InstId::None;
+    if (array_ref_id.has_value()) {
+      auto arr_inst = context.insts().Get(array_ref_id);
+      SemIR::InstId real_id = array_ref_id;
+      if (auto nr = arr_inst.TryAs<SemIR::NameRef>()) {
+        real_id = nr->value_id;
+        arr_inst = context.insts().Get(real_id);
+      }
+      if (arr_inst.Is<SemIR::VarStorage>()) {
+        ali_id = context.GetArrayVarInit(real_id);
+      } else if (auto vb = arr_inst.TryAs<SemIR::ValueBinding>()) {
+        ali_id = vb->value_id;
+      }
     }
+
+    if (!ali_id.has_value()) {
+      // Fallback: can't determine array info.
+      if (body_node.has_value()) HandleCodeBlock(context, body_node);
+      return;
+    }
+
+    auto ali_inst = context.insts().Get(ali_id);
+    auto ali = ali_inst.TryAs<SemIR::ArrayLiteralInit>();
+    if (!ali) {
+      if (body_node.has_value()) HandleCodeBlock(context, body_node);
+      return;
+    }
+
+    int64_t count = static_cast<int64_t>(
+        context.inst_blocks().Get(ali->elements_id).size());
+    auto elem_type_id = ali->type_id;
+    auto int_type = context.GetBuiltinType("Int");
+    auto bool_type = context.GetBuiltinType("Bool");
+
+    // Create the loop variable name (from pattern_node).
+    SemIR::NameId loop_var_name_id = SemIR::NameId::None;
+    if (pattern_node.has_value()) {
+      auto text = context.token_text(context.node_token(pattern_node));
+      auto ident_id = context.identifiers().Add(text);
+      loop_var_name_id = SemIR::NameId::ForIdentifier(ident_id);
+    }
+
+    // Create a synthetic index VarStorage (e.g., `_for_idx`).
+    static auto* idx_names = new llvm::SmallVector<std::string>();
+    idx_names->push_back("_for_idx");
+    auto idx_ident_id =
+        context.identifiers().Add(llvm::StringRef(idx_names->back()));
+    auto idx_name_id = SemIR::NameId::ForIdentifier(idx_ident_id);
+
+    auto idx_var_id = context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::VarStorage{.type_id = int_type,
+                          .pattern_id = SemIR::AbsoluteInstId(
+                              SemIR::InstId::None)}));
+    auto zero_id = context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::IntValue{.type_id = int_type, .int_id = context.ints().Add(0)}));
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Assign{.lhs_id = idx_var_id, .rhs_id = zero_id}));
+    context.AddNameToScope(idx_name_id, idx_var_id);
+
+    // Emit count as compile-time constant.
+    auto count_id = context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::IntValue{.type_id = int_type,
+                        .int_id = context.ints().Add(count)}));
+
+    // Create block IDs.
+    auto cond_block_id = context.inst_blocks().AddPlaceholder();
+    auto body_block_id = context.inst_blocks().AddPlaceholder();
+    auto merge_block_id = context.inst_blocks().AddPlaceholder();
+
+    // Entry → condition block.
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(cond_block_id)}));
+
+    // Condition block: idx < count.
+    {
+      context.PushInstBlock();
+      auto idx_val_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::NameRef{.type_id = int_type,
+                         .name_id = idx_name_id,
+                         .value_id = idx_var_id}));
+      auto cond_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::IntLess{.type_id = bool_type,
+                         .lhs_id = idx_val_id,
+                         .rhs_id = count_id}));
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::BranchIf{.target_id = SemIR::LabelId(body_block_id),
+                           .cond_id = cond_id}));
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+      auto tmp = context.PopInstBlock();
+      auto cond_insts = context.inst_blocks().Get(tmp);
+      context.inst_blocks().ReplacePlaceholder(
+          cond_block_id, llvm::ArrayRef<SemIR::InstId>(cond_insts));
+      context.AddBodyBlock(cond_block_id);
+    }
+
+    // Body block.
+    {
+      context.PushInstBlockWithId(body_block_id);
+      context.AddBodyBlock(body_block_id);
+      context.PushLoopContext(merge_block_id, cond_block_id);
+
+      // Load current index.
+      auto idx_val_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::NameRef{.type_id = int_type,
+                         .name_id = idx_name_id,
+                         .value_id = idx_var_id}));
+      // Load element: ArrayAccess{ali_id, idx}.
+      auto elem_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::ArrayAccess{.type_id = elem_type_id,
+                             .array_id = ali_id,
+                             .index_id = idx_val_id}));
+      // Bind loop variable.
+      if (loop_var_name_id.has_value()) {
+        auto entity_name_id = context.entity_names().Add(
+            {.name_id = loop_var_name_id,
+             .parent_scope_id = context.CurrentScopeId()});
+        auto binding_id = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(pattern_node.has_value() ? pattern_node : node_id),
+            SemIR::ValueBinding{.type_id = elem_type_id,
+                                .entity_name_id = entity_name_id,
+                                .value_id = elem_id}));
+        context.AddNameToScope(loop_var_name_id, binding_id);
+      }
+
+      if (body_node.has_value()) HandleCodeBlock(context, body_node);
+
+      context.PopLoopContext();
+
+      // Increment index.
+      auto idx_reload_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::NameRef{.type_id = int_type,
+                         .name_id = idx_name_id,
+                         .value_id = idx_var_id}));
+      auto one_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::IntValue{.type_id = int_type,
+                          .int_id = context.ints().Add(1)}));
+      auto inc_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::IntAdd{.type_id = int_type,
+                        .lhs_id = idx_reload_id,
+                        .rhs_id = one_id}));
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Assign{.lhs_id = idx_var_id, .rhs_id = inc_id}));
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(cond_block_id)}));
+      context.PopInstBlock();
+    }
+
+    context.SwitchInstBlock(merge_block_id);
+    context.AddBodyBlock(merge_block_id);
+    return;
+  }
+
+  // Non-range, non-array: unsupported.
+  if (!is_range) {
+    if (body_node.has_value()) HandleCodeBlock(context, body_node);
     return;
   }
 
@@ -1047,6 +1223,44 @@ auto HandleContinueStatement(Context& context, Parse::NodeId node_id) -> void {
   }
 }
 
+// M41: `throw expr` — emits ThrowValue (a terminator).
+auto HandleThrowStatement(Context& context, Parse::NodeId node_id) -> void {
+  auto children = context.children_source_order(node_id);
+  SemIR::InstId error_id = SemIR::InstId::None;
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::ThrowStatementStart) continue;
+    if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+      error_id = HandleExpr(context, child);
+    }
+  }
+  // ThrowValue is a terminator — it ends the current block.
+  if (!error_id.has_value()) {
+    // If no expression, emit a placeholder error inst.
+    error_id = context.AddInst(SemIR::LocIdAndInst::NoLoc(
+        SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+  }
+  context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::ThrowValue{.error_id = error_id}));
+}
+
+// M41: `do { body } catch { handler }` — execute only the try body.
+// Catch clauses are skipped (no unwinding in M41). Since `throw` is a
+// terminator, control never reaches the catch body on the happy path.
+auto HandleDoStatement(Context& context, Parse::NodeId node_id) -> void {
+  auto children = context.children_source_order(node_id);
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::DoIntroducer) continue;
+    if (child_kind == Parse::NodeKind::CodeBlock) {
+      // Try body: execute normally.
+      HandleCodeBlock(context, child);
+    }
+    // DoCatchClause: skip entirely in M41 (no error propagation).
+  }
+}
+
 }  // namespace
 
 auto HandleCodeBlock(Context& context, Parse::NodeId node_id) -> void {
@@ -1094,6 +1308,15 @@ auto HandleCodeBlock(Context& context, Parse::NodeId node_id) -> void {
             next_kind == Parse::NodeKind::WhileStatement ||
             next_kind == Parse::NodeKind::GuardStatement) {
           context.SetPendingCondition(child);
+          continue;
+        }
+        // M39: If followed by a cast node, evaluate LHS and store as pending cast.
+        if (next_kind == Parse::NodeKind::IsExpr ||
+            next_kind == Parse::NodeKind::AsExpr ||
+            next_kind == Parse::NodeKind::AsQuestionExpr ||
+            next_kind == Parse::NodeKind::AsExclaimExpr) {
+          auto lhs_id = HandleExpr(context, child);
+          context.SetPendingCastExpr(lhs_id);
           continue;
         }
       }
@@ -1199,6 +1422,16 @@ auto HandleStatement(Context& context, Parse::NodeId node_id) -> void {
   }
   if (kind == Parse::NodeKind::DeferStatement) {
     HandleDeferStatement(context, node_id);
+    return;
+  }
+
+  // M41: throw/do statements.
+  if (kind == Parse::NodeKind::ThrowStatement) {
+    HandleThrowStatement(context, node_id);
+    return;
+  }
+  if (kind == Parse::NodeKind::DoStatement) {
+    HandleDoStatement(context, node_id);
     return;
   }
 

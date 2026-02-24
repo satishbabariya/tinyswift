@@ -76,6 +76,7 @@ auto Context::clearFunctionState() -> void {
   current_block_ = nullptr;
   value_map_.clear();
   block_map_.clear();
+  array_var_ids_.clear();
 }
 
 }  // namespace TinySwift::TinySILGen

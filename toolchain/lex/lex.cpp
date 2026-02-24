@@ -861,8 +861,11 @@ class Lexer {
       if (c == '"') {
         // Check for matching hash count.
         if (MatchClosingHashes(hash_count)) {
-          auto str_id =
-              value_stores_.string_literal_values().Add(llvm::StringRef(value));
+          // Copy string data into persistent storage before creating a StringRef.
+          // The local `value` (std::string) will be destroyed when this function
+          // returns, so we must not store a StringRef that points into it.
+          auto stable = value_stores_.AllocateString(llvm::StringRef(value));
+          auto str_id = value_stores_.string_literal_values().Add(stable);
           buffer_.AddToken(
               TokenInfo(TokenKind::StringLiteral, leading_space, str_id.index,
                         offset));
@@ -951,8 +954,8 @@ class Lexer {
           *(cursor_ + 2) == '"') {
         cursor_ += 3;
         if (MatchClosingHashesOnly(hash_count)) {
-          auto str_id =
-              value_stores_.string_literal_values().Add(llvm::StringRef(value));
+          auto stable = value_stores_.AllocateString(llvm::StringRef(value));
+          auto str_id = value_stores_.string_literal_values().Add(stable);
           buffer_.AddToken(
               TokenInfo(TokenKind::StringLiteral, leading_space, str_id.index,
                         offset));

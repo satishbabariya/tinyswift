@@ -189,6 +189,18 @@ class Context {
     return id;
   }
 
+  // --- Pending LHS for type cast expressions (M39) ---
+  // HandleCodeBlock stores the LHS InstId when an Expr is followed by a cast
+  // node (IsExpr/AsExpr/AsQuestionExpr/AsExclaimExpr).
+  auto SetPendingCastExpr(SemIR::InstId id) -> void {
+    pending_cast_expr_ = id;
+  }
+  auto TakePendingCastExpr() -> SemIR::InstId {
+    auto id = pending_cast_expr_;
+    pending_cast_expr_ = SemIR::InstId::None;
+    return id;
+  }
+
   // --- Name scope management ---
 
   // A name-to-InstId mapping for a scope.
@@ -339,15 +351,36 @@ class Context {
   // Pending optional binding name node for if-let statements.
   Parse::NodeId pending_opt_name_node_id_ = Parse::NodeId::None;
 
+  // Pending LHS InstId for type cast expressions (M39 — is/as?/as!/as).
+  SemIR::InstId pending_cast_expr_ = SemIR::InstId::None;
+
   // Stack of active loop contexts (for break/continue targets).
   llvm::SmallVector<LoopContext> loop_stack_;
 
   // Map from NameId.index to TypeId for typealias declarations.
   llvm::DenseMap<int32_t, SemIR::TypeId> typealias_map_;
 
+  // Map from VarStorage InstId index to ArrayLiteralInit InstId.
+  // Used so that var array subscript access can find the actual array alloca.
+  llvm::DenseMap<int32_t, SemIR::InstId> array_var_init_map_;
+
  public:
   auto typealias_map() -> llvm::DenseMap<int32_t, SemIR::TypeId>& {
     return typealias_map_;
+  }
+
+  // Register a VarStorage as holding an array initializer.
+  auto SetArrayVarInit(SemIR::InstId var_id, SemIR::InstId ali_id) -> void {
+    array_var_init_map_.insert({var_id.index, ali_id});
+  }
+
+  // Look up the ArrayLiteralInit for a VarStorage, or return None.
+  auto GetArrayVarInit(SemIR::InstId var_id) -> SemIR::InstId {
+    auto it = array_var_init_map_.find(var_id.index);
+    if (it != array_var_init_map_.end()) {
+      return it->second;
+    }
+    return SemIR::InstId::None;
   }
 };
 

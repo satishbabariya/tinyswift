@@ -734,6 +734,47 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
       context.SetLocal(inst_id, loaded);
       break;
     }
+
+    // Array element address (for lvalue assignment): emitted in function bodies
+    // only, handled via SILGen path. No-op in direct lowering.
+    case SemIR::InstKind::ArrayElementAddr:
+      break;
+
+    // Bitwise integer operators: handled via SILGen path in function bodies.
+    case SemIR::InstKind::IntBitwiseAnd:
+    case SemIR::InstKind::IntBitwiseOr:
+    case SemIR::InstKind::IntBitwiseXor:
+    case SemIR::InstKind::IntBitwiseNot:
+    case SemIR::InstKind::IntShiftLeft:
+    case SemIR::InstKind::IntShiftRight:
+      break;
+
+    // M38: String conversion — handled via SILGen path.
+    case SemIR::InstKind::IntToString:
+      break;
+
+    // M40: inout parameter / address-of — handled via SILGen path.
+    case SemIR::InstKind::InoutParam:
+    case SemIR::InstKind::AddressOf:
+      break;
+
+    // M41: throw — handled via SILGen path.
+    case SemIR::InstKind::ThrowValue:
+      break;
+
+    // M42: Dictionary operations — handled via SILGen path.
+    case SemIR::InstKind::DictInit:
+    case SemIR::InstKind::DictAccess:
+      break;
+
+    // M44: print() — handled via SILGen path.
+    case SemIR::InstKind::PrintValue:
+      break;
+
+    // M45: String equality — handled via SILGen path.
+    case SemIR::InstKind::StringEq:
+    case SemIR::InstKind::StringNeq:
+      break;
   }
 }
 

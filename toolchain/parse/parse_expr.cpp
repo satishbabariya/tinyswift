@@ -65,7 +65,7 @@ static auto GetBinaryPrecedence(Context& context) -> int {
     case Lex::TokenKind::MinusGreater:
       return Prec_None;  // Not a binary operator in expression context.
     case Lex::TokenKind::Amp:
-      return Prec_None;  // Protocol composition in type context only.
+      return Prec_Addition;  // Bitwise AND: same precedence bucket as |, ^.
     case Lex::TokenKind::Question:
       return Prec_Ternary;
     case Lex::TokenKind::QuestionQuestion:
@@ -141,8 +141,13 @@ static auto ParseExprImpl(Context& context, int min_precedence) -> void {
     return;
   }
 
+  // M40: Address-of expression `&varName` (prefix `&`, not binary bitwise-AND).
+  if (kind == Lex::TokenKind::Amp) {
+    auto amp_token = context.Consume();
+    ParseExprImpl(context, Prec_Prefix);
+    context.AddNode(NodeKind::AddressOfExpr, amp_token);
   // Prefix operators: -, !, ~
-  if (kind == Lex::TokenKind::OperatorPrefix) {
+  } else if (kind == Lex::TokenKind::OperatorPrefix) {
     auto op = context.Consume();
     ParseExprImpl(context, Prec_Prefix);
     context.AddNode(NodeKind::PrefixOperatorExpr, op);
@@ -312,42 +317,49 @@ static auto ParsePrimaryExpr(Context& context) -> void {
     return;
   }
 
-  // Array literal: `[expr, expr, ...]`
+  // Array or dictionary literal: `[expr, ...]` or `[key: value, ...]`
+  // Use 1-token lookahead: if the SECOND token after `[` is `:`, it's a dict.
   if (kind == Lex::TokenKind::OpenSquareBracket) {
     auto open = context.Consume();
-    context.AddLeafNode(NodeKind::ArrayExprStart, open);
 
+    // Determine array vs dictionary before emitting the bracket start node.
+    // For dictionary: second token after `[` is Colon (e.g. `["a": 1, ...]`).
+    bool is_dict = (context.Peek() != Lex::TokenKind::CloseSquareBracket) &&
+                   (context.PeekNext() == Lex::TokenKind::Colon);
+
+    if (is_dict) {
+      // Dictionary literal: `[key: value, ...]`
+      context.AddLeafNode(NodeKind::DictionaryExprStart, open);
+
+      // Parse first key:value entry.
+      ParseExpr(context);  // key
+      auto colon = context.ConsumeChecked(Lex::TokenKind::Colon);
+      ParseExpr(context);  // value
+      context.AddNode(NodeKind::DictionaryExprEntry, colon);
+
+      while (context.Peek() == Lex::TokenKind::Comma) {
+        auto comma = context.Consume();
+        context.AddLeafNode(NodeKind::PatternListComma, comma);
+        ParseExpr(context);  // key
+        auto colon2 = context.ConsumeChecked(Lex::TokenKind::Colon);
+        ParseExpr(context);  // value
+        context.AddNode(NodeKind::DictionaryExprEntry, colon2);
+      }
+      auto close = context.ConsumeChecked(Lex::TokenKind::CloseSquareBracket);
+      context.AddNode(NodeKind::DictionaryExpr, close);
+      return;
+    }
+
+    // Array literal: `[expr, expr, ...]`
+    context.AddLeafNode(NodeKind::ArrayExprStart, open);
     if (context.Peek() != Lex::TokenKind::CloseSquareBracket) {
       ParseExpr(context);
-
-      // Check for dictionary literal: `[key: value, ...]`
-      if (context.Peek() == Lex::TokenKind::Colon) {
-        auto colon = context.Consume();
-        ParseExpr(context);
-        context.AddNode(NodeKind::DictionaryExprEntry, colon);
-
-        while (context.Peek() == Lex::TokenKind::Comma) {
-          auto comma = context.Consume();
-          context.AddLeafNode(NodeKind::PatternListComma, comma);
-          ParseExpr(context);
-          auto colon2 = context.ConsumeChecked(Lex::TokenKind::Colon);
-          ParseExpr(context);
-          context.AddNode(NodeKind::DictionaryExprEntry, colon2);
-        }
-        auto close = context.ConsumeChecked(
-            Lex::TokenKind::CloseSquareBracket);
-        context.AddNode(NodeKind::DictionaryExpr, close);
-        return;
-      }
-
-      // Array literal elements.
       while (context.Peek() == Lex::TokenKind::Comma) {
         auto comma = context.Consume();
         context.AddLeafNode(NodeKind::PatternListComma, comma);
         ParseExpr(context);
       }
     }
-
     auto close = context.ConsumeChecked(Lex::TokenKind::CloseSquareBracket);
     context.AddNode(NodeKind::ArrayExpr, close);
     return;

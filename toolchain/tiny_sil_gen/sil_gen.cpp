@@ -176,6 +176,11 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     // emit a load to get the actual stored value.
     auto ref_inst = sem_ir.insts().Get(name_ref->value_id);
     if (ref_inst.Is<SemIR::VarStorage>()) {
+      // For array-backed VarStorage (ArrayLiteralInit assigned in check phase),
+      // skip the Load — subscript operations use the ALI result directly.
+      if (ctx.IsArrayVar(name_ref->value_id.index)) {
+        return;
+      }
       auto addr_value = ctx.GetValue(name_ref->value_id);
       if (addr_value.is_valid()) {
         auto result = AllocValue(ctx, ctx.GetSILType(name_ref->type_id));
@@ -184,6 +189,30 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
         ctx.emit(std::move(sil_inst));
         ctx.SetValue(inst_id, result);
       }
+    } else if (ref_inst.Is<SemIR::InoutParam>()) {
+      // M40: InoutParam is a pointer; dereference it to read the value.
+      auto ptr_val = ctx.GetValue(name_ref->value_id);
+      if (ptr_val.is_valid()) {
+        auto result = AllocValue(ctx, ctx.GetSILType(name_ref->type_id));
+        auto sil_inst = MakeInst(TinySIL::SILInstKind::Load, result);
+        sil_inst->setOperand(0, ptr_val);
+        ctx.emit(std::move(sil_inst));
+        ctx.SetValue(inst_id, result);
+      }
+    } else if (ref_inst.Is<SemIR::FunctionDecl>()) {
+      // A named function used as a first-class value — emit function_ref
+      // to get a callable pointer (e.g., `applyFn(double, 21)`).
+      auto fn_decl = ref_inst.As<SemIR::FunctionDecl>();
+      auto& function = sem_ir.functions().Get(fn_decl.function_id);
+      std::string func_name = ctx.GetFunctionName(function);
+      // function_ref has ptr type; use PointerType SIL type.
+      auto fn_ref_type = ctx.GetSILType(name_ref->type_id);
+      auto fn_ref_val = AllocValue(ctx, fn_ref_type);
+      auto fn_ref_inst =
+          MakeInst(TinySIL::SILInstKind::FunctionRef, fn_ref_val);
+      fn_ref_inst->function_name = func_name;
+      ctx.emit(std::move(fn_ref_inst));
+      ctx.SetValue(inst_id, fn_ref_val);
     } else {
       auto value = ctx.GetValue(name_ref->value_id);
       if (value.is_valid()) {
@@ -222,19 +251,39 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
   // --- Assignment ---
 
   if (auto assign = inst.TryAs<SemIR::Assign>()) {
-    auto rhs = ctx.GetValue(assign->rhs_id);
+    auto rhs_inst_check = sem_ir.insts().Get(assign->rhs_id);
 
     // For the store destination, we need the raw alloca address (pointer).
-    // If lhs_id is a NameRef pointing to VarStorage, look through it to get
-    // the alloca address directly rather than the loaded value.
+    // Handle several LHS cases:
+    // 1. NameRef → VarStorage: look through to get alloca address.
+    // 2. ArrayElementAddr: its sil_gen value is already a GEP pointer.
+    // 3. FieldAddr: its sil_gen value is a StructElementAddr (GEP pointer).
     SemIR::InstId store_addr_id = assign->lhs_id;
     auto lhs_inst = sem_ir.insts().Get(assign->lhs_id);
     if (auto name_ref = lhs_inst.TryAs<SemIR::NameRef>()) {
       auto ref_inst = sem_ir.insts().Get(name_ref->value_id);
       if (ref_inst.Is<SemIR::VarStorage>()) {
         store_addr_id = name_ref->value_id;
+      } else if (ref_inst.Is<SemIR::InoutParam>()) {
+        // M40: InoutParam is a pointer; store through it.
+        store_addr_id = name_ref->value_id;
       }
     }
+
+    // Special case: assigning ArrayLiteralInit directly to VarStorage.
+    // The check phase resolves array_id to the ALI InstId directly for
+    // subscript operations — no Store is needed. Mark the VarStorage so
+    // the NameRef handler skips emitting a dead Load (which would confuse
+    // the definite-init checker).
+    auto lhs_check = sem_ir.insts().Get(store_addr_id);
+    if (rhs_inst_check.Is<SemIR::ArrayLiteralInit>() &&
+        lhs_check.Is<SemIR::VarStorage>()) {
+      ctx.MarkArrayVar(store_addr_id.index);
+      return;
+    }
+
+    auto rhs = ctx.GetValue(assign->rhs_id);
+    // ArrayElementAddr and FieldAddr: their ctx value IS the address — use directly.
     auto lhs = ctx.GetValue(store_addr_id);
 
     if (rhs.is_valid() && lhs.is_valid()) {
@@ -286,6 +335,39 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
   if (auto int_negate = inst.TryAs<SemIR::IntNegate>()) {
     auto result = EmitBuiltinUnary(ctx, "neg_Int64", int_negate->operand_id,
                                    int_negate->type_id);
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // --- Integer Bitwise Operations ---
+
+  if (auto x = inst.TryAs<SemIR::IntBitwiseAnd>()) {
+    auto result = EmitBuiltinBinary(ctx, "and_Int64", x->lhs_id, x->rhs_id, x->type_id);
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+  if (auto x = inst.TryAs<SemIR::IntBitwiseOr>()) {
+    auto result = EmitBuiltinBinary(ctx, "or_Int64", x->lhs_id, x->rhs_id, x->type_id);
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+  if (auto x = inst.TryAs<SemIR::IntBitwiseXor>()) {
+    auto result = EmitBuiltinBinary(ctx, "xor_Int64", x->lhs_id, x->rhs_id, x->type_id);
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+  if (auto x = inst.TryAs<SemIR::IntBitwiseNot>()) {
+    auto result = EmitBuiltinUnary(ctx, "not_Int64", x->operand_id, x->type_id);
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+  if (auto x = inst.TryAs<SemIR::IntShiftLeft>()) {
+    auto result = EmitBuiltinBinary(ctx, "shl_Int64", x->lhs_id, x->rhs_id, x->type_id);
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+  if (auto x = inst.TryAs<SemIR::IntShiftRight>()) {
+    auto result = EmitBuiltinBinary(ctx, "ashr_Int64", x->lhs_id, x->rhs_id, x->type_id);
     ctx.SetValue(inst_id, result);
     return;
   }
@@ -481,9 +563,41 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
 
   if (auto call = inst.TryAs<SemIR::Call>()) {
     // Get the callee, looking through NameRef wrappers.
-    auto callee_inst = sem_ir.insts().Get(call->callee_id);
+    auto callee_inst_id = call->callee_id;
+    auto callee_inst = sem_ir.insts().Get(callee_inst_id);
+    SemIR::InstId resolved_callee_id = callee_inst_id;
     if (auto name_ref = callee_inst.TryAs<SemIR::NameRef>()) {
-      callee_inst = sem_ir.insts().Get(name_ref->value_id);
+      resolved_callee_id = name_ref->value_id;
+      callee_inst = sem_ir.insts().Get(resolved_callee_id);
+    }
+
+    // M46/indirect call: if callee is a ValueParam with function type (higher-
+    // order function parameter), use its runtime SIL value directly — no static
+    // function_ref.
+    if (callee_inst.Is<SemIR::ValueParam>()) {
+      auto callee_val = ctx.GetValue(resolved_callee_id);
+
+      auto result_type = ctx.GetSILType(call->type_id);
+      auto result = AllocValue(ctx, result_type);
+      auto apply_inst = MakeInst(TinySIL::SILInstKind::Apply, result);
+      if (callee_val.is_valid()) {
+        apply_inst->setOperand(0, callee_val);
+      }
+
+      if (call->args_id.has_value() &&
+          call->args_id != SemIR::InstBlockId::Empty) {
+        auto arg_ids = sem_ir.inst_blocks().Get(call->args_id);
+        for (auto arg_id : arg_ids) {
+          auto arg_val = ctx.GetValue(arg_id);
+          if (arg_val.is_valid()) {
+            apply_inst->operand_list.push_back(arg_val);
+          }
+        }
+      }
+
+      ctx.emit(std::move(apply_inst));
+      ctx.SetValue(inst_id, result);
+      return;
     }
 
     // Resolve function name from FunctionDecl, FunctionType, ClosureExpr,
@@ -758,6 +872,21 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     return;
   }
 
+  // ArrayElementAddr: emit a GEP to get a pointer to arr[index] for store.
+  // Result is an address-type value (pointer to element).
+  if (auto aea = inst.TryAs<SemIR::ArrayElementAddr>()) {
+    auto elem_sil_type = ctx.GetSILType(aea->type_id);
+    auto result = AllocValue(ctx, elem_sil_type.getAddressType());
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "array_element_addr";
+    sil_inst->alloc_type = elem_sil_type;
+    sil_inst->setOperand(0, ctx.GetValue(aea->array_id));
+    sil_inst->setOperand(1, ctx.GetValue(aea->index_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
   // --- Optional Operations ---
 
   if (auto opt_none = inst.TryAs<SemIR::OptionalNone>()) {
@@ -881,6 +1010,130 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     return;
   }
 
+  // M38: IntToString — convert Int to String via runtime call.
+  if (auto its = inst.TryAs<SemIR::IntToString>()) {
+    auto result = EmitBuiltinUnary(ctx, "int_to_string",
+                                   its->operand_id, its->type_id);
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M41: ThrowValue — terminates the block (unreachable in simplified form).
+  if (inst.Is<SemIR::ThrowValue>()) {
+    auto sil_inst = MakeVoidInst(TinySIL::SILInstKind::Unreachable);
+    ctx.emit(std::move(sil_inst));
+    return;
+  }
+
+  // M42: DictInit — initialize a dictionary via runtime call.
+  if (auto di = inst.TryAs<SemIR::DictInit>()) {
+    // Emit as a builtin.  operand_list = interleaved [k0,v0,k1,v1,...].
+    // literal_value = number of key-value pairs.
+    auto result = AllocValue(ctx, ctx.GetSILType(SemIR::ErrorInst::TypeId)
+                                      .getAddressType());
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "dict_init";
+    int64_t pair_count = 0;
+    if (di->entries_id.has_value() &&
+        di->entries_id != SemIR::InstBlockId::Empty) {
+      auto entry_ids = sem_ir.inst_blocks().Get(di->entries_id);
+      pair_count = static_cast<int64_t>(entry_ids.size() / 2);
+      for (auto eid : entry_ids) {
+        auto ev = ctx.GetValue(eid);
+        if (ev.is_valid()) sil_inst->operand_list.push_back(ev);
+      }
+    }
+    sil_inst->literal_value = pair_count;
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M42: DictAccess — subscript a dictionary.
+  if (auto da = inst.TryAs<SemIR::DictAccess>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(da->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "dict_access";
+    sil_inst->setOperand(0, ctx.GetValue(da->dict_id));
+    sil_inst->setOperand(1, ctx.GetValue(da->key_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M44: PrintValue — emit BuiltinInst("print_int" or "print_string").
+  // Use MakeVoidInst so DCE doesn't eliminate the side-effecting call.
+  if (auto pv = inst.TryAs<SemIR::PrintValue>()) {
+    auto sil_inst = MakeVoidInst(TinySIL::SILInstKind::BuiltinInst);
+    if (pv->arg_id.has_value()) {
+      auto arg_val = ctx.GetValue(pv->arg_id);
+      // Detect string type via SemIR type_id.
+      bool is_string = false;
+      auto arg_semtype = sem_ir.insts().Get(pv->arg_id).type_id();
+      if (arg_semtype.has_value()) {
+        auto string_ti = sem_ir.types().GetTypeInstId(arg_semtype);
+        if (string_ti.has_value() &&
+            sem_ir.insts().Get(string_ti).Is<SemIR::StringType>()) {
+          is_string = true;
+        }
+      }
+      sil_inst->builtin_name = is_string ? "print_string" : "print_int";
+      if (arg_val.is_valid()) {
+        sil_inst->setOperand(0, arg_val);
+      }
+    } else {
+      sil_inst->builtin_name = "print_int";
+    }
+    ctx.emit(std::move(sil_inst));
+    // No value binding needed (void result).
+    return;
+  }
+
+  // M45: StringEq — call __tinyswift_string_eq at runtime.
+  if (auto seq = inst.TryAs<SemIR::StringEq>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(seq->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "string_eq";
+    sil_inst->setOperand(0, ctx.GetValue(seq->lhs_id));
+    sil_inst->setOperand(1, ctx.GetValue(seq->rhs_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M45: StringNeq — call __tinyswift_string_eq then invert.
+  if (auto sneq = inst.TryAs<SemIR::StringNeq>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(sneq->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "string_neq";
+    sil_inst->setOperand(0, ctx.GetValue(sneq->lhs_id));
+    sil_inst->setOperand(1, ctx.GetValue(sneq->rhs_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M40: InoutParam — like ValueParam, but tracks as pointer.
+  if (auto inout_param = inst.TryAs<SemIR::InoutParam>()) {
+    if (!ctx.HasValue(inst_id)) {
+      // Pointer type for inout: address-typed SIL value.
+      auto ptr_type = ctx.GetSILType(inout_param->type_id).getAddressType();
+      auto result = AllocValue(ctx, ptr_type);
+      ctx.SetValue(inst_id, result);
+    }
+    return;
+  }
+
+  // M40: AddressOf — pass the raw VarStorage alloca pointer.
+  if (auto addr_of = inst.TryAs<SemIR::AddressOf>()) {
+    // The operand_id is a VarStorage — its sil_gen value is the alloca ptr.
+    auto ptr_val = ctx.GetValue(addr_of->operand_id);
+    if (ptr_val.is_valid()) {
+      ctx.SetValue(inst_id, ptr_val);
+    }
+    return;
+  }
+
   // Fall through for unknown instructions — emit debug_value as marker.
   // In a production compiler we'd assert here, but this allows us to
   // make progress on the rest of the pipeline.
@@ -922,6 +1175,11 @@ auto EmitFunctionBody(Context& ctx, SemIR::FunctionId func_id,
         auto param_type = ctx.GetSILType(value_param->type_id);
         sil_fn->type.param_types.push_back(param_type);
         sil_fn->type.param_conventions.push_back(TinySIL::Ownership::Owned);
+      } else if (auto inout_param = param_inst.TryAs<SemIR::InoutParam>()) {
+        // M40: inout params are passed as pointer (address type).
+        auto param_type = ctx.GetSILType(inout_param->type_id).getAddressType();
+        sil_fn->type.param_types.push_back(param_type);
+        sil_fn->type.param_conventions.push_back(TinySIL::Ownership::Owned);
       }
     }
   }
@@ -944,6 +1202,12 @@ auto EmitFunctionBody(Context& ctx, SemIR::FunctionId func_id,
         auto arg_val = AllocValue(ctx, param_type);
         entry_bb->args.push_back(arg_val);
         ctx.SetValue(param_id, arg_val);
+      } else if (auto inout_param = param_inst.TryAs<SemIR::InoutParam>()) {
+        // M40: inout param is a pointer argument.
+        auto ptr_type = ctx.GetSILType(inout_param->type_id).getAddressType();
+        auto arg_val = AllocValue(ctx, ptr_type);
+        entry_bb->args.push_back(arg_val);
+        ctx.SetValue(param_id, arg_val);
       }
     }
   }
@@ -962,14 +1226,15 @@ auto EmitFunctionBody(Context& ctx, SemIR::FunctionId func_id,
     }
 
     // Ensure the block has a terminator.
-    if (!bb->is_terminated() && !bb->insts.empty()) {
-      // Add an unreachable as fallback.
-      auto unreachable = MakeVoidInst(TinySIL::SILInstKind::Unreachable);
-      bb->addInst(std::move(unreachable));
-    } else if (bb->insts.empty()) {
-      // Empty block: add unreachable.
-      auto unreachable = MakeVoidInst(TinySIL::SILInstKind::Unreachable);
-      bb->addInst(std::move(unreachable));
+    if (!bb->is_terminated()) {
+      if (sil_fn->type.is_void_return) {
+        // Void function with no explicit return: emit a void return.
+        auto ret_inst = MakeVoidInst(TinySIL::SILInstKind::ReturnInst);
+        bb->addInst(std::move(ret_inst));
+      } else {
+        auto unreachable = MakeVoidInst(TinySIL::SILInstKind::Unreachable);
+        bb->addInst(std::move(unreachable));
+      }
     }
   }
 

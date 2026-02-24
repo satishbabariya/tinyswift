@@ -153,5 +153,35 @@ TINYSWIFT_SEM_IR_INST_KIND(ComputedPropertyDecl)
 // Array literals and subscript access
 TINYSWIFT_SEM_IR_INST_KIND(ArrayLiteralInit)
 TINYSWIFT_SEM_IR_INST_KIND(ArrayAccess)
+TINYSWIFT_SEM_IR_INST_KIND(ArrayElementAddr)
+
+// Bitwise integer operators
+TINYSWIFT_SEM_IR_INST_KIND(IntBitwiseAnd)
+TINYSWIFT_SEM_IR_INST_KIND(IntBitwiseOr)
+TINYSWIFT_SEM_IR_INST_KIND(IntBitwiseXor)
+TINYSWIFT_SEM_IR_INST_KIND(IntBitwiseNot)
+TINYSWIFT_SEM_IR_INST_KIND(IntShiftLeft)
+TINYSWIFT_SEM_IR_INST_KIND(IntShiftRight)
+
+// String conversion (M38)
+TINYSWIFT_SEM_IR_INST_KIND(IntToString)
+
+// Error handling (M41)
+TINYSWIFT_SEM_IR_INST_KIND(ThrowValue)
+
+// Dictionary operations (M42)
+TINYSWIFT_SEM_IR_INST_KIND(DictInit)
+TINYSWIFT_SEM_IR_INST_KIND(DictAccess)
+
+// Print built-in (M44)
+TINYSWIFT_SEM_IR_INST_KIND(PrintValue)
+
+// String comparison operations (M45)
+TINYSWIFT_SEM_IR_INST_KIND(StringEq)
+TINYSWIFT_SEM_IR_INST_KIND(StringNeq)
+
+// Inout parameters (M40)
+TINYSWIFT_SEM_IR_INST_KIND(InoutParam)
+TINYSWIFT_SEM_IR_INST_KIND(AddressOf)
 
 #undef TINYSWIFT_SEM_IR_INST_KIND

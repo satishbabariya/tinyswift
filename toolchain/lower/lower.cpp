@@ -61,6 +61,9 @@ static auto BuildFunctionType(Context& context,
         if (!param_type->isVoidTy()) {
           param_types.push_back(param_type);
         }
+      } else if (param_inst.Is<SemIR::InoutParam>()) {
+        // M40: inout params are passed as opaque pointers.
+        param_types.push_back(llvm::PointerType::get(context.llvm_context(), 0));
       }
     }
   }
@@ -112,6 +115,12 @@ static auto LowerFunctionBody(Context& context, SemIR::FunctionId func_id,
     for (auto param_id : param_ids) {
       auto param_inst = sem_ir.insts().Get(param_id);
       if (auto value_param = param_inst.TryAs<SemIR::ValueParam>()) {
+        if (arg_index < llvm_fn->arg_size()) {
+          context.SetLocal(param_id, llvm_fn->getArg(arg_index));
+          ++arg_index;
+        }
+      } else if (param_inst.Is<SemIR::InoutParam>()) {
+        // M40: inout param is a pointer argument — map directly, no load.
         if (arg_index < llvm_fn->arg_size()) {
           context.SetLocal(param_id, llvm_fn->getArg(arg_index));
           ++arg_index;
@@ -427,8 +436,22 @@ auto LowerSILInst(Context& context,
 
       auto* fn = llvm::dyn_cast<llvm::Function>(callee);
       if (fn) {
+        // Direct (static) call.
         auto* call = builder.CreateCall(fn, args);
         if (!call->getType()->isVoidTy()) {
+          setSILValue(inst.result, call);
+        }
+      } else {
+        // Indirect call through a function pointer (e.g., higher-order param).
+        // Build function type from arg types + result type.
+        llvm::SmallVector<llvm::Type*> param_types;
+        for (auto* a : args) param_types.push_back(a->getType());
+        auto* ret_type = GetLLVMTypeForSIL(context, inst.result.type);
+        if (!ret_type || ret_type->isVoidTy()) ret_type = builder.getInt64Ty();
+        auto* fty =
+            llvm::FunctionType::get(ret_type, param_types, /*isVarArg=*/false);
+        auto* call = builder.CreateCall(fty, callee, args);
+        if (!fty->getReturnType()->isVoidTy()) {
           setSILValue(inst.result, call);
         }
       }
@@ -587,6 +610,31 @@ auto LowerSILInst(Context& context,
         auto* rhs = getSILValue(inst.operands[1]);
         if (lhs && rhs) setSILValue(inst.result, builder.CreateOr(lhs, rhs));
 
+      // Bitwise integer operations.
+      } else if (name == "and_Int64") {
+        auto* lhs = getSILValue(inst.operands[0]);
+        auto* rhs = getSILValue(inst.operands[1]);
+        if (lhs && rhs) setSILValue(inst.result, builder.CreateAnd(lhs, rhs));
+      } else if (name == "or_Int64") {
+        auto* lhs = getSILValue(inst.operands[0]);
+        auto* rhs = getSILValue(inst.operands[1]);
+        if (lhs && rhs) setSILValue(inst.result, builder.CreateOr(lhs, rhs));
+      } else if (name == "xor_Int64") {
+        auto* lhs = getSILValue(inst.operands[0]);
+        auto* rhs = getSILValue(inst.operands[1]);
+        if (lhs && rhs) setSILValue(inst.result, builder.CreateXor(lhs, rhs));
+      } else if (name == "shl_Int64") {
+        auto* lhs = getSILValue(inst.operands[0]);
+        auto* rhs = getSILValue(inst.operands[1]);
+        if (lhs && rhs) setSILValue(inst.result, builder.CreateShl(lhs, rhs));
+      } else if (name == "ashr_Int64") {
+        auto* lhs = getSILValue(inst.operands[0]);
+        auto* rhs = getSILValue(inst.operands[1]);
+        if (lhs && rhs) setSILValue(inst.result, builder.CreateAShr(lhs, rhs));
+      } else if (name == "not_Int64") {
+        auto* op = getSILValue(inst.operands[0]);
+        if (op) setSILValue(inst.result, builder.CreateNot(op));
+
       // Conversions.
       } else if (name == "sitofp_Int64_FPIEEE64") {
         auto* op = getSILValue(inst.operands[0]);
@@ -626,6 +674,160 @@ auto LowerSILInst(Context& context,
           auto* gep = builder.CreateGEP(elem_type, array_ptr, {index_val});
           auto* loaded = builder.CreateLoad(elem_type, gep);
           setSILValue(inst.result, loaded);
+        }
+      } else if (name == "array_element_addr") {
+        // GEP to produce a pointer to arr[index] for subsequent store.
+        auto* array_ptr = getSILValue(inst.operands[0]);
+        auto* index_val = getSILValue(inst.operands[1]);
+        if (array_ptr && index_val) {
+          auto* elem_type = GetLLVMTypeForSIL(context, inst.alloc_type);
+          if (!elem_type || elem_type->isVoidTy()) elem_type = builder.getInt64Ty();
+          auto* gep = builder.CreateGEP(elem_type, array_ptr, {index_val});
+          setSILValue(inst.result, gep);
+        }
+
+      // M38: String operations.
+      } else if (name == "string_concat") {
+        auto* lhs = getSILValue(inst.operands[0]);
+        auto* rhs = getSILValue(inst.operands[1]);
+        if (lhs && rhs) {
+          auto* fn_type = llvm::FunctionType::get(
+              builder.getPtrTy(),
+              {builder.getPtrTy(), builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_string_concat", fn_type);
+          setSILValue(inst.result, builder.CreateCall(callee, {lhs, rhs}));
+        }
+      } else if (name == "int_to_string") {
+        auto* val = getSILValue(inst.operands[0]);
+        if (val) {
+          // Widen to i64 if needed (e.g. i1 from Bool).
+          if (!val->getType()->isIntegerTy(64)) {
+            val = builder.CreateSExt(val, builder.getInt64Ty());
+          }
+          auto* fn_type = llvm::FunctionType::get(
+              builder.getPtrTy(), {builder.getInt64Ty()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_int_to_string", fn_type);
+          setSILValue(inst.result, builder.CreateCall(callee, {val}));
+        }
+
+      // M44: print() built-in.
+      } else if (name == "print_int") {
+        auto* val = getSILValue(inst.operands[0]);
+        if (val) {
+          // Widen to i64 if needed (e.g. i1 from Bool).
+          if (!val->getType()->isIntegerTy(64)) {
+            val = builder.CreateSExt(val, builder.getInt64Ty());
+          }
+          auto* fn_type = llvm::FunctionType::get(
+              builder.getVoidTy(), {builder.getInt64Ty()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_print_int", fn_type);
+          builder.CreateCall(callee, {val});
+        }
+      } else if (name == "print_string") {
+        auto* val = getSILValue(inst.operands[0]);
+        if (val) {
+          auto* fn_type = llvm::FunctionType::get(
+              builder.getVoidTy(), {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_print_string", fn_type);
+          builder.CreateCall(callee, {val});
+        }
+
+      // M45: String equality.
+      } else if (name == "string_eq") {
+        auto* lhs = getSILValue(inst.operands[0]);
+        auto* rhs = getSILValue(inst.operands[1]);
+        if (lhs && rhs) {
+          auto* fn_type = llvm::FunctionType::get(
+              builder.getInt1Ty(),
+              {builder.getPtrTy(), builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_string_eq", fn_type);
+          auto* cmp = builder.CreateCall(callee, {lhs, rhs});
+          // Zext to i64 for Bool storage convention.
+          setSILValue(inst.result, builder.CreateZExt(cmp, builder.getInt64Ty()));
+        }
+      } else if (name == "string_neq") {
+        auto* lhs = getSILValue(inst.operands[0]);
+        auto* rhs = getSILValue(inst.operands[1]);
+        if (lhs && rhs) {
+          auto* fn_type = llvm::FunctionType::get(
+              builder.getInt1Ty(),
+              {builder.getPtrTy(), builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_string_eq", fn_type);
+          auto* cmp = builder.CreateCall(callee, {lhs, rhs});
+          // Invert and zext to i64.
+          auto* inv = builder.CreateNot(cmp);
+          setSILValue(inst.result, builder.CreateZExt(inv, builder.getInt64Ty()));
+        }
+
+      // M42: Dictionary operations.
+      } else if (name == "dict_init") {
+        // operand_list layout: interleaved [key0, val0, key1, val1, ...]
+        // literal_value = number of key-value pairs.
+        int64_t count = inst.literal_value;
+        if (count <= 0) break;
+        // Build two stack arrays: keys (ptr[]) and values (i64[]).
+        auto* count_val = llvm::ConstantInt::get(builder.getInt64Ty(), count);
+        auto* keys_alloca = builder.CreateAlloca(
+            builder.getPtrTy(), count_val, "dict_keys");
+        auto* vals_alloca = builder.CreateAlloca(
+            builder.getInt64Ty(), count_val, "dict_vals");
+        for (int64_t i = 0; i < count; ++i) {
+          size_t ki = static_cast<size_t>(i * 2);      // key at even index
+          size_t vi = static_cast<size_t>(i * 2 + 1);  // val at odd index
+          if (ki < inst.operand_list.size()) {
+            auto* k = getSILValue(inst.operand_list[ki]);
+            if (k) {
+              auto* gep = builder.CreateGEP(
+                  builder.getPtrTy(), keys_alloca,
+                  llvm::ConstantInt::get(builder.getInt64Ty(), i));
+              builder.CreateStore(k, gep);
+            }
+          }
+          if (vi < inst.operand_list.size()) {
+            auto* v = getSILValue(inst.operand_list[vi]);
+            if (v) {
+              // Widen to i64 if needed.
+              if (v->getType()->isIntegerTy() &&
+                  !v->getType()->isIntegerTy(64)) {
+                v = builder.CreateSExt(v, builder.getInt64Ty());
+              }
+              auto* gep = builder.CreateGEP(
+                  builder.getInt64Ty(), vals_alloca,
+                  llvm::ConstantInt::get(builder.getInt64Ty(), i));
+              builder.CreateStore(v, gep);
+            }
+          }
+        }
+        auto* fn_type = llvm::FunctionType::get(
+            builder.getPtrTy(),
+            {builder.getInt64Ty(), builder.getPtrTy(), builder.getPtrTy()},
+            false);
+        auto callee = context.module().getOrInsertFunction(
+            "__tinyswift_dict_create", fn_type);
+        setSILValue(inst.result,
+                    builder.CreateCall(callee, {count_val, keys_alloca,
+                                                vals_alloca}));
+      } else if (name == "dict_access") {
+        // Returns Optional<Int> = { i1, i64 } via __tinyswift_dict_get_str_int.
+        auto* dict_ptr = getSILValue(inst.operands[0]);
+        auto* key_ptr  = getSILValue(inst.operands[1]);
+        if (dict_ptr && key_ptr) {
+          // Return type is {i1, i64} (Optional<Int>).
+          llvm::SmallVector<llvm::Type*, 2> opt_fields = {builder.getInt1Ty(),
+                                                           builder.getInt64Ty()};
+          auto* opt_ty = llvm::StructType::get(context.llvm_context(),
+                                               llvm::ArrayRef<llvm::Type*>(opt_fields));
+          auto* fn_type = llvm::FunctionType::get(
+              opt_ty, {builder.getPtrTy(), builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_dict_get_str_int", fn_type);
+          setSILValue(inst.result, builder.CreateCall(callee, {dict_ptr, key_ptr}));
         }
       }
       break;

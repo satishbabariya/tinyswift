@@ -7,6 +7,7 @@
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Allocator.h"
 #include "toolchain/base/canonical_value_store.h"
 #include "toolchain/base/int.h"
 #include "toolchain/base/mem_usage.h"
@@ -49,6 +50,13 @@ class SharedValueStores : public Yaml::Printable<SharedValueStores> {
     return string_literals_;
   }
 
+  // Allocates a persistent copy of a string and returns a stable StringRef.
+  // Use this when string data comes from a local buffer (e.g. processed
+  // string literals with escape sequences) that won't outlive the store.
+  auto AllocateString(llvm::StringRef s) -> llvm::StringRef {
+    return s.copy(string_storage_);
+  }
+
   auto OutputYaml(std::optional<llvm::StringRef> filename = std::nullopt) const
       -> Yaml::OutputMapping {
     return Yaml::OutputMapping([&, filename](Yaml::OutputMapping::Map map) {
@@ -85,6 +93,12 @@ class SharedValueStores : public Yaml::Printable<SharedValueStores> {
 
   IdentifierStore identifiers_;
   StringLiteralStore string_literals_;
+
+  // Persistent storage for processed string literal content (e.g. strings
+  // with escape sequences that are assembled into a local buffer during
+  // lexing). StringRefs stored in string_literals_ must point here (or into
+  // the immutable source text) to remain valid for the lifetime of the store.
+  llvm::BumpPtrAllocator string_storage_;
 };
 
 }  // namespace TinySwift

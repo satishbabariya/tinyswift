@@ -1177,6 +1177,15 @@ struct StringInterpolationExpr {
   Lex::TokenIndex token;
 };
 
+// M40: `&varName` — address-of prefix expression.
+struct AddressOfExpr {
+  static constexpr auto Kind = NodeKind::AddressOfExpr.Define(
+      {.category = NodeCategory::Expr, .child_count = 1});
+
+  Lex::TokenIndex token;
+  AnyExprId operand;
+};
+
 // Key path
 struct KeyPathComponent {
   static constexpr auto Kind = NodeKind::KeyPathComponent.Define(
@@ -1204,6 +1213,10 @@ struct TypeAnnotation {
   Lex::ColonTokenIndex token;
   AnyTypeExprId type;
 };
+
+// M40: `inout` keyword marker inside a type annotation.
+using InoutMarker =
+    LeafNode<NodeKind::InoutMarker, Lex::TokenIndex, NodeCategory::None>;
 
 // `Int`, `String`, `MyType`
 using IdentifierType =

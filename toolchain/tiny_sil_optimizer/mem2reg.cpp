@@ -40,15 +40,16 @@ auto RunMem2Reg(TinySIL::SILFunction& function) -> void {
       continue;
     }
 
-    // Second pass: track stores and replace loads.
-    // For simplicity, only promote if:
-    // 1. There is exactly one store to the alloc_stack in this block
-    // 2. All loads come after the store
-    // 3. No address escapes (not passed to function calls)
-    llvm::DenseMap<int32_t, TinySIL::SILValue> last_stored_value;
+    // Second pass: single forward scan to track stores and promote loads.
+    // This must be a SINGLE pass so that each load is promoted to the value
+    // stored MOST RECENTLY BEFORE that load — not the final stored value.
+    // (Using separate "scan all stores" + "scan all loads" passes is wrong
+    // for compound assignments like x += 5; x -= 3 where the same alloca is
+    // stored multiple times.)
+    llvm::DenseMap<int32_t, TinySIL::SILValue> current_value;
     llvm::DenseSet<int32_t> escaped;
 
-    for (const auto& inst : bb->insts) {
+    for (auto& inst : bb->insts) {
       // Check for address escapes (used as function argument).
       if (inst->kind == TinySIL::SILInstKind::Apply) {
         for (const auto& arg : inst->operand_list) {
@@ -58,25 +59,22 @@ auto RunMem2Reg(TinySIL::SILFunction& function) -> void {
         }
       }
 
-      // Track stores.
+      // Track stores: update the current value for this alloca.
       if (inst->kind == TinySIL::SILInstKind::Store) {
         auto dst = inst->operands[1];
         auto src = inst->operands[0];
         if (dst.is_valid() && src.is_valid() && alloc_ids.count(dst.id) &&
             !escaped.count(dst.id)) {
-          last_stored_value[dst.id] = src;
+          current_value[dst.id] = src;
         }
       }
-    }
 
-    // Third pass: replace loads from promoted alloc_stacks.
-    for (auto& inst : bb->insts) {
+      // Promote loads: use the current (most recently stored) value.
       if (inst->kind == TinySIL::SILInstKind::Load) {
         auto addr = inst->operands[0];
         if (addr.is_valid()) {
-          auto it = last_stored_value.find(addr.id);
-          if (it != last_stored_value.end() && !escaped.count(addr.id)) {
-            // Record the promotion: load result -> stored value.
+          auto it = current_value.find(addr.id);
+          if (it != current_value.end() && !escaped.count(addr.id)) {
             if (inst->result.is_valid()) {
               promoted_values[inst->result.id] = it->second;
             }

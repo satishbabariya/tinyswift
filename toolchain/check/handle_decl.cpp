@@ -56,7 +56,8 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
       auto ident_id = context.identifiers().Add(text);
       auto elem_name_id = SemIR::NameId::ForIdentifier(ident_id);
 
-      // Infer element type from the TupleInit's element at index i.
+      // Infer element type from the TupleInit's element at index i,
+      // or from the TupleType's element_types_id if RHS is a function call.
       SemIR::TypeId elem_type_id = SemIR::ErrorInst::TypeId;
       if (init_id.has_value()) {
         auto init_inst = context.insts().Get(init_id);
@@ -64,6 +65,20 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
           auto elem_ids = context.inst_blocks().Get(ti->elements_id);
           if (i < elem_ids.size()) {
             elem_type_id = context.insts().Get(elem_ids[i]).type_id();
+          }
+        } else {
+          // RHS is a function call returning a tuple; get element type from
+          // the TupleType instruction's element_types_id block.
+          auto type_ti = context.types().GetTypeInstId(init_inst.type_id());
+          if (type_ti.has_value()) {
+            if (auto tt =
+                    context.insts().Get(type_ti).TryAs<SemIR::TupleType>()) {
+              auto elems = context.inst_blocks().Get(tt->element_types_id);
+              if (i < elems.size()) {
+                elem_type_id = context.types().GetTypeIdForTypeInstId(
+                    SemIR::TypeInstId::UnsafeMake(elems[i]));
+              }
+            }
           }
         }
       }
@@ -220,6 +235,100 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
 auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
   auto children = context.children_source_order(node_id);
 
+  // Pre-scan: detect tuple pattern destructuring `var (x, y) = expr`.
+  // Children in source order: VariableIntroducer, IdentifierPattern*, TuplePattern,
+  // <RHS expr>, VariableInitializer.
+  bool is_tuple_pattern = false;
+  llvm::SmallVector<Parse::NodeId> tuple_elem_names;
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::TuplePattern) {
+      is_tuple_pattern = true;
+      break;
+    } else if (child_kind == Parse::NodeKind::IdentifierPattern) {
+      tuple_elem_names.push_back(child);
+    }
+  }
+
+  if (is_tuple_pattern) {
+    // Evaluate the RHS expression (the Expr child after TuplePattern).
+    SemIR::InstId init_id = SemIR::InstId::None;
+    bool past_tuple_pattern = false;
+    for (auto child : children) {
+      auto child_kind = context.node_kind(child);
+      if (child_kind == Parse::NodeKind::TuplePattern) {
+        past_tuple_pattern = true;
+        continue;
+      }
+      if (!past_tuple_pattern) continue;
+      if (child_kind == Parse::NodeKind::VariableInitializer) continue;
+      if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+        init_id = HandleExpr(context, child);
+        break;
+      }
+    }
+
+    // For each element name at index i, emit TupleAccess + VarStorage + Assign.
+    for (size_t i = 0; i < tuple_elem_names.size(); ++i) {
+      auto elem_name_node = tuple_elem_names[i];
+      auto token = context.node_token(elem_name_node);
+      auto text = context.token_text(token);
+      auto ident_id = context.identifiers().Add(text);
+      auto elem_name_id = SemIR::NameId::ForIdentifier(ident_id);
+
+      // Infer element type from the TupleInit's element at index i,
+      // or from the TupleType's element_types_id if RHS is a function call.
+      SemIR::TypeId elem_type_id = SemIR::ErrorInst::TypeId;
+      if (init_id.has_value()) {
+        auto init_inst = context.insts().Get(init_id);
+        if (auto ti = init_inst.TryAs<SemIR::TupleInit>()) {
+          auto elem_ids = context.inst_blocks().Get(ti->elements_id);
+          if (i < elem_ids.size()) {
+            elem_type_id = context.insts().Get(elem_ids[i]).type_id();
+          }
+        } else {
+          // RHS is a function call returning a tuple; get element type from
+          // the TupleType instruction's element_types_id block.
+          auto type_ti = context.types().GetTypeInstId(init_inst.type_id());
+          if (type_ti.has_value()) {
+            if (auto tt =
+                    context.insts().Get(type_ti).TryAs<SemIR::TupleType>()) {
+              auto elems = context.inst_blocks().Get(tt->element_types_id);
+              if (i < elems.size()) {
+                elem_type_id = context.types().GetTypeIdForTypeInstId(
+                    SemIR::TypeInstId::UnsafeMake(elems[i]));
+              }
+            }
+          }
+        }
+      }
+
+      // Emit TupleAccess for element i.
+      auto elem_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(elem_name_node),
+          SemIR::TupleAccess{.type_id = elem_type_id,
+                             .tuple_id = init_id,
+                             .index = SemIR::ElementIndex(
+                                 static_cast<int32_t>(i))}));
+
+      // Emit VarStorage (mutable binding).
+      auto var_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(elem_name_node),
+          SemIR::VarStorage{.type_id = elem_type_id,
+                            .pattern_id = SemIR::AbsoluteInstId(
+                                SemIR::InstId::None)}));
+
+      // Assign element value to var storage.
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(elem_name_node),
+          SemIR::Assign{.lhs_id = var_id, .rhs_id = elem_id}));
+
+      // Register name in scope as VarStorage (mutable).
+      context.AddNameToScope(elem_name_id, var_id);
+    }
+    return;
+  }
+
   SemIR::NameId name_id = SemIR::NameId::None;
   SemIR::TypeId type_id = SemIR::TypeId::None;
   SemIR::InstId init_id = SemIR::InstId::None;
@@ -326,6 +435,15 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
     context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
         SemIR::Assign{.lhs_id = var_id, .rhs_id = init_id}));
+
+    // Track array var: if initializer is ArrayLiteralInit, record the mapping
+    // so subscript access can find the real array alloca.
+    if (init_id.has_value()) {
+      auto init_inst = context.insts().Get(init_id);
+      if (init_inst.Is<SemIR::ArrayLiteralInit>()) {
+        context.SetArrayVarInit(var_id, init_id);
+      }
+    }
   }
 
   // Register name in scope.

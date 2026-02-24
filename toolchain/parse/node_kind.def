@@ -293,6 +293,9 @@ TINYSWIFT_PARSE_NODE_KIND(DictionaryExprEntry)
 
 TINYSWIFT_PARSE_NODE_KIND(StringInterpolationExpr)
 
+// M40: Address-of expression `&n`
+TINYSWIFT_PARSE_NODE_KIND(AddressOfExpr)
+
 TINYSWIFT_PARSE_NODE_KIND(KeyPathExpr)
 TINYSWIFT_PARSE_NODE_KIND(KeyPathComponent)
 
@@ -301,6 +304,9 @@ TINYSWIFT_PARSE_NODE_KIND(KeyPathComponent)
 // ============================================================================
 
 TINYSWIFT_PARSE_NODE_KIND(TypeAnnotation)
+
+// M40: inout marker in type annotation (`:inout Int`)
+TINYSWIFT_PARSE_NODE_KIND(InoutMarker)
 TINYSWIFT_PARSE_NODE_KIND(IdentifierType)
 TINYSWIFT_PARSE_NODE_KIND(OptionalType)
 TINYSWIFT_PARSE_NODE_KIND(ImplicitlyUnwrappedOptionalType)

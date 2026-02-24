@@ -23,14 +23,25 @@ struct FunctionSignature {
   llvm::SmallVector<std::pair<SemIR::NameId, SemIR::TypeId>> params;
   // Default value parse node for each param (Parse::NodeId::None if no default).
   llvm::SmallVector<Parse::NodeId> param_defaults;
+  // Whether each param is inout (M40).
+  llvm::SmallVector<bool> param_is_inout;
   SemIR::TypeId return_type_id = SemIR::TypeId::None;
   Parse::NodeId name_node_id = Parse::NodeId::None;
+  // Whether the function is declared with `throws` (M41).
+  bool is_throwing = false;
 };
 
 auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
     -> FunctionSignature {
   FunctionSignature sig;
   auto children = context.children_source_order(sig_node_id);
+
+  // Type nodes that appear as DIRECT children of FunctionDefinitionStart
+  // between ExplicitParamList and ReturnType are element types for a tuple
+  // return type like `-> (Int, Int)`. In the parse tree, `(Int, Int)` stores
+  // TupleType as the only child of ReturnType (a leaf marker), while the
+  // element types Int, Int are siblings of ReturnType within FunctionDefinitionStart.
+  llvm::SmallVector<Parse::NodeId> pre_return_type_nodes;
 
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
@@ -46,23 +57,57 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
       auto text = context.token_text(token);
       auto ident_id = context.identifiers().Add(text);
       sig.name_id = SemIR::NameId::ForIdentifier(ident_id);
+      continue;
     }
 
     if (child_kind == Parse::NodeKind::ExplicitParamList) {
       // Process parameters in source order.
+      // NOTE: For `_ x: inout Int`, the parse tree structure is:
+      //   ExplicitParamList
+      //     ExplicitParamListStart
+      //     ExternalParamName("_")   <- sibling
+      //     IdentifierPattern("x")   <- sibling of FunctionParam (NOT child)
+      //     FunctionParam (children: InoutMarker, TypeAnnotation)
+      // For `_ x: Int`, the structure is:
+      //   ExplicitParamList
+      //     ExplicitParamListStart
+      //     ExternalParamName("_")   <- sibling
+      //     FunctionParam (children: IdentifierPattern, TypeAnnotation)
+      // So we track a pending sibling IdentifierPattern for the next FunctionParam.
       auto param_children = context.children_source_order(child);
+      SemIR::NameId pending_sibling_name = SemIR::NameId::None;
+
       for (auto pc : param_children) {
         auto pc_kind = context.node_kind(pc);
+
+        // Track sibling IdentifierPattern as the pending internal param name.
+        if (pc_kind == Parse::NodeKind::IdentifierPattern) {
+          auto token = context.node_token(pc);
+          auto text = context.token_text(token);
+          auto ident_id = context.identifiers().Add(text);
+          pending_sibling_name = SemIR::NameId::ForIdentifier(ident_id);
+          continue;
+        }
+
         if (pc_kind == Parse::NodeKind::FunctionParam) {
-          // FunctionParam has name, type annotation, and optional default.
-          SemIR::NameId param_name_id = SemIR::NameId::None;
+          // FunctionParam has children: InoutMarker? + TypeAnnotation,
+          // and optional IdentifierPattern as a CHILD (for non-inout params)
+          // or as a SIBLING (captured in pending_sibling_name, for inout params).
+          SemIR::NameId param_name_id = pending_sibling_name;
           SemIR::TypeId param_type_id = SemIR::ErrorInst::TypeId;
           Parse::NodeId default_node = Parse::NodeId::None;
+          bool is_inout = false;  // M40: track inout modifier
+          pending_sibling_name = SemIR::NameId::None;  // consume pending name
 
           auto fp_children = context.children_source_order(pc);
           for (auto fpc : fp_children) {
             auto fpc_kind = context.node_kind(fpc);
-            if (fpc_kind == Parse::NodeKind::ExternalParamName) {
+            if (fpc_kind == Parse::NodeKind::InoutMarker) {
+              // M40: InoutMarker is a direct child of FunctionParam for
+              // `_ x: inout T` (because FunctionParam.child_count=2 takes
+              // InoutMarker + TypeAnnotation, leaving IdentifierPattern as sibling).
+              is_inout = true;
+            } else if (fpc_kind == Parse::NodeKind::ExternalParamName) {
               // External label (`_` or `label`) — skip for body name.
             } else if (fpc_kind == Parse::NodeKind::IdentifierNameNotBeforeParams ||
                        fpc_kind == Parse::NodeKind::IdentifierNameBeforeParams) {
@@ -72,7 +117,8 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
               auto ident_id = context.identifiers().Add(text);
               param_name_id = SemIR::NameId::ForIdentifier(ident_id);
             } else if (fpc_kind == Parse::NodeKind::IdentifierPattern) {
-              // Internal name after external label (`_ n: Type` or `label n: Type`).
+              // Internal name as direct child of FunctionParam
+              // (for non-inout params like `_ x: Int`).
               auto token = context.node_token(fpc);
               auto text = context.token_text(token);
               auto ident_id = context.identifiers().Add(text);
@@ -87,29 +133,76 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
             }
           }
 
-          // The token of the FunctionParam node itself is the parameter name.
+          // Fallback: use the FunctionParam's own token as the param name.
           if (!param_name_id.has_value()) {
             auto token = context.node_token(pc);
             auto text = context.token_text(token);
-            auto ident_id = context.identifiers().Add(text);
-            param_name_id = SemIR::NameId::ForIdentifier(ident_id);
+            if (text != "_") {  // skip wildcard
+              auto ident_id = context.identifiers().Add(text);
+              param_name_id = SemIR::NameId::ForIdentifier(ident_id);
+            }
           }
 
           sig.params.push_back({param_name_id, param_type_id});
           sig.param_defaults.push_back(default_node);
+          sig.param_is_inout.push_back(is_inout);
         }
       }
+      continue;
     }
 
     if (child_kind == Parse::NodeKind::ReturnType) {
       auto rt_children = context.children_source_order(child);
+
+      // Check if the ReturnType's child is a TupleType node (tuple return).
+      // If so, `pre_return_type_nodes` holds the element types.
+      bool has_tuple_child = false;
       for (auto rtc : rt_children) {
-        if (context.node_kind(rtc).category().HasAnyOf(
-                Parse::NodeCategory::Type)) {
-          sig.return_type_id = HandleTypeExpr(context, rtc);
+        if (context.node_kind(rtc) == Parse::NodeKind::TupleType) {
+          has_tuple_child = true;
           break;
         }
       }
+
+      if (has_tuple_child && !pre_return_type_nodes.empty()) {
+        // Build a TupleType with properly populated element_types_id.
+        // Each pre_return_type_node is an element type (e.g., IdentifierType(Int)).
+        llvm::SmallVector<SemIR::InstId> elem_type_insts;
+        for (auto tn : pre_return_type_nodes) {
+          auto et_id = HandleTypeExpr(context, tn);
+          auto et_inst_id = context.types().GetTypeInstId(et_id);
+          if (et_inst_id.has_value()) {
+            // TypeInstId IS-A InstId (inherits), so store directly.
+            elem_type_insts.push_back(et_inst_id);
+          }
+        }
+        auto block = context.inst_blocks().AddPlaceholder();
+        context.inst_blocks().ReplacePlaceholder(
+            block, llvm::ArrayRef<SemIR::InstId>(elem_type_insts));
+        auto tt_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+            SemIR::LocId(child),
+            SemIR::TupleType{.type_id = SemIR::TypeType::TypeId,
+                             .element_types_id = block}));
+        sig.return_type_id = SemIR::TypeId::ForTypeConstant(
+            SemIR::ConstantId::ForConcreteConstant(tt_id));
+      } else {
+        // Non-tuple return type: use the first Type child of ReturnType.
+        for (auto rtc : rt_children) {
+          if (context.node_kind(rtc).category().HasAnyOf(
+                  Parse::NodeCategory::Type)) {
+            sig.return_type_id = HandleTypeExpr(context, rtc);
+            break;
+          }
+        }
+      }
+      pre_return_type_nodes.clear();
+      continue;
+    }
+
+    // Collect type nodes that appear between ExplicitParamList and ReturnType.
+    // These are element types for a tuple return type `-> (Int, Int)`.
+    if (child_kind.category().HasAnyOf(Parse::NodeCategory::Type)) {
+      pre_return_type_nodes.push_back(child);
     }
   }
 
@@ -207,6 +300,7 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
   fn.name_id = sig.name_id;  // mangled name if inside a type, else original
   fn.parent_scope_id = context.CurrentScopeId();
   fn.is_static = is_static;
+  fn.is_throwing = sig.is_throwing;
   fn.param_default_nodes = sig.param_defaults;
 
   // Create parameter patterns and params.
@@ -236,13 +330,24 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
                                  .index = param_index}));
     param_pattern_ids.push_back(param_pattern_id);
 
-    // Create ValueParam.
-    auto param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
-        SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id
-                                                    : node_id),
-        SemIR::ValueParam{.type_id = param_type_id,
-                          .index = param_index,
-                          .pretty_name_id = param_name_id}));
+    // Create ValueParam or InoutParam (M40).
+    SemIR::InstId param_id = SemIR::InstId::None;
+    bool is_inout = (i < sig.param_is_inout.size()) && sig.param_is_inout[i];
+    if (is_inout) {
+      param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+          SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id
+                                                      : node_id),
+          SemIR::InoutParam{.type_id = param_type_id,
+                            .index = param_index,
+                            .name_id = param_name_id}));
+    } else {
+      param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+          SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id
+                                                      : node_id),
+          SemIR::ValueParam{.type_id = param_type_id,
+                            .index = param_index,
+                            .pretty_name_id = param_name_id}));
+    }
     param_ids.push_back(param_id);
   }
 

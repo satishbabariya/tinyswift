@@ -78,6 +78,14 @@ auto ParseType(Context& context) -> void {
 static auto ParsePrimaryType(Context& context) -> void {
   auto kind = context.Peek();
 
+  // M40: `inout Type` — emit InoutMarker leaf then parse actual type.
+  if (kind == Lex::TokenKind::InoutKeyword) {
+    auto inout_token = context.Consume();
+    context.AddLeafNode(NodeKind::InoutMarker, inout_token);
+    ParsePrimaryType(context);
+    return;
+  }
+
   // Array type: `[Type]` or dictionary type: `[Key: Value]`
   if (kind == Lex::TokenKind::OpenSquareBracket) {
     auto open = context.Consume();

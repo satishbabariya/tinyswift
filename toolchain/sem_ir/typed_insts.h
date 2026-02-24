@@ -900,6 +900,146 @@ struct ArrayAccess {
   InstId index_id;
 };
 
+// An array element address: &arr[index] (for lvalue assignment).
+// type_id is the element type.
+// array_id is the pointer to the array (from VarStorage/NameRef for var array).
+// index_id is the integer index.
+struct ArrayElementAddr {
+  static constexpr auto Kind = InstKind::ArrayElementAddr.Define<Parse::NodeId>(
+      {.ir_name = "array_element_addr"});
+
+  TypeId type_id;  // element type
+  InstId array_id;
+  InstId index_id;
+};
+
+// Bitwise integer binary operations.
+struct IntBitwiseAnd {
+  static constexpr auto Kind = InstKind::IntBitwiseAnd.Define<Parse::NodeId>(
+      {.ir_name = "int_bitwise_and"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntBitwiseOr {
+  static constexpr auto Kind = InstKind::IntBitwiseOr.Define<Parse::NodeId>(
+      {.ir_name = "int_bitwise_or"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntBitwiseXor {
+  static constexpr auto Kind = InstKind::IntBitwiseXor.Define<Parse::NodeId>(
+      {.ir_name = "int_bitwise_xor"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntBitwiseNot {
+  static constexpr auto Kind = InstKind::IntBitwiseNot.Define<Parse::NodeId>(
+      {.ir_name = "int_bitwise_not"});
+  TypeId type_id;
+  InstId operand_id;
+};
+
+struct IntShiftLeft {
+  static constexpr auto Kind = InstKind::IntShiftLeft.Define<Parse::NodeId>(
+      {.ir_name = "int_shift_left"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct IntShiftRight {
+  static constexpr auto Kind = InstKind::IntShiftRight.Define<Parse::NodeId>(
+      {.ir_name = "int_shift_right"});
+  TypeId type_id;
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+// M38: Convert an integer/bool value to a string representation.
+struct IntToString {
+  static constexpr auto Kind = InstKind::IntToString.Define<Parse::NodeId>(
+      {.ir_name = "int_to_string"});
+  TypeId type_id;      // String TypeId
+  InstId operand_id;   // Int/Bool value to convert
+};
+
+// M41: Throw an error value (terminator).
+struct ThrowValue {
+  static constexpr auto Kind = InstKind::ThrowValue.Define<Parse::NodeId>(
+      {.ir_name = "throw_value",
+       .constant_kind = InstConstantKind::Never,
+       .terminator_kind = TerminatorKind::Terminator});
+  InstId error_id;
+};
+
+// M42: Dictionary initialization `["k": v, ...]`.
+// entries_id stores interleaved [key0, val0, key1, val1, ...].
+struct DictInit {
+  static constexpr auto Kind = InstKind::DictInit.Define<Parse::NodeId>(
+      {.ir_name = "dict_init"});
+  TypeId type_id;           // result type (ptr to dict)
+  InstBlockId entries_id;   // interleaved [k0, v0, k1, v1, ...]
+};
+
+// M42: Dictionary subscript access `d["key"]` → Optional<V>.
+struct DictAccess {
+  static constexpr auto Kind = InstKind::DictAccess.Define<Parse::NodeId>(
+      {.ir_name = "dict_access"});
+  TypeId type_id;    // Optional<ValueType>
+  InstId dict_id;
+  InstId key_id;
+};
+
+// M40: An `inout` parameter (pointer ABI, passed by address).
+struct InoutParam {
+  static constexpr auto Kind = InstKind::InoutParam.Define<Parse::NodeId>(
+      {.ir_name = "inout_param"});
+  TypeId type_id;            // pointed-to type (e.g. Int)
+  CallParamIndex index;
+  NameId name_id;
+};
+
+// M40: Address-of expression `&varName` — produces a pointer to storage.
+struct AddressOf {
+  static constexpr auto Kind = InstKind::AddressOf.Define<Parse::NodeId>(
+      {.ir_name = "address_of",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;      // ErrorInst::TypeId (carrier; pointer type inferred)
+  InstId operand_id;   // The VarStorage InstId
+};
+
+// M44: print() built-in — call __tinyswift_print_int or __tinyswift_print_string
+// at runtime. type_id is ErrorInst::TypeId (void side-effect).
+struct PrintValue {
+  static constexpr auto Kind = InstKind::PrintValue.Define<Parse::NodeId>(
+      {.ir_name = "print_value", .constant_kind = InstConstantKind::Never});
+  TypeId type_id;   // ErrorInst::TypeId (void)
+  InstId arg_id;
+};
+
+// M45: String equality / inequality comparison.
+struct StringEq {
+  static constexpr auto Kind = InstKind::StringEq.Define<Parse::NodeId>(
+      {.ir_name = "string_eq"});
+  TypeId type_id;  // Bool
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
+struct StringNeq {
+  static constexpr auto Kind = InstKind::StringNeq.Define<Parse::NodeId>(
+      {.ir_name = "string_neq"});
+  TypeId type_id;  // Bool
+  InstId lhs_id;
+  InstId rhs_id;
+};
+
 // These concepts are an implementation detail of the library, not public API.
 namespace Internal {
 
