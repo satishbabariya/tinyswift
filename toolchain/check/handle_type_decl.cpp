@@ -4,6 +4,8 @@
 
 #include "toolchain/check/handle_type_decl.h"
 
+#include <deque>
+
 #include "toolchain/check/handle_expr.h"
 #include "toolchain/check/handle_function.h"
 #include "toolchain/check/handle_stmt.h"
@@ -156,9 +158,12 @@ auto CollectFieldDecls(Context& context,
   return fields;
 }
 
-// Generates a synthetic getter function for a computed property.
-// The getter has signature: func TypeName.propName(self: TypeName) -> PropType
-// and its body is the AccessorBlock of the VariableDecl.
+// Generates synthetic getter (and optionally setter) functions for a computed
+// property. The getter has signature:
+//   func TypeName.propName(self: TypeName) -> PropType
+// The setter (M57) has signature:
+//   func TypeName.propName.set(self: inout TypeName, newValue: PropType) -> Void
+// and is registered in the type scope under "propName.set".
 static auto GenerateComputedPropertyGetter(
     Context& context,
     Parse::NodeId name_node, Parse::NodeId type_node,
@@ -170,107 +175,214 @@ static auto GenerateComputedPropertyGetter(
   auto prop_name_id = SemIR::NameId::ForIdentifier(name_ident_id);
 
   // Extract return type.
-  auto prop_type_id = HandleTypeExpr(context, type_node);
+  auto prop_type_id = (type_node.has_value())
+      ? HandleTypeExpr(context, type_node)
+      : SemIR::ErrorInst::TypeId;
   if (!prop_type_id.has_value()) {
     prop_type_id = SemIR::ErrorInst::TypeId;
   }
 
-  // Build mangled name "TypeName.propName" using persistent storage.
-  SemIR::NameId mangled_name_id = prop_name_id;
+  // Determine enclosing type name for mangling.
   auto enclosing_type_id = context.CurrentTypeInstId();
+  llvm::StringRef type_name;
   if (enclosing_type_id.has_value()) {
     auto type_inst = context.insts().Get(enclosing_type_id);
-    llvm::StringRef type_name;
     if (auto st = type_inst.TryAs<SemIR::StructType>()) {
       auto& scope = context.name_scopes().Get(st->name_scope_id);
       auto ident_opt = scope.name_id.AsIdentifierId();
-      if (ident_opt.has_value()) {
-        type_name = context.identifiers().Get(ident_opt);
-      }
+      if (ident_opt.has_value()) type_name = context.identifiers().Get(ident_opt);
     } else if (auto ct = type_inst.TryAs<SemIR::ClassType>()) {
       auto& scope = context.name_scopes().Get(ct->name_scope_id);
       auto ident_opt = scope.name_id.AsIdentifierId();
-      if (ident_opt.has_value()) {
-        type_name = context.identifiers().Get(ident_opt);
-      }
-    }
-    if (!type_name.empty()) {
-      static llvm::SmallVector<std::string>* getter_name_storage =
-          new llvm::SmallVector<std::string>();
-      getter_name_storage->push_back(
-          std::string(type_name) + "." + std::string(name_text));
-      auto mangled_ident_id =
-          context.identifiers().Add(getter_name_storage->back());
-      mangled_name_id = SemIR::NameId::ForIdentifier(mangled_ident_id);
+      if (ident_opt.has_value()) type_name = context.identifiers().Get(ident_opt);
     }
   }
 
-  // Synthesize a `self` parameter (same as regular methods).
+  // Use std::deque so push_back never invalidates existing string addresses.
+  // (SmallVector may reallocate, which would invalidate StringRefs stored in
+  // the identifier table.)
+  static std::deque<std::string>* prop_name_storage =
+      new std::deque<std::string>();
+
+  // Build mangled getter name "TypeName.propName".
+  SemIR::NameId getter_mangled_id = prop_name_id;
+  if (!type_name.empty()) {
+    prop_name_storage->push_back(
+        std::string(type_name) + "." + std::string(name_text));
+    getter_mangled_id = SemIR::NameId::ForIdentifier(
+        context.identifiers().Add(prop_name_storage->back()));
+  }
+
+  // Detect explicit get/set accessors in the accessor_block.
+  // In the parse tree, CodeBlock comes BEFORE its accessor keyword:
+  //   [AccessorBlockStart] [CodeBlock(getter)] [GetAccessor] [CodeBlock(setter)] [SetAccessor]
+  // So we collect CodeBlocks in source order and assign them to the next keyword.
+  Parse::NodeId getter_body = Parse::NodeId::None;
+  Parse::NodeId setter_body = Parse::NodeId::None;
+  Parse::NodeId pending_code_block = Parse::NodeId::None;
+  bool has_explicit_accessors = false;
+
+  for (auto ac : context.children_source_order(accessor_block)) {
+    auto ac_kind = context.node_kind(ac);
+    if (ac_kind == Parse::NodeKind::AccessorBlockStart ||
+        ac_kind == Parse::NodeKind::CodeBlockStart) {
+      continue;
+    }
+    if (ac_kind == Parse::NodeKind::CodeBlock) {
+      pending_code_block = ac;
+    } else if (ac_kind == Parse::NodeKind::GetAccessor) {
+      has_explicit_accessors = true;
+      if (pending_code_block.has_value()) {
+        getter_body = pending_code_block;
+        pending_code_block = Parse::NodeId::None;
+      }
+    } else if (ac_kind == Parse::NodeKind::SetAccessor) {
+      has_explicit_accessors = true;
+      if (pending_code_block.has_value()) {
+        setter_body = pending_code_block;
+        pending_code_block = Parse::NodeId::None;
+      }
+    }
+  }
+  // Fallback: no explicit accessors — the whole accessor_block is the getter body.
+  if (!has_explicit_accessors) {
+    getter_body = accessor_block;
+  }
+
+  // Synthesize `self` ValueParam for getter (read-only).
   auto self_type_id = SemIR::TypeId::ForTypeConstant(
       SemIR::ConstantId::ForConcreteConstant(enclosing_type_id));
   auto self_ident_id = context.identifiers().Add("self");
   auto self_name_id = SemIR::NameId::ForIdentifier(self_ident_id);
 
-  auto self_param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+  auto getter_self_param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
       SemIR::LocId(name_node),
       SemIR::ValueParam{.type_id = self_type_id,
                         .index = SemIR::CallParamIndex(0),
                         .pretty_name_id = self_name_id}));
 
-  // Create the Function descriptor.
-  SemIR::Function fn;
-  fn.name_id = mangled_name_id;
-  fn.parent_scope_id = context.CurrentScopeId();
-  fn.return_type_inst_id = context.types().GetTypeInstId(prop_type_id);
+  // Create the getter Function descriptor.
+  SemIR::Function getter_fn;
+  getter_fn.name_id = getter_mangled_id;
+  getter_fn.parent_scope_id = context.CurrentScopeId();
+  getter_fn.return_type_inst_id = context.types().GetTypeInstId(prop_type_id);
 
-  auto params_block_id = context.inst_blocks().AddPlaceholder();
+  auto getter_params_block_id = context.inst_blocks().AddPlaceholder();
   context.inst_blocks().ReplacePlaceholder(
-      params_block_id, llvm::ArrayRef<SemIR::InstId>{self_param_id});
-  fn.call_params_id = params_block_id;
+      getter_params_block_id,
+      llvm::ArrayRef<SemIR::InstId>{getter_self_param_id});
+  getter_fn.call_params_id = getter_params_block_id;
 
-  auto decl_block_id = context.inst_blocks().AddPlaceholder();
-  context.inst_blocks().ReplacePlaceholder(decl_block_id,
+  auto getter_decl_block_id = context.inst_blocks().AddPlaceholder();
+  context.inst_blocks().ReplacePlaceholder(getter_decl_block_id,
                                            llvm::ArrayRef<SemIR::InstId>());
-  fn.decl_block_id = decl_block_id;
+  getter_fn.decl_block_id = getter_decl_block_id;
 
-  auto function_id = context.functions().Add(fn);
+  auto getter_function_id = context.functions().Add(getter_fn);
 
-  // Emit FunctionDecl instruction (non-lowered, compile-time marker).
-  auto fn_decl_id = context.AddInst(SemIR::LocIdAndInst::UncheckedLoc(
+  auto getter_fn_decl_id = context.AddInst(SemIR::LocIdAndInst::UncheckedLoc(
       SemIR::LocId(name_node),
       SemIR::FunctionDecl{.type_id = SemIR::TypeType::TypeId,
-                          .function_id = function_id,
-                          .decl_block_id = decl_block_id}));
+                          .function_id = getter_function_id,
+                          .decl_block_id = getter_decl_block_id}));
 
   // Emit ComputedPropertyDecl and register it under the property name.
   auto cpd_id = context.AddInst(SemIR::LocIdAndInst(
       SemIR::LocId(name_node),
       SemIR::ComputedPropertyDecl{.type_id = prop_type_id,
-                                  .getter_id = fn_decl_id}));
+                                  .getter_id = getter_fn_decl_id}));
   context.AddNameToScope(prop_name_id, cpd_id);
 
   // Set up the getter function body.
-  context.SetCurrentFunction(function_id);
-
-  auto body_scope_id = context.name_scopes().Add(
-      fn_decl_id, mangled_name_id, context.CurrentScopeId());
-  context.PushScope(body_scope_id);
-
-  // Register `self` in the getter scope.
-  context.AddNameToScope(self_name_id, self_param_id);
-
-  // Push the entry inst block and add it to the function's body_block_ids.
-  auto body_block_id = context.PushInstBlock();
-  context.functions().Get(function_id).body_block_ids.push_back(body_block_id);
-
-  // Process the accessor block body.
-  // AccessorBlock's children: AccessorBlockStart (leaf, ignored) + body stmts.
-  // HandleCodeBlock handles AccessorBlockStart gracefully (no category → skipped).
-  HandleCodeBlock(context, accessor_block);
-
+  context.SetCurrentFunction(getter_function_id);
+  auto getter_scope_id = context.name_scopes().Add(
+      getter_fn_decl_id, getter_mangled_id, context.CurrentScopeId());
+  context.PushScope(getter_scope_id);
+  context.AddNameToScope(self_name_id, getter_self_param_id);
+  auto getter_block_id = context.PushInstBlock();
+  context.functions().Get(getter_function_id).body_block_ids.push_back(
+      getter_block_id);
+  HandleCodeBlock(context, getter_body);
   context.PopInstBlock();
   context.ClearCurrentFunction();
   context.PopScope();
+
+  // M57: Generate setter if SetAccessor was found.
+  if (setter_body.has_value()) {
+    // Build mangled setter name "TypeName.propName.set".
+    prop_name_storage->push_back(
+        std::string(type_name) + "." + std::string(name_text) + ".set");
+    auto setter_mangled_id = SemIR::NameId::ForIdentifier(
+        context.identifiers().Add(prop_name_storage->back()));
+
+    // Register the setter name in the type scope for lookup by HandleAssignmentExpr.
+    prop_name_storage->push_back(std::string(name_text) + ".set");
+    auto setter_lookup_id = SemIR::NameId::ForIdentifier(
+        context.identifiers().Add(prop_name_storage->back()));
+
+    // Synthesize `self` InoutParam for setter (needs to write through).
+    auto setter_self_param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+        SemIR::LocId(name_node),
+        SemIR::InoutParam{.type_id = self_type_id,
+                          .index = SemIR::CallParamIndex(0),
+                          .name_id = self_name_id}));
+
+    // Synthesize `newValue` ValueParam.
+    auto new_value_ident_id = context.identifiers().Add("newValue");
+    auto new_value_name_id = SemIR::NameId::ForIdentifier(new_value_ident_id);
+    auto setter_newvalue_param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+        SemIR::LocId(name_node),
+        SemIR::ValueParam{.type_id = prop_type_id,
+                          .index = SemIR::CallParamIndex(1),
+                          .pretty_name_id = new_value_name_id}));
+
+    // Create setter Function descriptor.
+    SemIR::Function setter_fn;
+    setter_fn.name_id = setter_mangled_id;
+    setter_fn.parent_scope_id = context.CurrentScopeId();
+    setter_fn.is_mutating = true;
+    // Setter returns void (no return_type_inst_id).
+
+    auto setter_params_block_id = context.inst_blocks().AddPlaceholder();
+    llvm::SmallVector<SemIR::InstId> setter_params = {
+        setter_self_param_id, setter_newvalue_param_id};
+    context.inst_blocks().ReplacePlaceholder(
+        setter_params_block_id,
+        llvm::ArrayRef<SemIR::InstId>(setter_params));
+    setter_fn.call_params_id = setter_params_block_id;
+
+    auto setter_decl_block_id = context.inst_blocks().AddPlaceholder();
+    context.inst_blocks().ReplacePlaceholder(setter_decl_block_id,
+                                             llvm::ArrayRef<SemIR::InstId>());
+    setter_fn.decl_block_id = setter_decl_block_id;
+
+    auto setter_function_id = context.functions().Add(setter_fn);
+
+    auto setter_fn_decl_id = context.AddInst(
+        SemIR::LocIdAndInst::UncheckedLoc(
+            SemIR::LocId(name_node),
+            SemIR::FunctionDecl{.type_id = SemIR::TypeType::TypeId,
+                                .function_id = setter_function_id,
+                                .decl_block_id = setter_decl_block_id}));
+
+    // Register setter under "propName.set" in the type scope.
+    context.AddNameToScope(setter_lookup_id, setter_fn_decl_id);
+
+    // Set up the setter function body.
+    context.SetCurrentFunction(setter_function_id);
+    auto setter_scope_id = context.name_scopes().Add(
+        setter_fn_decl_id, setter_mangled_id, context.CurrentScopeId());
+    context.PushScope(setter_scope_id);
+    context.AddNameToScope(self_name_id, setter_self_param_id);
+    context.AddNameToScope(new_value_name_id, setter_newvalue_param_id);
+    auto setter_block_id = context.PushInstBlock();
+    context.functions().Get(setter_function_id).body_block_ids.push_back(
+        setter_block_id);
+    HandleCodeBlock(context, setter_body);
+    context.PopInstBlock();
+    context.ClearCurrentFunction();
+    context.PopScope();
+  }
 }
 
 // Generates a custom init function for an `init(...)` declaration.
@@ -479,20 +591,27 @@ auto HandleTypeMembers(Context& context,
     if (child_kind == Parse::NodeKind::CodeBlock) {
       auto block_children = context.children_source_order(child);
       bool next_is_static = false;
+      bool next_is_mutating = false;
       for (auto bc : block_children) {
         auto bc_kind = context.node_kind(bc);
         if (bc_kind == Parse::NodeKind::CodeBlockStart) continue;
 
-        // StaticModifier is a sibling of FunctionDefinition in the CodeBlock.
-        // Track it so the next FunctionDefinition can use it.
+        // StaticModifier / MutatingModifier are siblings of FunctionDefinition.
+        // Track them so the next FunctionDefinition can use them.
         if (bc_kind == Parse::NodeKind::StaticModifier) {
           next_is_static = true;
           continue;
         }
+        if (bc_kind == Parse::NodeKind::MutatingModifier) {
+          next_is_mutating = true;
+          continue;
+        }
 
-        // Reset static flag after consuming it for a function.
+        // Reset modifier flags after consuming them for a function.
         bool this_is_static = next_is_static;
+        bool this_is_mutating = next_is_mutating;
         next_is_static = false;
+        next_is_mutating = false;
 
         if (bc_kind == Parse::NodeKind::VariableDecl) {
           // Check for computed property (has AccessorBlock child).
@@ -530,9 +649,9 @@ auto HandleTypeMembers(Context& context,
           continue;
         }
 
-        // FunctionDefinition: pass static hint directly.
+        // FunctionDefinition: pass static and mutating hints.
         if (bc_kind == Parse::NodeKind::FunctionDefinition) {
-          HandleFunctionDefinition(context, bc, this_is_static);
+          HandleFunctionDefinition(context, bc, this_is_static, this_is_mutating);
           continue;
         }
 
@@ -631,6 +750,35 @@ auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void {
           ? ExtractTypeName(context, start_node_id)
           : std::pair(SemIR::NameId::None, Parse::NodeId::None);
 
+  // M55: Detect InheritanceClause inside ClassDefinitionStart to find superclass.
+  SemIR::NameScopeId superclass_scope_id = SemIR::NameScopeId::None;
+  if (start_node_id.has_value()) {
+    for (auto sc : context.children_source_order(start_node_id)) {
+      if (context.node_kind(sc) == Parse::NodeKind::InheritanceClause) {
+        // InheritanceClause children: InheritanceClauseStart + IdentifierType(s).
+        for (auto ic : context.children_source_order(sc)) {
+          if (context.node_kind(ic) == Parse::NodeKind::IdentifierType) {
+            auto tok = context.node_token(ic);
+            auto super_text = context.token_text(tok);
+            auto super_ident_id = context.identifiers().Lookup(super_text);
+            if (super_ident_id.has_value()) {
+              auto super_name_id = SemIR::NameId::ForIdentifier(super_ident_id);
+              auto super_inst_id = context.LookupName(super_name_id);
+              if (super_inst_id.has_value()) {
+                auto super_inst = context.insts().Get(super_inst_id);
+                if (auto ct = super_inst.TryAs<SemIR::ClassType>()) {
+                  superclass_scope_id = ct->name_scope_id;
+                }
+              }
+            }
+            break;  // Only handle single inheritance.
+          }
+        }
+        break;
+      }
+    }
+  }
+
   auto type_scope_id = context.name_scopes().Add(
       SemIR::InstId::None, name_id, context.CurrentScopeId());
 
@@ -647,7 +795,26 @@ auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void {
   auto field_infos = CollectFieldDecls(context, children);
 
   context.PushScope(type_scope_id);
+
+  // M55: Copy superclass scope entries (fields + methods) into this class scope.
+  // Subclass fields follow after superclass fields.
   int32_t field_index = 0;
+  if (superclass_scope_id.has_value()) {
+    auto& super_scope = context.name_scopes().Get(superclass_scope_id);
+    for (auto& [name_idx, inst_id] : super_scope.names) {
+      // Re-register in subclass scope so member lookup finds them.
+      // Use the InstId directly — the fields are at their original indices.
+      context.AddNameToScope(SemIR::NameId(name_idx), inst_id);
+      // Track max field index for new subclass fields.
+      auto inst = context.insts().Get(inst_id);
+      if (auto sf = inst.TryAs<SemIR::StructField>()) {
+        if (sf->index.index + 1 > field_index) {
+          field_index = sf->index.index + 1;
+        }
+      }
+    }
+  }
+
   for (auto& fi : field_infos) {
     auto field_inst_id = context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(fi.node_id),
@@ -833,7 +1000,11 @@ auto HandleProtocolDefinition(Context& context, Parse::NodeId node_id)
   auto type_scope_id = context.name_scopes().Add(
       SemIR::InstId::None, name_id, context.CurrentScopeId());
 
-  // Protocols are stubs for now - just register the name.
+  // M59: Protocols are purely static-dispatch conformance markers.
+  // Register the protocol name in scope but do NOT process the body —
+  // abstract method declarations have no body and would generate invalid
+  // SIL functions if lowered. At call sites, static dispatch finds the
+  // concrete struct's method directly via the struct's own scope.
   auto proto_id = context.AddInst(SemIR::LocIdAndInst(
       SemIR::LocId(name_node_id.has_value() ? name_node_id : node_id),
       SemIR::StructType{.type_id = SemIR::TypeType::TypeId,
@@ -842,10 +1013,7 @@ auto HandleProtocolDefinition(Context& context, Parse::NodeId node_id)
   if (name_id.has_value()) {
     context.AddNameToScope(name_id, proto_id);
   }
-
-  context.PushScope(type_scope_id);
-  HandleTypeMembers(context, children);
-  context.PopScope();
+  // Intentionally do not call HandleTypeMembers — protocol body is abstract.
 }
 
 auto HandleExtensionDefinition(Context& context, Parse::NodeId node_id)

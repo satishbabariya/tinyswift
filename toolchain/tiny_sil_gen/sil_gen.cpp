@@ -611,18 +611,54 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
       func_name = ctx.GetFunctionName(function);
     } else if (auto closure_expr = callee_inst.TryAs<SemIR::ClosureExpr>()) {
       // Direct closure call: `{ x in x+x }(5)`.
-      auto& function = sem_ir.functions().Get(closure_expr->function_id);
-      func_name = ctx.GetFunctionName(function);
-    } else if (auto value_binding = callee_inst.TryAs<SemIR::ValueBinding>()) {
-      // Let binding holding a closure: `let f = { x in x+x }; f(5)`.
-      if (value_binding->value_id.has_value()) {
-        auto inner_inst = sem_ir.insts().Get(value_binding->value_id);
-        if (auto closure_expr = inner_inst.TryAs<SemIR::ClosureExpr>()) {
-          auto& function = sem_ir.functions().Get(closure_expr->function_id);
-          func_name = ctx.GetFunctionName(function);
+      // M53: Use the PartialApply result (ctx.GetValue of the ClosureExpr) as
+      // callee so lower.cpp can prepend captured values via closure_captures map.
+      auto pa_val = ctx.GetValue(resolved_callee_id);
+      auto result_type = ctx.GetSILType(call->type_id);
+      auto result = AllocValue(ctx, result_type);
+      auto apply_inst = MakeInst(TinySIL::SILInstKind::Apply, result);
+      if (pa_val.is_valid()) {
+        apply_inst->setOperand(0, pa_val);
+      }
+      if (call->args_id.has_value() &&
+          call->args_id != SemIR::InstBlockId::Empty) {
+        auto arg_ids = sem_ir.inst_blocks().Get(call->args_id);
+        for (auto arg_id : arg_ids) {
+          auto arg_val = ctx.GetValue(arg_id);
+          if (arg_val.is_valid()) apply_inst->operand_list.push_back(arg_val);
         }
       }
-      if (func_name.empty()) func_name = "<unknown_callee>";
+      ctx.emit(std::move(apply_inst));
+      ctx.SetValue(inst_id, result);
+      return;
+    } else if (auto value_binding = callee_inst.TryAs<SemIR::ValueBinding>()) {
+      // Let binding holding a closure: `let f = { x in x+x }; f(5)`.
+      // M53: Use the PartialApply result stored for the ClosureExpr as callee.
+      TinySIL::SILValue closure_pa_val;
+      if (value_binding->value_id.has_value()) {
+        auto inner_inst = sem_ir.insts().Get(value_binding->value_id);
+        if (inner_inst.Is<SemIR::ClosureExpr>()) {
+          closure_pa_val = ctx.GetValue(value_binding->value_id);
+        }
+      }
+      if (closure_pa_val.is_valid()) {
+        auto result_type = ctx.GetSILType(call->type_id);
+        auto result = AllocValue(ctx, result_type);
+        auto apply_inst = MakeInst(TinySIL::SILInstKind::Apply, result);
+        apply_inst->setOperand(0, closure_pa_val);
+        if (call->args_id.has_value() &&
+            call->args_id != SemIR::InstBlockId::Empty) {
+          auto arg_ids = sem_ir.inst_blocks().Get(call->args_id);
+          for (auto arg_id : arg_ids) {
+            auto arg_val = ctx.GetValue(arg_id);
+            if (arg_val.is_valid()) apply_inst->operand_list.push_back(arg_val);
+          }
+        }
+        ctx.emit(std::move(apply_inst));
+        ctx.SetValue(inst_id, result);
+        return;
+      }
+      func_name = "<unknown_callee>";
     } else {
       func_name = "<unknown_callee>";
     }
@@ -987,9 +1023,23 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
   }
 
   if (auto capture_ref = inst.TryAs<SemIR::CaptureRef>()) {
-    auto value = ctx.GetValue(capture_ref->captured_inst_id);
-    if (value.is_valid()) {
-      ctx.SetValue(inst_id, value);
+    // M53: If the captured inst is a VarStorage (alloca), emit a Load so the
+    // closure receives the actual value (not the alloca pointer).
+    auto outer_inst = sem_ir.insts().Get(capture_ref->captured_inst_id);
+    if (outer_inst.Is<SemIR::VarStorage>()) {
+      auto addr_val = ctx.GetValue(capture_ref->captured_inst_id);
+      if (addr_val.is_valid()) {
+        auto result = AllocValue(ctx, ctx.GetSILType(inst.type_id()));
+        auto load_inst = MakeInst(TinySIL::SILInstKind::Load, result);
+        load_inst->setOperand(0, addr_val);
+        ctx.emit(std::move(load_inst));
+        ctx.SetValue(inst_id, result);
+      }
+    } else {
+      auto value = ctx.GetValue(capture_ref->captured_inst_id);
+      if (value.is_valid()) {
+        ctx.SetValue(inst_id, value);
+      }
     }
     return;
   }

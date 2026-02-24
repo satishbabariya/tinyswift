@@ -86,9 +86,9 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
       for (const auto& fe : fields) {
         field_types.push_back(context.GetType(fe.type_id));
       }
-      if (!field_types.empty()) {
-        llvm_struct->setBody(field_types);
-      }
+      // Always set body (even empty) to avoid opaque struct — opaque structs
+      // cannot be passed by value as function arguments in LLVM 20+.
+      llvm_struct->setBody(field_types);
       return llvm_struct;
     }
 
@@ -99,8 +99,31 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
       if (scope.name_id.AsIdentifierId().has_value()) {
         name = sem_ir.identifiers().Get(scope.name_id.AsIdentifierId());
       }
-      // Same as StructType — field layout not yet persisted in NameScope.
+
       auto* llvm_struct = llvm::StructType::create(context.llvm_context(), name);
+
+      // Collect StructField entries (own + inherited) sorted by field index.
+      struct FieldEntry {
+        int32_t idx;
+        SemIR::TypeId type_id;
+      };
+      llvm::SmallVector<FieldEntry> fields;
+      for (const auto& kv : scope.names) {
+        auto fi = sem_ir.insts().Get(kv.second);
+        if (auto sf = fi.TryAs<SemIR::StructField>()) {
+          fields.push_back({sf->index.index, sf->type_id});
+        }
+      }
+      std::sort(fields.begin(), fields.end(),
+                [](const FieldEntry& a, const FieldEntry& b) {
+                  return a.idx < b.idx;
+                });
+      llvm::SmallVector<llvm::Type*> field_types;
+      for (const auto& fe : fields) {
+        field_types.push_back(context.GetType(fe.type_id));
+      }
+      // Always set body (even empty) to avoid opaque struct.
+      llvm_struct->setBody(field_types);
       return llvm_struct;
     }
 

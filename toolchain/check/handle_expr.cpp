@@ -452,7 +452,27 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
         }
 
         // The self arg is the base object (e.g., NameRef pointing to p).
+        // M56/M54: Mutating methods need self as a pointer (AddressOf VarStorage).
         auto self_arg_id = bm->base_id;
+        if (fn.is_mutating) {
+          // Chase NameRef → VarStorage, then emit AddressOf.
+          auto base_inst = context.insts().Get(bm->base_id);
+          SemIR::InstId var_id = SemIR::InstId::None;
+          if (auto nr = base_inst.TryAs<SemIR::NameRef>()) {
+            auto inner = context.insts().Get(nr->value_id);
+            if (inner.Is<SemIR::VarStorage>()) {
+              var_id = nr->value_id;
+            }
+          } else if (base_inst.Is<SemIR::VarStorage>()) {
+            var_id = bm->base_id;
+          }
+          if (var_id.has_value()) {
+            self_arg_id = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::AddressOf{.type_id = SemIR::ErrorInst::TypeId,
+                                 .operand_id = var_id}));
+          }
+        }
 
         if (fn.call_params_id.has_value() &&
             fn.call_params_id != SemIR::InstBlockId::Empty) {
@@ -794,6 +814,99 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
           SemIR::LocId(node_id),
           SemIR::StructInit{.type_id = type_id, .args_id = args_block_id}));
 
+    } else if (auto class_type = callee_inst.TryAs<SemIR::ClassType>()) {
+      // --- Class initialization (same as struct memberwise init for now) ---
+      type_id = SemIR::TypeId::ForTypeConstant(
+          SemIR::ConstantId::ForConcreteConstant(actual_callee_id));
+
+      auto& scope = context.name_scopes().Get(class_type->name_scope_id);
+
+      // Check for a custom init(...) in the class scope.
+      {
+        auto init_ident_id = context.identifiers().Lookup("init");
+        if (init_ident_id.has_value()) {
+          auto init_name_id = SemIR::NameId::ForIdentifier(init_ident_id);
+          auto init_it = scope.names.find(init_name_id.index);
+          if (init_it != scope.names.end()) {
+            auto init_decl_inst = context.insts().Get(init_it->second);
+            if (auto fn_decl = init_decl_inst.TryAs<SemIR::FunctionDecl>()) {
+              auto& fn = context.functions().Get(fn_decl->function_id);
+              llvm::SmallVector<SemIR::InstId> init_args;
+              if (fn.call_params_id.has_value() &&
+                  fn.call_params_id != SemIR::InstBlockId::Empty) {
+                auto param_ids =
+                    context.sem_ir().inst_blocks().Get(fn.call_params_id);
+                init_args.resize(param_ids.size(), SemIR::InstId::None);
+                for (size_t pi = 0; pi < param_ids.size(); ++pi) {
+                  auto param_inst = context.insts().Get(param_ids[pi]);
+                  if (auto vp = param_inst.TryAs<SemIR::ValueParam>()) {
+                    auto p_ident = vp->pretty_name_id.AsIdentifierId();
+                    llvm::StringRef pname = p_ident.has_value()
+                        ? context.identifiers().Get(p_ident) : llvm::StringRef();
+                    for (auto& arg : labeled_args) {
+                      if (arg.label == pname) { init_args[pi] = arg.value_id; break; }
+                    }
+                  }
+                }
+              } else {
+                for (auto& arg : labeled_args) init_args.push_back(arg.value_id);
+              }
+              llvm::SmallVector<SemIR::InstId> valid_init_args;
+              for (auto a : init_args) { if (a.has_value()) valid_init_args.push_back(a); }
+              auto init_args_block = context.inst_blocks().AddPlaceholder();
+              context.inst_blocks().ReplacePlaceholder(
+                  init_args_block, llvm::ArrayRef<SemIR::InstId>(valid_init_args));
+              return context.AddInst(SemIR::LocIdAndInst(
+                  SemIR::LocId(node_id),
+                  SemIR::Call{.type_id = type_id,
+                              .callee_id = init_it->second,
+                              .args_id = init_args_block}));
+            }
+          }
+        }
+      }
+
+      // Memberwise init for classes (count inherited + own fields).
+      int num_fields = 0;
+      for (auto& [name_idx, inst_id] : scope.names) {
+        auto field_inst = context.insts().Get(inst_id);
+        if (auto field = field_inst.TryAs<SemIR::StructField>()) {
+          int idx = field->index.index + 1;
+          if (idx > num_fields) num_fields = idx;
+        }
+      }
+      ordered_args.resize(num_fields, SemIR::InstId::None);
+      for (auto& arg : labeled_args) {
+        if (!arg.label.empty()) {
+          auto ident_id = context.identifiers().Lookup(arg.label);
+          if (ident_id.has_value()) {
+            auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+            auto it = scope.names.find(name_id.index);
+            if (it != scope.names.end()) {
+              auto field_inst = context.insts().Get(it->second);
+              if (auto field = field_inst.TryAs<SemIR::StructField>()) {
+                int fi = field->index.index;
+                if (fi < num_fields) ordered_args[fi] = arg.value_id;
+              }
+            }
+          }
+        } else {
+          for (int j = 0; j < num_fields; ++j) {
+            if (!ordered_args[j].has_value()) { ordered_args[j] = arg.value_id; break; }
+          }
+        }
+      }
+      llvm::SmallVector<SemIR::InstId> valid_args;
+      for (auto arg : ordered_args) {
+        valid_args.push_back(arg.has_value() ? arg : SemIR::InstId::None);
+      }
+      auto args_block_id = context.inst_blocks().AddPlaceholder();
+      context.inst_blocks().ReplacePlaceholder(
+          args_block_id, llvm::ArrayRef<SemIR::InstId>(valid_args));
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::StructInit{.type_id = type_id, .args_id = args_block_id}));
+
     } else if (auto closure_expr = callee_inst.TryAs<SemIR::ClosureExpr>()) {
       // --- Closure call: apply the closure as a function ---
       auto& fn = context.functions().Get(closure_expr->function_id);
@@ -841,6 +954,45 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
       SemIR::Call{
           .type_id = type_id, .callee_id = callee_id,
           .args_id = args_block_id}));
+}
+
+// M53: DFS scan to collect outer variable captures in a closure body.
+// For each IdentifierNameExpr, looks up the name in the CURRENT scope (which
+// is still the outer scope when this is called before the closure scope is
+// pushed). If the resolved instruction is a VarStorage or ValueBinding (and
+// not a closure param name), it's a capture.
+// Populates `captures` (deduped) with (outer_inst_id, name_id) pairs.
+static auto ScanForCaptures(
+    Context& context, Parse::NodeId node_id,
+    const llvm::DenseSet<llvm::StringRef>& exclude_names,
+    llvm::SmallVector<std::pair<SemIR::InstId, SemIR::NameId>>& captures,
+    llvm::DenseSet<int32_t>& seen_ids) -> void {
+  auto kind = context.node_kind(node_id);
+  if (kind == Parse::NodeKind::IdentifierNameExpr ||
+      kind == Parse::NodeKind::IdentifierNameBeforeParams ||
+      kind == Parse::NodeKind::IdentifierNameNotBeforeParams) {
+    auto text = context.token_text(context.node_token(node_id));
+    if (!exclude_names.contains(text)) {
+      auto ident_id = context.identifiers().Lookup(text);
+      if (ident_id.has_value()) {
+        auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+        auto value_id = context.LookupName(name_id);
+        if (value_id.has_value()) {
+          auto inst = context.insts().Get(value_id);
+          bool is_outer_var = inst.Is<SemIR::VarStorage>() ||
+                              inst.Is<SemIR::ValueBinding>();
+          if (is_outer_var && !seen_ids.contains(value_id.index)) {
+            seen_ids.insert(value_id.index);
+            captures.push_back({value_id, name_id});
+          }
+        }
+      }
+    }
+  }
+  // Recurse into children.
+  for (auto child : context.children_source_order(node_id)) {
+    ScanForCaptures(context, child, exclude_names, captures, seen_ids);
+  }
 }
 
 // M46: DFS scan to find the maximum implicit parameter index ($0, $1, etc.).
@@ -909,6 +1061,38 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
   // Use Int as default parameter/return type for minimal closure support.
   auto int_type = context.GetBuiltinType("Int");
 
+  // M53: Pre-scan body for outer variable captures.
+  // This must happen BEFORE the closure scope is pushed so LookupName still
+  // resolves names in the outer scope.
+  // Collect explicit closure param names to exclude from capture detection.
+  llvm::DenseSet<llvm::StringRef> exclude_from_capture;
+  if (param_name_id.has_value()) {
+    if (auto id = param_name_id.AsIdentifierId(); id.has_value()) {
+      exclude_from_capture.insert(context.identifiers().Get(id));
+    }
+  }
+  // Also exclude $N implicit params.
+  for (int i = 0; i <= max_dollar_idx; ++i) {
+    std::string dname = "$" + std::to_string(i);
+    auto did = context.identifiers().Lookup(dname);
+    if (did.has_value()) {
+      exclude_from_capture.insert(context.identifiers().Get(did));
+    }
+  }
+
+  llvm::SmallVector<std::pair<SemIR::InstId, SemIR::NameId>> captures;
+  llvm::DenseSet<int32_t> seen_capture_ids;
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::ClosureExprStart ||
+        child_kind == Parse::NodeKind::ClosureSignature ||
+        child_kind == Parse::NodeKind::ClosureParam) {
+      continue;
+    }
+    ScanForCaptures(context, child, exclude_from_capture, captures,
+                    seen_capture_ids);
+  }
+
   // Create a synthetic function for the closure body.
   SemIR::Function closure_fn;
   // Anonymous closure name. Use a static vector so StringRefs into it stay
@@ -926,21 +1110,39 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
   closure_fn.parent_scope_id = context.CurrentScopeId();
   closure_fn.return_type_inst_id = context.types().GetTypeInstId(int_type);
 
-  // Create a parameter if signature is present.
-  llvm::SmallVector<SemIR::InstId> param_ids;
+  // M53: Create capture ValueParams as leading parameters (before explicit params).
+  llvm::SmallVector<SemIR::InstId> all_param_ids;
+  llvm::SmallVector<std::pair<SemIR::NameId, SemIR::InstId>> capture_param_pairs;
+  {
+    static auto* capture_param_names = new llvm::SmallVector<std::string>();
+    for (int i = 0; i < static_cast<int>(captures.size()); ++i) {
+      auto [outer_id, name_id] = captures[i];
+      // Use the original name for the capture param.
+      capture_param_names->push_back("__capture_" + std::to_string(i));
+      // Get the type of the captured variable.
+      auto cap_type = GetInstType(context, outer_id);
+      auto cap_param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::ValueParam{.type_id = cap_type,
+                            .index = SemIR::CallParamIndex(i),
+                            .pretty_name_id = name_id}));
+      all_param_ids.push_back(cap_param_id);
+      capture_param_pairs.push_back({name_id, cap_param_id});
+    }
+  }
+
+  int capture_offset = static_cast<int>(captures.size());
+
+  // Create explicit closure params (after capture params).
+  llvm::SmallVector<SemIR::InstId> explicit_param_ids;
   if (has_signature && param_name_id.has_value()) {
     auto param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
         SemIR::ValueParam{.type_id = int_type,
-                          .index = SemIR::CallParamIndex(0),
+                          .index = SemIR::CallParamIndex(capture_offset),
                           .pretty_name_id = param_name_id}));
-    param_ids.push_back(param_id);
-
-    auto params_block_id = context.inst_blocks().AddPlaceholder();
-    context.inst_blocks().ReplacePlaceholder(
-        params_block_id, llvm::ArrayRef<SemIR::InstId>(param_ids));
-    closure_fn.call_params_id = params_block_id;
-    closure_fn.call_param_patterns_id = params_block_id;
+    explicit_param_ids.push_back(param_id);
+    all_param_ids.push_back(param_id);
   } else if (max_dollar_idx >= 0) {
     // M46: Synthesize $0, $1, ..., $max_dollar_idx implicit parameters.
     static auto* dollar_param_names = new llvm::SmallVector<std::string>();
@@ -951,13 +1153,17 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
       auto param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
           SemIR::ValueParam{.type_id = int_type,
-                            .index = SemIR::CallParamIndex(i),
+                            .index = SemIR::CallParamIndex(capture_offset + i),
                             .pretty_name_id = dname_id}));
-      param_ids.push_back(param_id);
+      explicit_param_ids.push_back(param_id);
+      all_param_ids.push_back(param_id);
     }
+  }
+
+  if (!all_param_ids.empty()) {
     auto params_block_id = context.inst_blocks().AddPlaceholder();
     context.inst_blocks().ReplacePlaceholder(
-        params_block_id, llvm::ArrayRef<SemIR::InstId>(param_ids));
+        params_block_id, llvm::ArrayRef<SemIR::InstId>(all_param_ids));
     closure_fn.call_params_id = params_block_id;
     closure_fn.call_param_patterns_id = params_block_id;
   }
@@ -978,18 +1184,24 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
       SemIR::InstId::None, closure_fn.name_id, context.CurrentScopeId());
   context.PushScope(closure_scope_id);
 
-  // Add parameter to scope.
-  if (!param_ids.empty() && param_name_id.has_value()) {
-    context.AddNameToScope(param_name_id, param_ids[0]);
+  // M53: Register capture params in closure scope, shadowing outer vars.
+  for (auto& [cap_name_id, cap_param_id] : capture_param_pairs) {
+    context.AddNameToScope(cap_name_id, cap_param_id);
+  }
+
+  // Add explicit parameter to scope.
+  if (!explicit_param_ids.empty() && has_signature && param_name_id.has_value()) {
+    context.AddNameToScope(param_name_id, explicit_param_ids[0]);
   }
   // M46: Add $N implicit parameters to scope.
   if (max_dollar_idx >= 0 && !has_signature) {
-    for (int i = 0; i <= max_dollar_idx && i < static_cast<int>(param_ids.size()); ++i) {
+    for (int i = 0; i <= max_dollar_idx &&
+                    i < static_cast<int>(explicit_param_ids.size()); ++i) {
       std::string dollar_name = "$" + std::to_string(i);
       auto ident_id = context.identifiers().Lookup(dollar_name);
       if (ident_id.has_value()) {
         auto dname_id = SemIR::NameId::ForIdentifier(ident_id);
-        context.AddNameToScope(dname_id, param_ids[i]);
+        context.AddNameToScope(dname_id, explicit_param_ids[i]);
       }
     }
   }
@@ -1024,12 +1236,24 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
   context.PopScope();
   context.SetCurrentFunction(outer_function_id);
 
+  // M53: Populate captures_id with the outer variable InstIds.
+  llvm::SmallVector<SemIR::InstId> capture_outer_ids;
+  for (auto& [outer_id, name_id] : captures) {
+    // Emit CaptureRef for each captured outer variable.
+    auto cap_type = GetInstType(context, outer_id);
+    auto capture_ref_id = context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::CaptureRef{.type_id = cap_type,
+                          .captured_inst_id = outer_id}));
+    capture_outer_ids.push_back(capture_ref_id);
+  }
+
+  auto captures_block_id = context.inst_blocks().AddPlaceholder();
+  context.inst_blocks().ReplacePlaceholder(
+      captures_block_id, llvm::ArrayRef<SemIR::InstId>(capture_outer_ids));
+
   // Emit ClosureExpr instruction.
   auto closure_type_id = context.GetBuiltinType("Int");  // simplified
-  auto captures_block_id = context.inst_blocks().AddPlaceholder();
-  context.inst_blocks().ReplacePlaceholder(captures_block_id,
-                                           llvm::ArrayRef<SemIR::InstId>());
-
   return context.AddInst(SemIR::LocIdAndInst(
       SemIR::LocId(node_id),
       SemIR::ClosureExpr{.type_id = closure_type_id,
@@ -1583,6 +1807,46 @@ auto HandleInfixOperatorExpr(Context& context, Parse::NodeId node_id)
               .type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
     }
 
+    // M58: Before reporting "not a numeric type", check for operator overloading.
+    {
+      if (lhs_type.has_value() && lhs_type.is_concrete()) {
+        auto ti_id = context.types().GetTypeInstId(lhs_type);
+        if (ti_id.has_value()) {
+          auto ti = context.insts().Get(ti_id);
+          SemIR::NameScopeId sc_id = SemIR::NameScopeId::None;
+          if (auto st = ti.TryAs<SemIR::StructType>()) sc_id = st->name_scope_id;
+          else if (auto ct = ti.TryAs<SemIR::ClassType>()) sc_id = ct->name_scope_id;
+          if (sc_id.has_value()) {
+            auto op_eid = context.identifiers().Lookup(op_text);
+            if (op_eid.has_value()) {
+              auto op_nid = SemIR::NameId::ForIdentifier(op_eid);
+              auto& sc = context.name_scopes().Get(sc_id);
+              auto it = sc.names.find(op_nid.index);
+              if (it != sc.names.end()) {
+                auto op_inst = context.insts().Get(it->second);
+                if (auto fnd = op_inst.TryAs<SemIR::FunctionDecl>()) {
+                  auto& op_fn = context.functions().Get(fnd->function_id);
+                  SemIR::TypeId ret = context.GetBuiltinType("Int");
+                  if (op_fn.return_type_inst_id.has_value()) {
+                    ret = context.types().GetTypeIdForTypeInstId(
+                        op_fn.return_type_inst_id);
+                  }
+                  llvm::SmallVector<SemIR::InstId> args = {lhs_id, rhs_id};
+                  auto ab = context.inst_blocks().AddPlaceholder();
+                  context.inst_blocks().ReplacePlaceholder(
+                      ab, llvm::ArrayRef<SemIR::InstId>(args));
+                  return context.AddInst(SemIR::LocIdAndInst(
+                      SemIR::LocId(node_id),
+                      SemIR::Call{.type_id = ret, .callee_id = it->second,
+                                  .args_id = ab}));
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
     // Not a numeric type.
     context.EmitError(node_id, InvalidOperandTypes,
                       std::string(op_text),
@@ -1754,6 +2018,52 @@ auto HandleInfixOperatorExpr(Context& context, Parse::NodeId node_id)
     // >>
     return context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
         SemIR::IntShiftRight{.type_id = lhs_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+  }
+
+  // M58: Operator overloading — look up operator as a static method in LHS type.
+  {
+    auto lhs_type_id = GetInstType(context, lhs_id);
+    if (lhs_type_id.has_value() && lhs_type_id.is_concrete()) {
+      auto type_inst_id = context.types().GetTypeInstId(lhs_type_id);
+      if (type_inst_id.has_value()) {
+        auto type_inst = context.insts().Get(type_inst_id);
+        SemIR::NameScopeId scope_id = SemIR::NameScopeId::None;
+        if (auto st = type_inst.TryAs<SemIR::StructType>()) {
+          scope_id = st->name_scope_id;
+        } else if (auto ct = type_inst.TryAs<SemIR::ClassType>()) {
+          scope_id = ct->name_scope_id;
+        }
+        if (scope_id.has_value()) {
+          auto op_ident_id = context.identifiers().Lookup(op_text);
+          if (op_ident_id.has_value()) {
+            auto op_name_id = SemIR::NameId::ForIdentifier(op_ident_id);
+            auto& scope = context.name_scopes().Get(scope_id);
+            auto it = scope.names.find(op_name_id.index);
+            if (it != scope.names.end()) {
+              auto op_inst_id = it->second;
+              auto op_inst = context.insts().Get(op_inst_id);
+              if (auto fn_decl = op_inst.TryAs<SemIR::FunctionDecl>()) {
+                auto& op_fn = context.functions().Get(fn_decl->function_id);
+                SemIR::TypeId ret_type = context.GetBuiltinType("Int");
+                if (op_fn.return_type_inst_id.has_value()) {
+                  ret_type = context.types().GetTypeIdForTypeInstId(
+                      op_fn.return_type_inst_id);
+                }
+                llvm::SmallVector<SemIR::InstId> args = {lhs_id, rhs_id};
+                auto args_block_id = context.inst_blocks().AddPlaceholder();
+                context.inst_blocks().ReplacePlaceholder(
+                    args_block_id, llvm::ArrayRef<SemIR::InstId>(args));
+                return context.AddInst(SemIR::LocIdAndInst(
+                    SemIR::LocId(node_id),
+                    SemIR::Call{.type_id = ret_type,
+                                .callee_id = op_inst_id,
+                                .args_id = args_block_id}));
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   // Unknown operator.
@@ -1931,7 +2241,9 @@ auto HandleAssignmentExpr(Context& context, Parse::NodeId node_id)
           auto looked_up = context.LookupName(base_name_id);
           if (looked_up.has_value()) {
             auto lu_inst = context.insts().Get(looked_up);
-            if (lu_inst.Is<SemIR::VarStorage>()) {
+            // M56: Also accept InoutParam as base (mutating method self).
+            if (lu_inst.Is<SemIR::VarStorage>() ||
+                lu_inst.Is<SemIR::InoutParam>()) {
               var_storage_id = looked_up;
             }
           }
@@ -1965,6 +2277,47 @@ auto HandleAssignmentExpr(Context& context, Parse::NodeId node_id)
                         SemIR::FieldAddr{.type_id = field->type_id,
                                          .base_id = var_storage_id,
                                          .index = field->index}));
+                  } else if (field_inst.Is<SemIR::ComputedPropertyDecl>()) {
+                    // M57: Computed property setter. Look up "propName.set"
+                    // in the type scope to find the setter FunctionDecl.
+                    static auto* setter_names =
+                        new llvm::SmallVector<std::string>();
+                    setter_names->push_back(
+                        std::string(member_name) + ".set");
+                    auto setter_ident_id = context.identifiers().Lookup(
+                        setter_names->back());
+                    if (setter_ident_id.has_value()) {
+                      auto setter_name_id =
+                          SemIR::NameId::ForIdentifier(setter_ident_id);
+                      auto sit = scope.names.find(setter_name_id.index);
+                      if (sit != scope.names.end()) {
+                        auto setter_inst_id = sit->second;
+                        // Emit AddressOf(self) as first arg (mutating).
+                        auto addr_id = context.AddInst(SemIR::LocIdAndInst(
+                            SemIR::LocId(node_id),
+                            SemIR::AddressOf{
+                                .type_id = SemIR::ErrorInst::TypeId,
+                                .operand_id = var_storage_id}));
+                        // Evaluate RHS.
+                        if (rhs_child.has_value()) {
+                          rhs_id = HandleExpr(context, rhs_child);
+                        }
+                        // Emit Call to setter(self_ptr, newValue).
+                        llvm::SmallVector<SemIR::InstId> setter_args = {
+                            addr_id, rhs_id};
+                        auto setter_args_block =
+                            context.inst_blocks().AddPlaceholder();
+                        context.inst_blocks().ReplacePlaceholder(
+                            setter_args_block,
+                            llvm::ArrayRef<SemIR::InstId>(setter_args));
+                        return context.AddInst(SemIR::LocIdAndInst(
+                            SemIR::LocId(node_id),
+                            SemIR::Call{
+                                .type_id = context.GetBuiltinType("Int"),
+                                .callee_id = setter_inst_id,
+                                .args_id = setter_args_block}));
+                      }
+                    }
                   }
                 }
               }

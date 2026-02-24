@@ -358,7 +358,10 @@ static auto IsAtDeclStart(Context& context) -> bool {
          kind == Lex::TokenKind::InternalKeyword ||
          kind == Lex::TokenKind::FileprivateKeyword ||
          kind == Lex::TokenKind::StaticKeyword ||
-         kind == Lex::TokenKind::At;
+         kind == Lex::TokenKind::At ||
+         // M56: `mutating` is a contextual keyword (Identifier with text "mutating").
+         (kind == Lex::TokenKind::Identifier &&
+          context.GetTokenText() == "mutating");
 }
 
 // Parses a single statement or declaration.

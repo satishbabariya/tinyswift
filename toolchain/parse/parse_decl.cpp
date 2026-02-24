@@ -62,6 +62,13 @@ static auto ParseModifiers(Context& context) -> void {
       context.AddLeafNode(NodeKind::StaticModifier, token);
       continue;
     }
+    // M56: `mutating` is a contextual keyword (plain Identifier token).
+    if (kind == Lex::TokenKind::Identifier &&
+        context.GetTokenText() == "mutating") {
+      auto token = context.Consume();
+      context.AddLeafNode(NodeKind::MutatingModifier, token);
+      continue;
+    }
     break;
   }
 }

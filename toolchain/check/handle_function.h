@@ -11,7 +11,8 @@
 namespace TinySwift::Check {
 
 auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
-                              bool is_static_hint = false) -> void;
+                              bool is_static_hint = false,
+                              bool is_mutating_hint = false) -> void;
 auto HandleFunctionDecl(Context& context, Parse::NodeId node_id) -> void;
 
 }  // namespace TinySwift::Check

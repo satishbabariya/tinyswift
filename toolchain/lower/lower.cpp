@@ -322,11 +322,14 @@ auto BuildSILFunctionType(Context& context,
 }
 
 // Lowers a single SIL instruction to LLVM IR.
-auto LowerSILInst(Context& context,
-                  const TinySIL::SILInstruction& inst,
-                  llvm::DenseMap<int32_t, llvm::Value*>& sil_values,
-                  llvm::DenseMap<int32_t, llvm::BasicBlock*>& sil_blocks,
-                  llvm::Function* /*llvm_fn*/) -> void {
+auto LowerSILInst(
+    Context& context,
+    const TinySIL::SILInstruction& inst,
+    llvm::DenseMap<int32_t, llvm::Value*>& sil_values,
+    llvm::DenseMap<int32_t, llvm::BasicBlock*>& sil_blocks,
+    llvm::Function* /*llvm_fn*/,
+    llvm::DenseMap<int32_t, llvm::SmallVector<llvm::Value*>>&
+        closure_captures) -> void {
   auto& builder = context.builder();
 
   auto getSILValue = [&](const TinySIL::SILValue& val) -> llvm::Value* {
@@ -417,10 +420,22 @@ auto LowerSILInst(Context& context,
     }
 
     case TinySIL::SILInstKind::PartialApply: {
-      // For zero-capture closures: partial_apply is just a function reference.
       // Propagate the underlying FunctionRef value directly.
       auto fn_ref = getSILValue(inst.operands[0]);
       if (fn_ref) setSILValue(inst.result, fn_ref);
+
+      // M53: Store captured values keyed by this result's SIL value ID.
+      // The Apply case will prepend these when calling the closure function.
+      if (!inst.operand_list.empty() && inst.result.is_valid()) {
+        llvm::SmallVector<llvm::Value*> cap_vals;
+        for (const auto& cap : inst.operand_list) {
+          auto* v = getSILValue(cap);
+          if (v) cap_vals.push_back(v);
+        }
+        if (!cap_vals.empty()) {
+          closure_captures[inst.result.id] = std::move(cap_vals);
+        }
+      }
       break;
     }
 
@@ -429,6 +444,17 @@ auto LowerSILInst(Context& context,
       if (!callee) break;
 
       llvm::SmallVector<llvm::Value*> args;
+
+      // M53: Prepend captured values if callee came from a PartialApply.
+      if (inst.operands[0].is_valid()) {
+        auto cap_it = closure_captures.find(inst.operands[0].id);
+        if (cap_it != closure_captures.end()) {
+          for (auto* cap_val : cap_it->second) {
+            args.push_back(cap_val);
+          }
+        }
+      }
+
       for (const auto& arg : inst.operand_list) {
         auto* arg_val = getSILValue(arg);
         if (arg_val) args.push_back(arg_val);
@@ -987,6 +1013,8 @@ auto LowerSILFunctionBody(Context& context,
 
   llvm::DenseMap<int32_t, llvm::Value*> sil_values;
   llvm::DenseMap<int32_t, llvm::BasicBlock*> sil_blocks;
+  // M53: Maps partial_apply result SIL value IDs to their captured LLVM values.
+  llvm::DenseMap<int32_t, llvm::SmallVector<llvm::Value*>> closure_captures;
 
   // Create all basic blocks.
   for (const auto& bb : sil_fn.blocks) {
@@ -1013,7 +1041,8 @@ auto LowerSILFunctionBody(Context& context,
     context.builder().SetInsertPoint(llvm_bb);
 
     for (const auto& inst : bb->insts) {
-      LowerSILInst(context, *inst, sil_values, sil_blocks, llvm_fn);
+      LowerSILInst(context, *inst, sil_values, sil_blocks, llvm_fn,
+                   closure_captures);
     }
 
     // If block has no terminator, add a fallback.

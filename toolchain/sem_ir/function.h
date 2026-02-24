@@ -40,6 +40,11 @@ struct Function : public Printable<Function> {
   // Set for functions declared with the `static` modifier inside a type.
   bool is_static = false;
 
+  // Whether this is a mutating method (self passed by pointer/inout).
+  // Set for functions declared with the `mutating` modifier (M56) or for
+  // all class instance methods (M54, which have implicit reference semantics).
+  bool is_mutating = false;
+
   // Whether this function is declared with `throws`.
   bool is_throwing = false;
 

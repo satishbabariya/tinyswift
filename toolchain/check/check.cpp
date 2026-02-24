@@ -60,7 +60,8 @@ auto CheckParseTrees(
       if (kind == Parse::NodeKind::EnumDefinition ||
           kind == Parse::NodeKind::StructDefinition ||
           kind == Parse::NodeKind::ClassDefinition ||
-          kind == Parse::NodeKind::TypealiasDecl) {
+          kind == Parse::NodeKind::TypealiasDecl ||
+          kind == Parse::NodeKind::ProtocolDefinition) {
         HandleStatement(context, root);
         processed_type_roots.insert(root.index);
       }

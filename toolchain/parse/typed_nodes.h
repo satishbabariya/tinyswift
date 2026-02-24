@@ -1468,6 +1468,11 @@ using StaticModifier =
     LeafNode<NodeKind::StaticModifier, Lex::StaticKeywordTokenIndex,
              NodeCategory::Modifier>;
 
+// `mutating` (contextual keyword — emitted as Identifier token)
+using MutatingModifier =
+    LeafNode<NodeKind::MutatingModifier, Lex::IdentifierTokenIndex,
+             NodeCategory::Modifier>;
+
 // ============================================================================
 // Conditional compilation
 // ============================================================================

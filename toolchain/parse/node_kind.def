@@ -352,6 +352,7 @@ TINYSWIFT_PARSE_NODE_KIND(AttributeStart)
 TINYSWIFT_PARSE_NODE_KIND(Attribute)
 TINYSWIFT_PARSE_NODE_KIND(AccessModifier)
 TINYSWIFT_PARSE_NODE_KIND(StaticModifier)
+TINYSWIFT_PARSE_NODE_KIND(MutatingModifier)
 
 // ============================================================================
 // Conditional compilation

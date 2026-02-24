@@ -212,7 +212,8 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
 }  // namespace
 
 auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
-                              bool is_static_hint) -> void {
+                              bool is_static_hint,
+                              bool is_mutating_hint) -> void {
   // M52: Save outer function context so nested function definitions don't
   // clobber the outer function's state.
   auto outer_function_id = context.CurrentFunctionId();
@@ -225,11 +226,12 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
   auto children = context.children_source_order(node_id);
 
   // First child should be FunctionDefinitionStart.
-  // StaticModifier is a SIBLING of FunctionDefinition in the parent CodeBlock,
-  // NOT a child — it's detected by HandleTypeMembers and passed via is_static_hint.
+  // StaticModifier / MutatingModifier are SIBLINGS of FunctionDefinition in the
+  // parent CodeBlock — detected by HandleTypeMembers and passed via hints.
   Parse::NodeId sig_node_id = Parse::NodeId::None;
   Parse::NodeId body_code_block = Parse::NodeId::None;
   bool is_static = is_static_hint;
+  bool is_mutating = is_mutating_hint;
 
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
@@ -288,18 +290,39 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
 
     // For instance methods only: synthesize a `self` parameter at index 0.
     // Static methods do NOT get a self parameter.
+    // M56: Mutating methods use InoutParam for self (pointer to struct).
+    // M54: All class instance methods are implicitly mutating.
     if (!is_static) {
       auto self_type_id = SemIR::TypeId::ForTypeConstant(
           SemIR::ConstantId::ForConcreteConstant(enclosing_type_id));
       auto self_ident_id = context.identifiers().Add("self");
       self_name_id = SemIR::NameId::ForIdentifier(self_ident_id);
 
-      self_param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
-          SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id
-                                                     : node_id),
-          SemIR::ValueParam{.type_id = self_type_id,
-                            .index = SemIR::CallParamIndex(0),
-                            .pretty_name_id = self_name_id}));
+      // M54: Class instance methods are implicitly mutating (self = InoutParam).
+      bool self_is_inout = is_mutating;
+      if (!self_is_inout) {
+        auto type_inst2 = context.insts().Get(enclosing_type_id);
+        if (type_inst2.Is<SemIR::ClassType>()) {
+          self_is_inout = true;
+          is_mutating = true;  // fn.is_mutating set later from is_mutating
+        }
+      }
+
+      if (self_is_inout) {
+        self_param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+            SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id
+                                                       : node_id),
+            SemIR::InoutParam{.type_id = self_type_id,
+                              .index = SemIR::CallParamIndex(0),
+                              .name_id = self_name_id}));
+      } else {
+        self_param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+            SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id
+                                                       : node_id),
+            SemIR::ValueParam{.type_id = self_type_id,
+                              .index = SemIR::CallParamIndex(0),
+                              .pretty_name_id = self_name_id}));
+      }
       param_index_offset = 1;
     }
   }
@@ -325,6 +348,7 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
   fn.name_id = sig.name_id;  // mangled name if inside a type/nested, else original
   fn.parent_scope_id = context.CurrentScopeId();
   fn.is_static = is_static;
+  fn.is_mutating = is_mutating;
   fn.is_throwing = sig.is_throwing;
   fn.param_default_nodes = sig.param_defaults;
 
