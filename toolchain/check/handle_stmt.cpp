@@ -1030,6 +1030,10 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
   }
 
   // ---- Phase 3: Emit discriminant extraction for enum scrutinee ----
+  // Bail out early if scrutinee failed to evaluate.
+  if (!scrutinee_id.has_value()) {
+    return;
+  }
   // For enum scrutinee: extract field 0 (i64 tag) once for reuse.
   SemIR::InstId scrutinee_disc_id = SemIR::InstId::None;
   if (scrutinee_is_enum) {

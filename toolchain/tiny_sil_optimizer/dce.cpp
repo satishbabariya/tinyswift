@@ -5,6 +5,7 @@
 #include "toolchain/tiny_sil_optimizer/pass_manager.h"
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringRef.h"
 #include "toolchain/tiny_sil/instruction.h"
 
 namespace TinySwift::TinySILOptimizer {
@@ -12,18 +13,16 @@ namespace TinySwift::TinySILOptimizer {
 namespace {
 
 // Returns true if an instruction has side effects (should not be removed).
-auto HasSideEffects(TinySIL::SILInstKind kind) -> bool {
-  switch (kind) {
+auto HasSideEffects(const TinySIL::SILInstruction& inst) -> bool {
+  switch (inst.kind) {
     // Memory writes.
     case TinySIL::SILInstKind::Store:
     case TinySIL::SILInstKind::AllocStack:
     case TinySIL::SILInstKind::DeallocStack:
     case TinySIL::SILInstKind::AllocBox:
-    // Function calls and builtins (may have side effects like dynarray_append,
-    // print_int, etc.).
+    // Function calls (may have arbitrary side effects).
     case TinySIL::SILInstKind::Apply:
     case TinySIL::SILInstKind::PartialApply:
-    case TinySIL::SILInstKind::BuiltinInst:
     // Terminators.
     case TinySIL::SILInstKind::Branch:
     case TinySIL::SILInstKind::CondBranch:
@@ -36,6 +35,27 @@ auto HasSideEffects(TinySIL::SILInstKind kind) -> bool {
     // Debug.
     case TinySIL::SILInstKind::DebugValue:
       return true;
+
+    // BuiltinInst: classify by name — some are pure, some have side effects.
+    case TinySIL::SILInstKind::BuiltinInst: {
+      llvm::StringRef name(inst.builtin_name);
+      // Side-effecting builtins: I/O, mutation, runtime calls.
+      if (name.starts_with("print_") ||
+          name.starts_with("dynarray_") ||
+          name.starts_with("dict_") ||
+          name == "string_concat" ||
+          name == "string_uppercased" ||
+          name == "string_lowercased" ||
+          name == "string_trimmed" ||
+          name == "array_literal_init" ||
+          name == "array_element_addr") {
+        return true;
+      }
+      // Pure builtins (arithmetic, comparison, access) — can be eliminated
+      // if result is unused.
+      return false;
+    }
+
     default:
       return false;
   }
@@ -75,7 +95,7 @@ auto RunDeadCodeElimination(TinySIL::SILFunction& function) -> void {
     for (auto& inst : bb->insts) {
       bool should_keep = true;
 
-      if (inst->result.is_valid() && !HasSideEffects(inst->kind)) {
+      if (inst->result.is_valid() && !HasSideEffects(*inst)) {
         // Check if the result is used anywhere.
         if (used_ids.count(inst->result.id) == 0) {
           should_keep = false;

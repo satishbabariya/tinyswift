@@ -279,6 +279,72 @@ auto HandleIdentifierNameExpr(Context& context, Parse::NodeId node_id)
         SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
   }
 
+  // Implicit self resolution: if the resolved value is a type-scope member
+  // (StructField, ComputedPropertyDecl, FunctionDecl from type scope) and
+  // we're inside a type context with `self` available, synthesize
+  // `self.<member>` instead of a bare NameRef to the member inst.
+  auto resolved_inst = context.insts().Get(value_id);
+  if (context.CurrentTypeInstId().has_value()) {
+    auto self_ident = context.identifiers().Lookup("self");
+    SemIR::InstId self_id = SemIR::InstId::None;
+    if (self_ident.has_value()) {
+      auto self_name = SemIR::NameId::ForIdentifier(self_ident);
+      self_id = context.LookupName(self_name);
+    }
+    if (self_id.has_value()) {
+      if (auto field = resolved_inst.TryAs<SemIR::StructField>()) {
+        // Emit NameRef for self, then FieldAccess.
+        auto self_type = GetInstType(context, self_id);
+        auto self_ref_id = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::NameRef{.type_id = self_type,
+                           .name_id = SemIR::NameId::ForIdentifier(
+                               self_ident),
+                           .value_id = self_id}));
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::FieldAccess{.type_id = field->type_id,
+                               .base_id = self_ref_id,
+                               .index = field->index}));
+      }
+      if (auto cpd = resolved_inst.TryAs<SemIR::ComputedPropertyDecl>()) {
+        auto self_type = GetInstType(context, self_id);
+        auto self_ref_id = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::NameRef{.type_id = self_type,
+                           .name_id = SemIR::NameId::ForIdentifier(
+                               self_ident),
+                           .value_id = self_id}));
+        auto args_block_id = context.inst_blocks().AddPlaceholder();
+        context.inst_blocks().ReplacePlaceholder(
+            args_block_id,
+            llvm::ArrayRef<SemIR::InstId>{self_ref_id});
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::Call{.type_id = cpd->type_id,
+                        .callee_id = cpd->getter_id,
+                        .args_id = args_block_id}));
+      }
+      if (auto fn_decl = resolved_inst.TryAs<SemIR::FunctionDecl>()) {
+        auto& fn = context.functions().Get(fn_decl->function_id);
+        if (!fn.is_static) {
+          auto self_type = GetInstType(context, self_id);
+          auto self_ref_id = context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::NameRef{.type_id = self_type,
+                             .name_id = SemIR::NameId::ForIdentifier(
+                                 self_ident),
+                             .value_id = self_id}));
+          return context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::BoundMethod{.type_id = SemIR::TypeType::TypeId,
+                                 .base_id = self_ref_id,
+                                 .function_id = value_id}));
+        }
+      }
+    }
+  }
+
   auto type_id = GetInstType(context, value_id);
   return context.AddInst(SemIR::LocIdAndInst(
       SemIR::LocId(node_id),
@@ -476,8 +542,12 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
 
     // M65: Dynamic array method call — resolve DynamicArrayMethodRef.
     if (auto dam = callee_inst.TryAs<SemIR::DynamicArrayMethodRef>()) {
-      SemIR::InstId elem_id =
-          labeled_args.empty() ? SemIR::InstId::None : labeled_args[0].value_id;
+      if (labeled_args.empty()) {
+        context.EmitError(node_id, TooFewArguments, 1, 0);
+        return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+            SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+      }
+      SemIR::InstId elem_id = labeled_args[0].value_id;
       return context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
           SemIR::DynamicArrayAppend{.type_id = SemIR::ErrorInst::TypeId,
@@ -2729,6 +2799,10 @@ auto HandleTernaryExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId
 
   // Evaluate condition in current block.
   auto cond_id = HandleExpr(context, cond_node);
+  if (!cond_id.has_value()) {
+    return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+        SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+  }
 
   // Use Int as the result type (covers the common case).
   auto result_type = context.GetBuiltinType("Int");
@@ -2826,6 +2900,7 @@ auto HandleTupleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
   // Build element-type block (each entry is the TypeInstId of the elem type).
   llvm::SmallVector<SemIR::InstId> type_insts;
   for (auto id : elem_ids) {
+    if (!id.has_value()) continue;
     auto ti = context.types().GetTypeInstId(context.insts().Get(id).type_id());
     type_insts.push_back(SemIR::InstId(ti.index));
   }

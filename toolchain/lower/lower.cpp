@@ -723,6 +723,8 @@ auto LowerSILInst(
           auto callee = context.module().getOrInsertFunction(
               "__tinyswift_string_concat", fn_type);
           setSILValue(inst.result, builder.CreateCall(callee, {lhs, rhs}));
+        } else {
+          llvm::errs() << "WARNING: string_concat: null operand\n";
         }
       } else if (name == "string_len") {
         // M49: string_len(s) → int64_t strlen(s)
@@ -953,6 +955,11 @@ auto LowerSILInst(
           auto callee = context.module().getOrInsertFunction(
               "__tinyswift_dynarray_append_int", fty);
           builder.CreateCall(callee, {arr_ptr, elem_val});
+        } else {
+          llvm::errs()
+              << "WARNING: dynarray_append: null operand (arr="
+              << (arr_ptr ? "ok" : "null")
+              << ", elem=" << (elem_val ? "ok" : "null") << ")\n";
         }
       } else if (name == "dynarray_count") {
         // __tinyswift_dynarray_count(arr: ptr) -> i64.
@@ -980,6 +987,9 @@ auto LowerSILInst(
               "__tinyswift_dynarray_get_int", fty);
           setSILValue(inst.result, builder.CreateCall(callee, {arr_ptr, idx_val}));
         }
+      } else {
+        llvm::errs() << "WARNING: unrecognized builtin in LowerSILInst: "
+                     << name << "\n";
       }
       break;
     }
@@ -1113,8 +1123,11 @@ auto LowerSILInst(
       break;
 
     default:
-      // Unknown instruction — skip.
-      break;
+      // Unknown SIL instruction kind — fatal error to catch missing handlers.
+      llvm::errs() << "FATAL: unhandled SIL instruction kind in LowerSILInst: "
+                   << static_cast<int>(inst.kind) << "\n";
+      llvm::report_fatal_error(
+          "unhandled SIL instruction kind in LowerSILInst");
   }
 }
 

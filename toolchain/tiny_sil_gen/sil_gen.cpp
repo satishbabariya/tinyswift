@@ -1317,9 +1317,10 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     return;
   }
 
-  // Fall through for unknown instructions — emit debug_value as marker.
-  // In a production compiler we'd assert here, but this allows us to
-  // make progress on the rest of the pipeline.
+  // Unknown instruction kind — fatal error to catch missing handlers early.
+  llvm::errs() << "FATAL: unhandled SemIR instruction kind in sil_gen"
+               << " (inst_id=" << inst_id.index << ")\n";
+  llvm::report_fatal_error("unhandled SemIR inst kind in sil_gen EmitInst");
 }
 
 // Emits TinySIL for a function body.
