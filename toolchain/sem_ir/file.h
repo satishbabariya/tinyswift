@@ -249,6 +249,11 @@ class File : public Printable<File> {
     return value_stores_->string_literal_values();
   }
 
+  // Allocates a persistent copy of a string in the compile-scoped allocator.
+  auto AllocateString(llvm::StringRef s) -> llvm::StringRef {
+    return value_stores_->AllocateString(s);
+  }
+
   auto entity_names() -> EntityNameStore& { return entity_names_; }
   auto entity_names() const -> const EntityNameStore& { return entity_names_; }
   auto functions() -> FunctionStore& { return functions_; }

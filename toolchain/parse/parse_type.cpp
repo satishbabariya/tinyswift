@@ -183,15 +183,27 @@ auto ParseGenericParameterClause(Context& context) -> void {
   auto open = context.Consume();
   context.AddLeafNode(NodeKind::GenericParameterClauseStart, open);
 
-  // Parse parameters.
+  // Parse first parameter.
   auto param_token = context.Consume();
   context.AddLeafNode(NodeKind::GenericParameter, param_token);
+
+  // M66: Handle optional constraint `: Protocol` after parameter name.
+  if (context.Peek() == Lex::TokenKind::Colon) {
+    context.Consume();  // ':'
+    ParseType(context);  // emits constraint IdentifierType as sibling
+  }
 
   while (context.Peek() == Lex::TokenKind::Comma) {
     auto comma = context.Consume();
     context.AddLeafNode(NodeKind::PatternListComma, comma);
     auto next_param = context.Consume();
     context.AddLeafNode(NodeKind::GenericParameter, next_param);
+
+    // M66: Handle optional constraint for subsequent parameters.
+    if (context.Peek() == Lex::TokenKind::Colon) {
+      context.Consume();  // ':'
+      ParseType(context);  // emits constraint IdentifierType as sibling
+    }
   }
 
   // Expect `>`.

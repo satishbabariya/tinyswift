@@ -23,12 +23,21 @@ auto HandleReturnStatement(Context& context, Parse::NodeId node_id) -> void {
 
   SemIR::InstId expr_id = SemIR::InstId::None;
 
-  for (auto child : children) {
+  for (size_t i = 0; i < children.size(); ++i) {
+    auto child = children[i];
     auto child_kind = context.node_kind(child);
     if (child_kind == Parse::NodeKind::ReturnStatementStart) {
       continue;
     }
     if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+      // M68: If followed by a CallExpr sibling, this is the orphaned callee
+      // from a generic call. Set as pending callee and skip to let the
+      // CallExpr handler pick it up.
+      if (i + 1 < children.size() &&
+          context.node_kind(children[i + 1]) == Parse::NodeKind::CallExpr) {
+        context.SetPendingCalleeId(HandleExpr(context, child));
+        continue;
+      }
       expr_id = HandleExpr(context, child);
     }
   }
@@ -1468,6 +1477,14 @@ auto HandleCodeBlock(Context& context, Parse::NodeId node_id) -> void {
             next_kind == Parse::NodeKind::AsExclaimExpr) {
           auto lhs_id = HandleExpr(context, child);
           context.SetPendingCastExpr(lhs_id);
+          continue;
+        }
+        // M68: If followed by a CallExpr, this is the orphaned callee from a
+        // generic call (GenericArgumentClause shifts the callee outside
+        // CallExpr's subtree). Evaluate and store as pending callee.
+        if (next_kind == Parse::NodeKind::CallExpr) {
+          auto callee_id = HandleExpr(context, child);
+          context.SetPendingCalleeId(callee_id);
           continue;
         }
       }

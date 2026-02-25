@@ -119,6 +119,11 @@ TINYSWIFT_DIAGNOSTIC_KIND(ArgumentLabelMismatch)
 TINYSWIFT_DIAGNOSTIC_KIND(UnknownStructField)
 TINYSWIFT_DIAGNOSTIC_KIND(MissingStructField)
 
+// Generics diagnostics (M66-M72).
+TINYSWIFT_DIAGNOSTIC_KIND(GenericArgCountMismatch)
+TINYSWIFT_DIAGNOSTIC_KIND(TypeDoesNotConformToProtocol)
+TINYSWIFT_DIAGNOSTIC_KIND(CannotInferGenericTypeArgs)
+
 // ============================================================================
 // CodeGen diagnostics
 // ============================================================================

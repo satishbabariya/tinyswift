@@ -48,6 +48,21 @@ struct Function : public Printable<Function> {
   // Whether this function is declared with `throws`.
   bool is_throwing = false;
 
+  // M66-M68: Generics support.
+  // Whether this function is a generic template (body not yet specialized).
+  bool is_generic_template = false;
+
+  // Generic parameter info: name + optional constraint.
+  struct GenericParamInfo {
+    SemIR::NameId name_id = SemIR::NameId::None;
+    SemIR::NameId constraint_name_id = SemIR::NameId::None;
+  };
+  llvm::SmallVector<GenericParamInfo> generic_params;
+
+  // Parse tree nodes for re-checking during specialization.
+  Parse::NodeId template_node_id = Parse::NodeId::None;       // FunctionDefinition
+  Parse::NodeId template_sig_node_id = Parse::NodeId::None;    // FunctionDefinitionStart
+
   // Default value parse nodes for parameters, indexed by param position
   // (0-based, after self is excluded). NodeId::None means no default.
   llvm::SmallVector<Parse::NodeId> param_default_nodes = {};

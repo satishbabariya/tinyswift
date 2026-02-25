@@ -17,6 +17,18 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
     auto token = context.node_token(node_id);
     auto text = context.token_text(token);
 
+    // M67: During specialization, check type parameter bindings first.
+    if (context.is_specializing()) {
+      auto ident_id_lookup = context.identifiers().Lookup(text);
+      if (ident_id_lookup.has_value()) {
+        auto name_id = SemIR::NameId::ForIdentifier(ident_id_lookup);
+        auto it = context.type_param_bindings().find(name_id.index);
+        if (it != context.type_param_bindings().end()) {
+          return it->second;  // Concrete type for this type parameter.
+        }
+      }
+    }
+
     // Check typealias map first.
     auto ident_id_opt = context.identifiers().Lookup(text);
     if (ident_id_opt.has_value()) {
@@ -24,6 +36,22 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
       auto alias_it = context.typealias_map().find(name_id.index);
       if (alias_it != context.typealias_map().end()) {
         return alias_it->second;
+      }
+    }
+
+    // M69: Check if this is a generic type template with pending type args.
+    if (ident_id_opt.has_value()) {
+      auto name_id = SemIR::NameId::ForIdentifier(ident_id_opt);
+      auto tmpl_it = context.generic_type_templates().find(name_id.index);
+      if (tmpl_it != context.generic_type_templates().end()) {
+        // This is a generic type — specialization will be triggered when
+        // concrete type args are available at the call site (HandleCallExpr).
+        // For now, return the original type inst as a placeholder TypeId.
+        auto orig_id = tmpl_it->second.original_type_inst_id;
+        if (orig_id.has_value()) {
+          return SemIR::TypeId::ForTypeConstant(
+              SemIR::ConstantId::ForConcreteConstant(orig_id));
+        }
       }
     }
 

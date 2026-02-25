@@ -17,6 +17,7 @@ TINYSWIFT_DIAGNOSTIC(ExpectedExprParser, Error, "expected expression");
 auto ParseTypeAnnotation(Context& context) -> void;
 auto ParseCodeBlock(Context& context) -> void;
 auto ParseStatement(Context& context) -> void;
+auto ParseGenericArguments(Context& context) -> void;
 
 // Forward declaration for this file (called from other TUs).
 auto ParseExpr(Context& context) -> void;
@@ -426,6 +427,17 @@ static auto ParsePostfixExpr(Context& context) -> void {
         context.AddNode(NodeKind::MemberAccessExpr, dot);
       }
       continue;
+    }
+
+    // M66: Generic arguments in call expression: `identity<Int>(42)`.
+    // Detect `<` as OperatorBinaryUnspaced (left-bound to identifier, right-bound
+    // to type name) — distinct from comparison `a < b` (OperatorBinarySpaced).
+    if ((kind == Lex::TokenKind::OperatorBinaryUnspaced ||
+         kind == Lex::TokenKind::OperatorPrefix) &&
+        context.GetTokenText() == "<") {
+      ParseGenericArguments(context);
+      // After parsing generic args, update kind for the next token.
+      kind = context.Peek();
     }
 
     // Call expression: `(args...)`

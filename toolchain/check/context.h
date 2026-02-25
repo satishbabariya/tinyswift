@@ -6,9 +6,11 @@
 #define TINYSWIFT_TOOLCHAIN_CHECK_CONTEXT_H_
 
 #include <algorithm>
+#include <deque>
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "toolchain/check/check.h"
 #include "toolchain/diagnostics/diagnostic.h"
@@ -201,6 +203,17 @@ class Context {
     return id;
   }
 
+  // M68: Pending callee for generic calls. When generic args shift the callee
+  // IdentifierNameExpr out of CallExpr's subtree, the parent context sets this.
+  auto SetPendingCalleeId(SemIR::InstId id) -> void {
+    pending_callee_id_ = id;
+  }
+  auto TakePendingCalleeId() -> SemIR::InstId {
+    auto id = pending_callee_id_;
+    pending_callee_id_ = SemIR::InstId::None;
+    return id;
+  }
+
   // --- Deferred blocks for defer statement (M51) ---
   // `defer { ... }` pushes the CodeBlock parse node here. Each return
   // statement emits deferred blocks LIFO before its ReturnExpr.
@@ -235,6 +248,14 @@ class Context {
 
   // Returns the current scope ID.
   auto CurrentScopeId() const -> SemIR::NameScopeId;
+
+  // M66-M72: Generic type template info (struct/class/enum).
+  struct GenericTypeTemplate {
+    Parse::NodeId definition_node_id = Parse::NodeId::None;
+    Parse::NodeId start_node_id = Parse::NodeId::None;
+    llvm::SmallVector<SemIR::Function::GenericParamInfo> generic_param_names;
+    SemIR::InstId original_type_inst_id = SemIR::InstId::None;
+  };
 
   // --- Type resolution ---
 
@@ -285,6 +306,9 @@ class Context {
     return sem_ir_->string_literal_values();
   }
   auto floats() -> SharedValueStores::FloatStore& { return sem_ir_->floats(); }
+  auto AllocateString(llvm::StringRef s) -> llvm::StringRef {
+    return sem_ir_->AllocateString(s);
+  }
 
   // --- Error tracking ---
   auto set_has_errors(bool has_errors) -> void {
@@ -365,6 +389,10 @@ class Context {
   // Pending LHS InstId for type cast expressions (M39 — is/as?/as!/as).
   SemIR::InstId pending_cast_expr_ = SemIR::InstId::None;
 
+  // M68: Pending callee InstId for generic calls where the callee is outside
+  // CallExpr's subtree (orphaned by GenericArgumentClause in the parse tree).
+  SemIR::InstId pending_callee_id_ = SemIR::InstId::None;
+
   // Stack of active loop contexts (for break/continue targets).
   llvm::SmallVector<LoopContext> loop_stack_;
 
@@ -383,9 +411,53 @@ class Context {
   // Map from VarStorage InstId index to DynamicArrayInit InstId (M65).
   llvm::DenseMap<int32_t, SemIR::InstId> dynamic_array_var_map_;
 
+  // M66-M72: Generics state.
+
+  // Type parameter bindings during specialization: NameId.index -> TypeId.
+  llvm::DenseMap<int32_t, SemIR::TypeId> type_param_bindings_;
+  bool is_specializing_ = false;
+
+  // Cache: mangled name -> specialized FunctionId.
+  llvm::StringMap<SemIR::FunctionId> specialization_cache_;
+
+  llvm::DenseMap<int32_t, GenericTypeTemplate> generic_type_templates_;  // NameId.index -> template
+
+  // Type specialization cache: mangled name -> specialized type InstId.
+  llvm::StringMap<SemIR::InstId> type_specialization_cache_;
+
+  // Persistent storage for mangled names (avoids dangling StringRefs).
+  std::deque<std::string> generic_name_storage_;
+
  public:
   auto typealias_map() -> llvm::DenseMap<int32_t, SemIR::TypeId>& {
     return typealias_map_;
+  }
+
+  // M66-M72: Generics accessors.
+  auto is_specializing() const -> bool { return is_specializing_; }
+  auto set_is_specializing(bool v) -> void { is_specializing_ = v; }
+
+  auto type_param_bindings() -> llvm::DenseMap<int32_t, SemIR::TypeId>& {
+    return type_param_bindings_;
+  }
+  auto type_param_bindings() const -> const llvm::DenseMap<int32_t, SemIR::TypeId>& {
+    return type_param_bindings_;
+  }
+
+  auto specialization_cache() -> llvm::StringMap<SemIR::FunctionId>& {
+    return specialization_cache_;
+  }
+
+  auto generic_type_templates() -> llvm::DenseMap<int32_t, GenericTypeTemplate>& {
+    return generic_type_templates_;
+  }
+
+  auto type_specialization_cache() -> llvm::StringMap<SemIR::InstId>& {
+    return type_specialization_cache_;
+  }
+
+  auto generic_name_storage() -> std::deque<std::string>& {
+    return generic_name_storage_;
   }
 
   // Register a VarStorage as holding an array initializer.

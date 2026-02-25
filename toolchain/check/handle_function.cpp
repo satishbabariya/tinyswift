@@ -16,6 +16,53 @@ namespace TinySwift::Check {
 
 namespace {
 
+// M66-M68: Extract generic parameter names and optional constraints from a
+// FunctionDefinitionStart (or StructDefinitionStart, etc.) node.
+auto ExtractGenericParams(Context& context, Parse::NodeId sig_node_id)
+    -> llvm::SmallVector<SemIR::Function::GenericParamInfo> {
+  llvm::SmallVector<SemIR::Function::GenericParamInfo> result;
+  auto children = context.children_source_order(sig_node_id);
+
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::GenericParameterClause) {
+      // Iterate children of GenericParameterClause in source order.
+      auto clause_children = context.children_source_order(child);
+      SemIR::Function::GenericParamInfo pending_info;
+      for (auto cc : clause_children) {
+        auto cc_kind = context.node_kind(cc);
+        if (cc_kind == Parse::NodeKind::GenericParameterClauseStart ||
+            cc_kind == Parse::NodeKind::PatternListComma) {
+          continue;
+        }
+        if (cc_kind == Parse::NodeKind::GenericParameter) {
+          // If we have a pending info from a previous param, push it.
+          if (pending_info.name_id.has_value()) {
+            result.push_back(pending_info);
+          }
+          auto token = context.node_token(cc);
+          auto text = context.token_text(token);
+          auto ident_id = context.identifiers().Add(text);
+          pending_info = SemIR::Function::GenericParamInfo{};
+          pending_info.name_id = SemIR::NameId::ForIdentifier(ident_id);
+        } else if (cc_kind == Parse::NodeKind::IdentifierType) {
+          // Constraint type after `: Protocol` — attach to pending param.
+          auto token = context.node_token(cc);
+          auto text = context.token_text(token);
+          auto ident_id = context.identifiers().Add(text);
+          pending_info.constraint_name_id = SemIR::NameId::ForIdentifier(ident_id);
+        }
+      }
+      // Push last param.
+      if (pending_info.name_id.has_value()) {
+        result.push_back(pending_info);
+      }
+      break;  // Only one GenericParameterClause per definition.
+    }
+  }
+  return result;
+}
+
 // Processes the function signature (name, params, return type) from a
 // FunctionDefinitionStart or FunctionDecl node.
 struct FunctionSignature {
@@ -247,6 +294,52 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
   }
 
   auto sig = ExtractFunctionSignature(context, sig_node_id);
+
+  // M66-M68: Detect generic parameters. If this is a generic template definition
+  // (not a specialization re-entry), store template metadata and skip body.
+  auto generic_params = ExtractGenericParams(context, sig_node_id);
+  if (!generic_params.empty() && !context.is_specializing()) {
+    // Create a stub Function with is_generic_template = true.
+    SemIR::Function fn;
+    fn.name_id = sig.name_id;
+    fn.parent_scope_id = context.CurrentScopeId();
+    fn.is_generic_template = true;
+    fn.generic_params = generic_params;
+    fn.template_node_id = node_id;
+    fn.template_sig_node_id = sig_node_id;
+    fn.is_static = is_static_hint;
+    fn.is_mutating = is_mutating_hint;
+    fn.is_throwing = sig.is_throwing;
+    fn.param_default_nodes = sig.param_defaults;
+
+    if (sig.return_type_id.has_value()) {
+      fn.return_type_inst_id = context.types().GetTypeInstId(sig.return_type_id);
+    }
+
+    auto decl_block_id = context.inst_blocks().AddPlaceholder();
+    context.inst_blocks().ReplacePlaceholder(decl_block_id,
+                                             llvm::ArrayRef<SemIR::InstId>());
+    fn.decl_block_id = decl_block_id;
+
+    auto function_id = context.functions().Add(fn);
+
+    auto fn_decl_id = context.AddInst(SemIR::LocIdAndInst::UncheckedLoc(
+        SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id : node_id),
+        SemIR::FunctionDecl{.type_id = SemIR::TypeType::TypeId,
+                            .function_id = function_id,
+                            .decl_block_id = decl_block_id}));
+
+    if (sig.name_id.has_value()) {
+      context.AddNameToScope(sig.name_id, fn_decl_id);
+    }
+
+    // Restore outer function context (M52).
+    context.SetCurrentFunction(outer_function_id);
+    for (auto block : outer_deferred_blocks) {
+      context.PushDeferredBlock(block);
+    }
+    return;  // Skip body processing for generic templates.
+  }
 
   // Check if we're inside a type (struct/class). If so, either synthesize
   // `self` (instance method) or skip it (static method), and mangle the name.
@@ -502,10 +595,19 @@ auto HandleFunctionDecl(Context& context, Parse::NodeId node_id) -> void {
   // Forward declaration - extract signature and register name.
   auto sig = ExtractFunctionSignature(context, node_id);
 
+  // M66-M68: Detect generic parameters for forward declarations too.
+  auto generic_params = ExtractGenericParams(context, node_id);
+
   SemIR::Function fn;
   fn.name_id = sig.name_id;
   fn.parent_scope_id = context.CurrentScopeId();
   fn.param_default_nodes = sig.param_defaults;
+
+  if (!generic_params.empty()) {
+    fn.is_generic_template = true;
+    fn.generic_params = generic_params;
+    fn.template_sig_node_id = node_id;
+  }
 
   if (sig.return_type_id.has_value()) {
     fn.return_type_inst_id = context.types().GetTypeInstId(sig.return_type_id);

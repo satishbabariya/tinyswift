@@ -8,6 +8,7 @@
 
 #include "toolchain/check/handle_expr.h"
 #include "toolchain/check/handle_function.h"
+#include "toolchain/check/handle_generic.h"
 #include "toolchain/check/handle_stmt.h"
 #include "toolchain/check/handle_type.h"
 #include "toolchain/parse/node_kind.h"
@@ -17,6 +18,49 @@
 namespace TinySwift::Check {
 
 namespace {
+
+// M69: Extracts generic parameter info from a type definition start node
+// (StructDefinitionStart, ClassDefinitionStart, EnumDefinitionStart).
+auto ExtractTypeGenericParams(Context& context, Parse::NodeId start_node_id)
+    -> llvm::SmallVector<SemIR::Function::GenericParamInfo> {
+  llvm::SmallVector<SemIR::Function::GenericParamInfo> result;
+  auto children = context.children_source_order(start_node_id);
+
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::GenericParameterClause) {
+      auto clause_children = context.children_source_order(child);
+      SemIR::Function::GenericParamInfo pending_info;
+      for (auto cc : clause_children) {
+        auto cc_kind = context.node_kind(cc);
+        if (cc_kind == Parse::NodeKind::GenericParameterClauseStart ||
+            cc_kind == Parse::NodeKind::PatternListComma) {
+          continue;
+        }
+        if (cc_kind == Parse::NodeKind::GenericParameter) {
+          if (pending_info.name_id.has_value()) {
+            result.push_back(pending_info);
+          }
+          auto token = context.node_token(cc);
+          auto text = context.token_text(token);
+          auto ident_id = context.identifiers().Add(text);
+          pending_info = SemIR::Function::GenericParamInfo{};
+          pending_info.name_id = SemIR::NameId::ForIdentifier(ident_id);
+        } else if (cc_kind == Parse::NodeKind::IdentifierType) {
+          auto token = context.node_token(cc);
+          auto text = context.token_text(token);
+          auto ident_id = context.identifiers().Add(text);
+          pending_info.constraint_name_id = SemIR::NameId::ForIdentifier(ident_id);
+        }
+      }
+      if (pending_info.name_id.has_value()) {
+        result.push_back(pending_info);
+      }
+      break;
+    }
+  }
+  return result;
+}
 
 // Extracts the name from a type definition start node.
 auto ExtractTypeName(Context& context, Parse::NodeId start_node_id)
@@ -983,6 +1027,32 @@ auto HandleStructDefinition(Context& context, Parse::NodeId node_id) -> void {
           ? ExtractTypeName(context, start_node_id)
           : std::pair(SemIR::NameId::None, Parse::NodeId::None);
 
+  // M69: Detect generic parameters. If present and not specializing, store
+  // template and skip field/member processing.
+  if (start_node_id.has_value() && !context.is_specializing()) {
+    auto generic_params = ExtractTypeGenericParams(context, start_node_id);
+    if (!generic_params.empty()) {
+      // Create a minimal StructType as placeholder (so name is in scope).
+      auto type_scope_id = context.name_scopes().Add(
+          SemIR::InstId::None, name_id, context.CurrentScopeId());
+      auto struct_type_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(name_node_id.has_value() ? name_node_id : node_id),
+          SemIR::StructType{.type_id = SemIR::TypeType::TypeId,
+                            .name_scope_id = type_scope_id}));
+      if (name_id.has_value()) {
+        context.AddNameToScope(name_id, struct_type_id);
+        // Store as generic type template.
+        Context::GenericTypeTemplate tmpl;
+        tmpl.definition_node_id = node_id;
+        tmpl.start_node_id = start_node_id;
+        tmpl.generic_param_names.assign(generic_params.begin(), generic_params.end());
+        tmpl.original_type_inst_id = struct_type_id;
+        context.generic_type_templates().insert({name_id.index, tmpl});
+      }
+      return;  // Skip body processing for generic template.
+    }
+  }
+
   // Create a name scope for the struct.
   auto type_scope_id = context.name_scopes().Add(
       SemIR::InstId::None, name_id, context.CurrentScopeId());
@@ -1037,6 +1107,29 @@ auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void {
       start_node_id.has_value()
           ? ExtractTypeName(context, start_node_id)
           : std::pair(SemIR::NameId::None, Parse::NodeId::None);
+
+  // M69: Detect generic parameters for classes. Same pattern as structs.
+  if (start_node_id.has_value() && !context.is_specializing()) {
+    auto generic_params = ExtractTypeGenericParams(context, start_node_id);
+    if (!generic_params.empty()) {
+      auto type_scope_id = context.name_scopes().Add(
+          SemIR::InstId::None, name_id, context.CurrentScopeId());
+      auto class_type_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(name_node_id.has_value() ? name_node_id : node_id),
+          SemIR::ClassType{.type_id = SemIR::TypeType::TypeId,
+                           .name_scope_id = type_scope_id}));
+      if (name_id.has_value()) {
+        context.AddNameToScope(name_id, class_type_id);
+        Context::GenericTypeTemplate tmpl;
+        tmpl.definition_node_id = node_id;
+        tmpl.start_node_id = start_node_id;
+        tmpl.generic_param_names.assign(generic_params.begin(), generic_params.end());
+        tmpl.original_type_inst_id = class_type_id;
+        context.generic_type_templates().insert({name_id.index, tmpl});
+      }
+      return;
+    }
+  }
 
   // M55: Detect InheritanceClause inside ClassDefinitionStart to find superclass.
   SemIR::NameScopeId superclass_scope_id = SemIR::NameScopeId::None;
@@ -1134,6 +1227,34 @@ auto HandleEnumDefinition(Context& context, Parse::NodeId node_id) -> void {
       start_node_id.has_value()
           ? ExtractTypeName(context, start_node_id)
           : std::pair(SemIR::NameId::None, Parse::NodeId::None);
+
+  // M71: Detect generic parameters. If present and not specializing, store
+  // template and skip case processing.
+  if (start_node_id.has_value() && !context.is_specializing()) {
+    auto generic_params = ExtractTypeGenericParams(context, start_node_id);
+    if (!generic_params.empty()) {
+      auto type_scope_id = context.name_scopes().Add(
+          SemIR::InstId::None, name_id, context.CurrentScopeId());
+      auto cases_block_id = context.inst_blocks().AddPlaceholder();
+      auto enum_type_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(name_node_id.has_value() ? name_node_id : node_id),
+          SemIR::EnumDecl{.type_id = SemIR::TypeType::TypeId,
+                          .name_scope_id = type_scope_id,
+                          .cases_id = cases_block_id}));
+      if (name_id.has_value()) {
+        context.AddNameToScope(name_id, enum_type_id);
+        Context::GenericTypeTemplate tmpl;
+        tmpl.definition_node_id = node_id;
+        tmpl.start_node_id = start_node_id;
+        tmpl.generic_param_names.assign(generic_params.begin(), generic_params.end());
+        tmpl.original_type_inst_id = enum_type_id;
+        context.generic_type_templates().insert({name_id.index, tmpl});
+      }
+      context.inst_blocks().ReplacePlaceholder(
+          cases_block_id, llvm::ArrayRef<SemIR::InstId>());
+      return;  // Skip body processing for generic template.
+    }
+  }
 
   auto type_scope_id = context.name_scopes().Add(
       SemIR::InstId::None, name_id, context.CurrentScopeId());

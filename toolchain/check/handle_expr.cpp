@@ -4,6 +4,7 @@
 
 #include "toolchain/check/handle_expr.h"
 
+#include "toolchain/check/handle_generic.h"
 #include "toolchain/check/handle_stmt.h"
 #include "toolchain/check/handle_type.h"
 #include "toolchain/parse/node_kind.h"
@@ -13,6 +14,11 @@
 namespace TinySwift::Check {
 
 namespace {
+
+// M68/M72: Diagnostic for failed generic type inference.
+TINYSWIFT_DIAGNOSTIC(CannotInferGenericTypeArgs, Error,
+                     "cannot infer generic type arguments for '{0}'",
+                     std::string);
 
 // Helper to get the type of an instruction.
 auto GetInstType(Context& context, SemIR::InstId inst_id) -> SemIR::TypeId {
@@ -371,6 +377,7 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
   auto children = context.children_source_order(node_id);
 
   SemIR::InstId callee_id = SemIR::InstId::None;
+  Parse::NodeId call_start_node = Parse::NodeId::None;  // M68: for generic arg extraction
 
   // Labeled arguments: (label_text, value_inst_id).
   struct LabeledArg {
@@ -389,38 +396,72 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
     auto child_kind = context.node_kind(child);
 
     if (child_kind == Parse::NodeKind::CallExprStart) {
-      // CallExprStart has the callee as its child.
-      auto start_children = context.children_source_order(child);
-      for (auto start_child : start_children) {
-        if (context.node_kind(start_child)
-                .category()
-                .HasAnyOf(Parse::NodeCategory::Expr)) {
-          // Check for Int(...) / Double(...) type coercions before lookup.
-          if (context.node_kind(start_child) ==
-              Parse::NodeKind::IdentifierNameExpr) {
-            auto text = context.token_text(context.node_token(start_child));
-            if (text == "Int" || text == "Double") {
-              coercion_target = text;
-              break;  // Don't call HandleExpr — skip normal callee resolution.
+      call_start_node = child;  // M68: save for generic arg extraction
+      // CallExprStart has the callee as its child (non-generic case).
+      // In generic calls like `identity<Int>(42)`, the callee IdentifierNameExpr
+      // is a SIBLING of CallExprStart (not its child) because GenericArgumentClause
+      // shifts the subtree boundary. Check if callee was already found as sibling.
+      if (!callee_id.has_value() && !coercion_target.empty() == false &&
+          !is_print_call) {
+        auto start_children = context.children_source_order(child);
+        for (auto start_child : start_children) {
+          if (context.node_kind(start_child)
+                  .category()
+                  .HasAnyOf(Parse::NodeCategory::Expr)) {
+            // Check for Int(...) / Double(...) type coercions before lookup.
+            if (context.node_kind(start_child) ==
+                Parse::NodeKind::IdentifierNameExpr) {
+              auto text = context.token_text(context.node_token(start_child));
+              if (text == "Int" || text == "Double") {
+                coercion_target = text;
+                break;  // Don't call HandleExpr — skip normal callee resolution.
+              }
+              // M44: Intercept print() before normal lookup.
+              if (text == "print") {
+                is_print_call = true;
+                break;
+              }
             }
-            // M44: Intercept print() before normal lookup.
-            if (text == "print") {
-              is_print_call = true;
-              break;
-            }
+            callee_id = HandleExpr(context, start_child);
+            break;
           }
-          callee_id = HandleExpr(context, start_child);
-          break;
         }
       }
     } else if (child_kind == Parse::NodeKind::ArgumentLabel) {
       // Record the label for the next argument.
       pending_label = context.token_text(context.node_token(child));
     } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
-      // Argument expression — associate with pending label.
-      labeled_args.push_back({pending_label, HandleExpr(context, child)});
-      pending_label = llvm::StringRef();
+      // M68: Before CallExprStart is seen, an Expr child is the callee
+      // (happens in generic calls where the callee is a sibling of CallExprStart).
+      // After CallExprStart, Expr children are arguments.
+      if (!call_start_node.has_value() && !callee_id.has_value()) {
+        // This is the callee expression (before CallExprStart).
+        // Check for Int/Double/print interception.
+        if (child_kind == Parse::NodeKind::IdentifierNameExpr) {
+          auto text = context.token_text(context.node_token(child));
+          if (text == "Int" || text == "Double") {
+            coercion_target = text;
+            continue;
+          }
+          if (text == "print") {
+            is_print_call = true;
+            continue;
+          }
+        }
+        callee_id = HandleExpr(context, child);
+      } else {
+        // Argument expression — associate with pending label.
+        labeled_args.push_back({pending_label, HandleExpr(context, child)});
+        pending_label = llvm::StringRef();
+      }
     }
+  }
+
+  // M68: If callee was not found inside CallExpr's subtree (generic calls shift
+  // the IdentifierNameExpr outside), pick up the pending callee set by the
+  // parent context (HandleReturnStatement or HandleCodeBlock).
+  if (!callee_id.has_value() && coercion_target.empty() && !is_print_call) {
+    callee_id = context.TakePendingCalleeId();
   }
 
   // M44: Handle print(expr) — emit PrintValue for any single argument.
@@ -684,8 +725,129 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
     }
 
     if (auto fn_decl = callee_inst.TryAs<SemIR::FunctionDecl>()) {
-      // --- Function call with label matching ---
       auto& fn = context.functions().Get(fn_decl->function_id);
+      // M68: Check if this is a generic function template.
+      if (fn.is_generic_template) {
+        // Extract explicit type args from CallExprStart's GenericArgumentClause.
+        auto type_args = ExtractGenericArgs(context, call_start_node);
+
+        // M72: If no explicit type args, try to infer them.
+        if (type_args.empty()) {
+          llvm::SmallVector<std::pair<llvm::StringRef, SemIR::InstId>> inference_args;
+          for (auto& arg : labeled_args) {
+            inference_args.push_back({arg.label, arg.value_id});
+          }
+          type_args = InferTypeArgs(context, fn, inference_args);
+          if (type_args.empty()) {
+            auto fn_name = fn.name_id.has_value() && fn.name_id.AsIdentifierId().has_value()
+                ? context.identifiers().Get(fn.name_id.AsIdentifierId()).str()
+                : std::string("<unknown>");
+            context.EmitError(node_id, CannotInferGenericTypeArgs, fn_name);
+            return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+                SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+          }
+        }
+
+        // Specialize the generic function.
+        auto specialized_fn_id = SpecializeGenericFunction(
+            context, fn_decl->function_id, type_args);
+
+        // Now emit a Call instruction to the specialized function.
+        auto& spec_fn = context.functions().Get(specialized_fn_id);
+        auto spec_type_id = SemIR::ErrorInst::TypeId;
+        if (spec_fn.return_type_inst_id.has_value()) {
+          spec_type_id = context.types().GetTypeIdForTypeInstId(
+              spec_fn.return_type_inst_id);
+        }
+
+        // Find the FunctionDecl InstId for the specialized function.
+        // Scan insts to find a FunctionDecl pointing to specialized_fn_id.
+        // CRITICAL: Must use GetIdTag().Apply() to create properly tagged InstIds.
+        SemIR::InstId spec_fn_decl_id = SemIR::InstId::None;
+        auto inst_tag = context.insts().GetIdTag();
+        int num_insts = context.insts().size();
+        for (int idx = num_insts - 1; idx >= 0; --idx) {
+          auto tagged_id = inst_tag.Apply(idx);
+          auto inst = context.insts().Get(tagged_id);
+          if (auto fd = inst.TryAs<SemIR::FunctionDecl>()) {
+            if (fd->function_id == specialized_fn_id) {
+              spec_fn_decl_id = tagged_id;
+              break;
+            }
+          }
+        }
+
+        // Build args block with label matching against specialized function.
+        llvm::SmallVector<SemIR::InstId> spec_ordered_args;
+        int spec_expected_count = 0;
+        if (spec_fn.call_params_id.has_value() &&
+            spec_fn.call_params_id != SemIR::InstBlockId::Empty) {
+          auto param_ids = context.sem_ir().inst_blocks().Get(spec_fn.call_params_id);
+          spec_expected_count = static_cast<int>(param_ids.size());
+
+          llvm::SmallVector<llvm::StringRef> param_names;
+          for (auto param_id : param_ids) {
+            auto param_inst = context.insts().Get(param_id);
+            if (auto vp = param_inst.TryAs<SemIR::ValueParam>()) {
+              auto ident_id = vp->pretty_name_id.AsIdentifierId();
+              if (ident_id.has_value()) {
+                param_names.push_back(context.identifiers().Get(ident_id));
+              } else {
+                param_names.push_back(llvm::StringRef());
+              }
+            } else {
+              param_names.push_back(llvm::StringRef());
+            }
+          }
+
+          spec_ordered_args.resize(spec_expected_count, SemIR::InstId::None);
+          llvm::SmallVector<bool> param_filled(spec_expected_count, false);
+
+          for (auto& arg : labeled_args) {
+            if (!arg.label.empty()) {
+              for (int j = 0; j < spec_expected_count; ++j) {
+                if (param_names[j] == arg.label && !param_filled[j]) {
+                  spec_ordered_args[j] = arg.value_id;
+                  param_filled[j] = true;
+                  break;
+                }
+              }
+            }
+          }
+          int next_pos = 0;
+          for (auto& arg : labeled_args) {
+            if (arg.label.empty()) {
+              while (next_pos < spec_expected_count && param_filled[next_pos]) ++next_pos;
+              if (next_pos < spec_expected_count) {
+                spec_ordered_args[next_pos] = arg.value_id;
+                param_filled[next_pos] = true;
+                ++next_pos;
+              }
+            }
+          }
+        } else {
+          for (auto& arg : labeled_args) {
+            spec_ordered_args.push_back(arg.value_id);
+          }
+        }
+
+        llvm::SmallVector<SemIR::InstId> valid_args;
+        for (auto a : spec_ordered_args) {
+          if (a.has_value()) valid_args.push_back(a);
+        }
+        auto args_block_id = context.inst_blocks().AddPlaceholder();
+        context.inst_blocks().ReplacePlaceholder(
+            args_block_id, llvm::ArrayRef<SemIR::InstId>(valid_args));
+
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::Call{.type_id = spec_type_id,
+                        .callee_id = spec_fn_decl_id.has_value()
+                            ? spec_fn_decl_id : actual_callee_id,
+                        .args_id = args_block_id}));
+      }
+
+      // --- Non-generic function call with label matching ---
       if (fn.return_type_inst_id.has_value()) {
         type_id = context.types().GetTypeIdForTypeInstId(
             fn.return_type_inst_id);
@@ -788,6 +950,26 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
       }
 
     } else if (auto struct_type = callee_inst.TryAs<SemIR::StructType>()) {
+      // M69: Check if this is a generic struct template.
+      // If CallExprStart has GenericArgumentClause, specialize the struct first.
+      {
+        auto generic_type_args = ExtractGenericArgs(context, call_start_node);
+        if (!generic_type_args.empty()) {
+          // Look up the struct's name to find the template.
+          auto& orig_scope = context.name_scopes().Get(struct_type->name_scope_id);
+          auto tmpl_it = context.generic_type_templates().find(orig_scope.name_id.index);
+          if (tmpl_it != context.generic_type_templates().end()) {
+            auto specialized_type_id = SpecializeGenericType(
+                context, orig_scope.name_id.index, generic_type_args);
+            if (specialized_type_id.has_value()) {
+              actual_callee_id = specialized_type_id;
+              callee_inst = context.insts().Get(specialized_type_id);
+              struct_type = callee_inst.TryAs<SemIR::StructType>();
+            }
+          }
+        }
+      }
+
       // --- Struct initialization ---
       // actual_callee_id is the InstId of the StructType instruction.
       // The TypeId for a struct value is derived from the StructType InstId.

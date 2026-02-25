@@ -124,7 +124,8 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
   SemIR::InstId init_id = SemIR::InstId::None;
   Parse::NodeId name_node_id = Parse::NodeId::None;
 
-  for (auto child : children) {
+  for (size_t ci = 0; ci < children.size(); ++ci) {
+    auto child = children[ci];
     auto child_kind = context.node_kind(child);
 
     if (child_kind == Parse::NodeKind::LetIntroducer) {
@@ -158,6 +159,13 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
     } else if (child_kind == Parse::NodeKind::LetInitializer) {
       continue;
     } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+      // M68: If this Expr is immediately followed by a CallExpr, it's the
+      // orphaned callee from a generic call (e.g., `Pair<Int, Int>(...)`).
+      if (ci + 1 < children.size() &&
+          context.node_kind(children[ci + 1]) == Parse::NodeKind::CallExpr) {
+        context.SetPendingCalleeId(HandleExpr(context, child));
+        continue;
+      }
       init_id = HandleExpr(context, child);
     } else if (child_kind == Parse::NodeKind::TypeAnnotation) {
       type_id = HandleTypeExpr(context, child);
@@ -334,7 +342,8 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
   SemIR::InstId init_id = SemIR::InstId::None;
   Parse::NodeId name_node_id = Parse::NodeId::None;
 
-  for (auto child : children) {
+  for (size_t ci = 0; ci < children.size(); ++ci) {
+    auto child = children[ci];
     auto child_kind = context.node_kind(child);
 
     if (child_kind == Parse::NodeKind::VariableIntroducer) {
@@ -385,6 +394,13 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
     } else if (child_kind == Parse::NodeKind::VariableInitializer) {
       continue;
     } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+      // M68: If this Expr is immediately followed by a CallExpr, it's the
+      // orphaned callee from a generic call (e.g., `Pair<Int, Int>(...)`).
+      if (ci + 1 < children.size() &&
+          context.node_kind(children[ci + 1]) == Parse::NodeKind::CallExpr) {
+        context.SetPendingCalleeId(HandleExpr(context, child));
+        continue;
+      }
       init_id = HandleExpr(context, child);
     }
   }
