@@ -865,6 +865,121 @@ auto LowerSILInst(
               "__tinyswift_dict_get_str_int", fn_type);
           setSILValue(inst.result, builder.CreateCall(callee, {dict_ptr, key_ptr}));
         }
+
+      // M61: String method calls.
+      } else if (name == "string_uppercased") {
+        auto* str_ptr = getSILValue(inst.operands[0]);
+        if (str_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getPtrTy(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_string_uppercased", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {str_ptr}));
+        }
+      } else if (name == "string_lowercased") {
+        auto* str_ptr = getSILValue(inst.operands[0]);
+        if (str_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getPtrTy(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_string_lowercased", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {str_ptr}));
+        }
+      } else if (name == "string_trimmed") {
+        auto* str_ptr = getSILValue(inst.operands[0]);
+        if (str_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getPtrTy(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_string_trimmed", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {str_ptr}));
+        }
+      } else if (name == "string_has_prefix") {
+        auto* str_ptr = getSILValue(inst.operands[0]);
+        auto* pfx_ptr = getSILValue(inst.operands[1]);
+        if (str_ptr && pfx_ptr) {
+          auto* fty = llvm::FunctionType::get(
+              builder.getInt1Ty(),
+              {builder.getPtrTy(), builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_string_has_prefix", fty);
+          auto* cmp = builder.CreateCall(callee, {str_ptr, pfx_ptr});
+          setSILValue(inst.result, builder.CreateZExt(cmp, builder.getInt64Ty()));
+        }
+      } else if (name == "string_has_suffix") {
+        auto* str_ptr = getSILValue(inst.operands[0]);
+        auto* sfx_ptr = getSILValue(inst.operands[1]);
+        if (str_ptr && sfx_ptr) {
+          auto* fty = llvm::FunctionType::get(
+              builder.getInt1Ty(),
+              {builder.getPtrTy(), builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_string_has_suffix", fty);
+          auto* cmp = builder.CreateCall(callee, {str_ptr, sfx_ptr});
+          setSILValue(inst.result, builder.CreateZExt(cmp, builder.getInt64Ty()));
+        }
+      } else if (name == "string_contains") {
+        auto* str_ptr = getSILValue(inst.operands[0]);
+        auto* sub_ptr = getSILValue(inst.operands[1]);
+        if (str_ptr && sub_ptr) {
+          auto* fty = llvm::FunctionType::get(
+              builder.getInt1Ty(),
+              {builder.getPtrTy(), builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_string_contains", fty);
+          auto* cmp = builder.CreateCall(callee, {str_ptr, sub_ptr});
+          setSILValue(inst.result, builder.CreateZExt(cmp, builder.getInt64Ty()));
+        }
+
+      // M65: Dynamic array operations.
+      } else if (name == "dynarray_create") {
+        // __tinyswift_dynarray_create() -> ptr (opaque array handle).
+        auto* fty = llvm::FunctionType::get(builder.getPtrTy(), {}, false);
+        auto callee = context.module().getOrInsertFunction(
+            "__tinyswift_dynarray_create", fty);
+        setSILValue(inst.result, builder.CreateCall(callee, {}));
+      } else if (name == "dynarray_append") {
+        // __tinyswift_dynarray_append_int(arr: ptr, val: i64) -> void.
+        auto* arr_ptr = getSILValue(inst.operands[0]);
+        auto* elem_val = getSILValue(inst.operands[1]);
+        if (arr_ptr && elem_val) {
+          if (elem_val->getType()->isIntegerTy() &&
+              !elem_val->getType()->isIntegerTy(64)) {
+            elem_val = builder.CreateSExt(elem_val, builder.getInt64Ty());
+          }
+          auto* fty = llvm::FunctionType::get(
+              builder.getVoidTy(),
+              {builder.getPtrTy(), builder.getInt64Ty()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_dynarray_append_int", fty);
+          builder.CreateCall(callee, {arr_ptr, elem_val});
+        }
+      } else if (name == "dynarray_count") {
+        // __tinyswift_dynarray_count(arr: ptr) -> i64.
+        auto* arr_ptr = getSILValue(inst.operands[0]);
+        if (arr_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getInt64Ty(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_dynarray_count", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {arr_ptr}));
+        }
+      } else if (name == "dynarray_access") {
+        // __tinyswift_dynarray_get_int(arr: ptr, idx: i64) -> i64.
+        auto* arr_ptr = getSILValue(inst.operands[0]);
+        auto* idx_val = getSILValue(inst.operands[1]);
+        if (arr_ptr && idx_val) {
+          if (idx_val->getType()->isIntegerTy() &&
+              !idx_val->getType()->isIntegerTy(64)) {
+            idx_val = builder.CreateSExt(idx_val, builder.getInt64Ty());
+          }
+          auto* fty = llvm::FunctionType::get(
+              builder.getInt64Ty(),
+              {builder.getPtrTy(), builder.getInt64Ty()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_dynarray_get_int", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {arr_ptr, idx_val}));
+        }
       }
       break;
     }

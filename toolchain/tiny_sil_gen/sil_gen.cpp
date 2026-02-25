@@ -1174,6 +1174,128 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     return;
   }
 
+  // M61: StringUppercased — call __tinyswift_string_uppercased(s) -> String.
+  if (auto su = inst.TryAs<SemIR::StringUppercased>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(su->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "string_uppercased";
+    sil_inst->setOperand(0, ctx.GetValue(su->str_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M61: StringLowercased — call __tinyswift_string_lowercased(s) -> String.
+  if (auto sl = inst.TryAs<SemIR::StringLowercased>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(sl->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "string_lowercased";
+    sil_inst->setOperand(0, ctx.GetValue(sl->str_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M61: StringTrimmed — call __tinyswift_string_trimmed(s) -> String.
+  if (auto st = inst.TryAs<SemIR::StringTrimmed>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(st->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "string_trimmed";
+    sil_inst->setOperand(0, ctx.GetValue(st->str_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M61: StringHasPrefix — call __tinyswift_string_has_prefix(s, p) -> Bool.
+  if (auto shp = inst.TryAs<SemIR::StringHasPrefix>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(shp->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "string_has_prefix";
+    sil_inst->setOperand(0, ctx.GetValue(shp->str_id));
+    sil_inst->setOperand(1, ctx.GetValue(shp->arg_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M61: StringHasSuffix — call __tinyswift_string_has_suffix(s, p) -> Bool.
+  if (auto shs = inst.TryAs<SemIR::StringHasSuffix>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(shs->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "string_has_suffix";
+    sil_inst->setOperand(0, ctx.GetValue(shs->str_id));
+    sil_inst->setOperand(1, ctx.GetValue(shs->arg_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M61: StringContains — call __tinyswift_string_contains(s, sub) -> Bool.
+  if (auto sc = inst.TryAs<SemIR::StringContains>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(sc->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "string_contains";
+    sil_inst->setOperand(0, ctx.GetValue(sc->str_id));
+    sil_inst->setOperand(1, ctx.GetValue(sc->arg_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M61: StringMethodRef — pending marker, should be resolved before sil_gen.
+  if (inst.Is<SemIR::StringMethodRef>()) { return; }
+
+  // M65: DynamicArrayInit — call __tinyswift_dynarray_create() -> ptr.
+  // Use address-type result (same opaque-pointer pattern as DictInit).
+  if (inst.Is<SemIR::DynamicArrayInit>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(SemIR::ErrorInst::TypeId)
+                                      .getAddressType());
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "dynarray_create";
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M65: DynamicArrayAppend — call __tinyswift_dynarray_append_int(arr, val).
+  if (auto daa = inst.TryAs<SemIR::DynamicArrayAppend>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(daa->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "dynarray_append";
+    sil_inst->setOperand(0, ctx.GetValue(daa->array_id));
+    sil_inst->setOperand(1, ctx.GetValue(daa->elem_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M65: DynamicArrayCount — call __tinyswift_dynarray_count(arr) -> Int.
+  if (auto dac = inst.TryAs<SemIR::DynamicArrayCount>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(dac->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "dynarray_count";
+    sil_inst->setOperand(0, ctx.GetValue(dac->array_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M65: DynamicArrayAccess — call __tinyswift_dynarray_get_int(arr, idx) -> elem.
+  if (auto dax = inst.TryAs<SemIR::DynamicArrayAccess>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(dax->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "dynarray_access";
+    sil_inst->setOperand(0, ctx.GetValue(dax->array_id));
+    sil_inst->setOperand(1, ctx.GetValue(dax->index_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M65: DynamicArrayMethodRef — pending marker, should be resolved before sil_gen.
+  if (inst.Is<SemIR::DynamicArrayMethodRef>()) { return; }
+
   // M40: InoutParam — like ValueParam, but tracks as pointer.
   if (auto inout_param = inst.TryAs<SemIR::InoutParam>()) {
     if (!ctx.HasValue(inst_id)) {

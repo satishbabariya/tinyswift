@@ -380,6 +380,9 @@ class Context {
   // Used so that var array subscript access can find the actual array alloca.
   llvm::DenseMap<int32_t, SemIR::InstId> array_var_init_map_;
 
+  // Map from VarStorage InstId index to DynamicArrayInit InstId (M65).
+  llvm::DenseMap<int32_t, SemIR::InstId> dynamic_array_var_map_;
+
  public:
   auto typealias_map() -> llvm::DenseMap<int32_t, SemIR::TypeId>& {
     return typealias_map_;
@@ -397,6 +400,25 @@ class Context {
       return it->second;
     }
     return SemIR::InstId::None;
+  }
+
+  // M65: Register a VarStorage as holding a DynamicArrayInit.
+  auto SetDynamicArrayVar(SemIR::InstId var_id, SemIR::InstId dai_id) -> void {
+    dynamic_array_var_map_.insert({var_id.index, dai_id});
+  }
+
+  // M65: Look up the DynamicArrayInit for a VarStorage, or return None.
+  auto GetDynamicArrayVar(SemIR::InstId var_id) -> SemIR::InstId {
+    auto it = dynamic_array_var_map_.find(var_id.index);
+    if (it != dynamic_array_var_map_.end()) {
+      return it->second;
+    }
+    return SemIR::InstId::None;
+  }
+
+  // M65: Check if a VarStorage holds a DynamicArrayInit.
+  auto IsDynamicArrayVar(SemIR::InstId var_id) -> bool {
+    return dynamic_array_var_map_.count(var_id.index) > 0;
   }
 };
 

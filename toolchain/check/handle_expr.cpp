@@ -441,6 +441,50 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
           SemIR::TupleInit{.type_id = type_id, .elements_id = block_id}));
     }
 
+    // M61: String method call — resolve StringMethodRef pending marker.
+    if (auto smr = callee_inst.TryAs<SemIR::StringMethodRef>()) {
+      auto bool_type = SemIR::TypeId::ForTypeConstant(
+          SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+      SemIR::InstId arg_id =
+          labeled_args.empty() ? SemIR::InstId::None : labeled_args[0].value_id;
+      auto method_ident_id = smr->method_name_id.AsIdentifierId();
+      if (method_ident_id.has_value()) {
+        auto method_text = context.identifiers().Get(method_ident_id);
+        if (method_text == "hasPrefix") {
+          return context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::StringHasPrefix{.type_id = bool_type,
+                                     .str_id = smr->str_id,
+                                     .arg_id = arg_id}));
+        }
+        if (method_text == "hasSuffix") {
+          return context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::StringHasSuffix{.type_id = bool_type,
+                                     .str_id = smr->str_id,
+                                     .arg_id = arg_id}));
+        }
+        if (method_text == "contains") {
+          return context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::StringContains{.type_id = bool_type,
+                                    .str_id = smr->str_id,
+                                    .arg_id = arg_id}));
+        }
+      }
+    }
+
+    // M65: Dynamic array method call — resolve DynamicArrayMethodRef.
+    if (auto dam = callee_inst.TryAs<SemIR::DynamicArrayMethodRef>()) {
+      SemIR::InstId elem_id =
+          labeled_args.empty() ? SemIR::InstId::None : labeled_args[0].value_id;
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::DynamicArrayAppend{.type_id = SemIR::ErrorInst::TypeId,
+                                    .array_id = dam->array_id,
+                                    .elem_id = elem_id}));
+    }
+
     if (auto bm = callee_inst.TryAs<SemIR::BoundMethod>()) {
       // --- Method call: p.method(args...) → MethodName(self: p, args...) ---
       auto fn_decl_inst = context.insts().Get(bm->function_id);
@@ -1296,11 +1340,28 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
 
   SemIR::InstId base_id = SemIR::InstId::None;
   llvm::StringRef member_name;
+  bool is_optional_chain = false;  // M60: x?.foo
 
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
     if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
       if (!base_id.has_value()) {
+        // M60: Detect optional chaining operator (x?.foo).
+        if (child_kind == Parse::NodeKind::PostfixOperatorExpr) {
+          auto op_text = context.token_text(context.node_token(child));
+          if (op_text == "?") {
+            is_optional_chain = true;
+            // Evaluate the INNER operand of '?' (not the '?' node itself).
+            for (auto pc : context.children_source_order(child)) {
+              if (context.node_kind(pc).category().HasAnyOf(
+                      Parse::NodeCategory::Expr)) {
+                base_id = HandleExpr(context, pc);
+                break;
+              }
+            }
+            continue;  // Skip normal HandleExpr for this child.
+          }
+        }
         base_id = HandleExpr(context, child);
       } else {
         // Second Expr child in MemberAccessExpr is the member name
@@ -1313,6 +1374,156 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
                    Parse::NodeCategory::MemberName)) {
       member_name = context.token_text(context.node_token(child));
     }
+  }
+
+  // M60: Optional chaining desugaring (x?.foo → Optional<FooType>).
+  // base_id is Optional<T>; member_name is the member to access.
+  // Result type: Optional<MemberType>.
+  if (is_optional_chain && base_id.has_value() && !member_name.empty()) {
+    // Determine inner type T from Optional<T>.
+    auto opt_type = GetInstType(context, base_id);
+    SemIR::TypeId inner_type_id = SemIR::ErrorInst::TypeId;
+    if (opt_type.has_value() && opt_type.is_concrete()) {
+      auto opt_ti = context.types().GetTypeInstId(opt_type);
+      if (opt_ti.has_value()) {
+        auto opt_inst = context.insts().Get(opt_ti);
+        if (auto ot = opt_inst.TryAs<SemIR::OptionalType>()) {
+          inner_type_id =
+              context.types().GetTypeIdForTypeInstId(ot->inner_type_id);
+        }
+      }
+    }
+
+    // Look up the member in T's scope to get member type and field index.
+    SemIR::TypeId member_type_id = SemIR::ErrorInst::TypeId;
+    SemIR::ElementIndex field_idx(0);
+    if (!IsErrorType(inner_type_id) && inner_type_id.is_concrete()) {
+      auto inner_ti = context.types().GetTypeInstId(inner_type_id);
+      if (inner_ti.has_value()) {
+        auto inner_inst = context.insts().Get(inner_ti);
+        SemIR::NameScopeId scope_id = SemIR::NameScopeId::None;
+        if (auto st = inner_inst.TryAs<SemIR::StructType>())
+          scope_id = st->name_scope_id;
+        else if (auto ct = inner_inst.TryAs<SemIR::ClassType>())
+          scope_id = ct->name_scope_id;
+        if (scope_id.has_value()) {
+          auto ident_id = context.identifiers().Lookup(member_name);
+          if (ident_id.has_value()) {
+            auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+            auto& scope = context.name_scopes().Get(scope_id);
+            auto it = scope.names.find(name_id.index);
+            if (it != scope.names.end()) {
+              auto mem_inst = context.insts().Get(it->second);
+              if (auto field = mem_inst.TryAs<SemIR::StructField>()) {
+                member_type_id = field->type_id;
+                field_idx = field->index;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!IsErrorType(member_type_id)) {
+      // Build Optional<MemberType>.
+      auto opt_member_inst_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::OptionalType{
+              .type_id = SemIR::TypeType::TypeId,
+              .inner_type_id = SemIR::TypeInstId::UnsafeMake(
+                  context.types().GetTypeInstId(member_type_id))}));
+      auto opt_member_type = SemIR::TypeId::ForTypeConstant(
+          SemIR::ConstantId::ForConcreteConstant(opt_member_inst_id));
+
+      auto bool_type = SemIR::TypeId::ForTypeConstant(
+          SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+
+      // has_value = TupleAccess(base, 0)
+      auto has_val_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::TupleAccess{.type_id = bool_type,
+                             .tuple_id = base_id,
+                             .index = SemIR::ElementIndex(0)}));
+
+      // Alloca for result.
+      auto temp_id = context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::VarStorage{.type_id = opt_member_type,
+                            .pattern_id = SemIR::AbsoluteInstId(
+                                SemIR::InstId::None)}));
+
+      auto then_block_id = context.inst_blocks().AddPlaceholder();
+      auto else_block_id = context.inst_blocks().AddPlaceholder();
+      auto merge_block_id = context.inst_blocks().AddPlaceholder();
+
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::BranchIf{.target_id = SemIR::LabelId(then_block_id),
+                           .cond_id = has_val_id}));
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(else_block_id)}));
+
+      context.SwitchInstBlock(merge_block_id);
+      context.AddBodyBlock(merge_block_id);
+
+      // Then block: extract payload, access member, wrap in OptionalSome.
+      {
+        context.PushInstBlock();
+        auto payload_id = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::TupleAccess{.type_id = inner_type_id,
+                               .tuple_id = base_id,
+                               .index = SemIR::ElementIndex(1)}));
+        auto mem_val_id = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::FieldAccess{.type_id = member_type_id,
+                               .base_id = payload_id,
+                               .index = field_idx}));
+        auto some_val_id = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::OptionalSome{.type_id = opt_member_type,
+                                .value_id = mem_val_id}));
+        context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::Assign{.lhs_id = temp_id, .rhs_id = some_val_id}));
+        context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+        auto tmp = context.PopInstBlock();
+        auto insts = context.inst_blocks().Get(tmp);
+        context.inst_blocks().ReplacePlaceholder(
+            then_block_id, llvm::ArrayRef<SemIR::InstId>(insts));
+        context.AddBodyBlock(then_block_id);
+      }
+
+      // Else block: store OptionalNone.
+      {
+        context.PushInstBlock();
+        auto none_val_id = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::OptionalNone{.type_id = SemIR::ErrorInst::TypeId}));
+        context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::Assign{.lhs_id = temp_id, .rhs_id = none_val_id}));
+        context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+        auto tmp = context.PopInstBlock();
+        auto insts = context.inst_blocks().Get(tmp);
+        context.inst_blocks().ReplacePlaceholder(
+            else_block_id, llvm::ArrayRef<SemIR::InstId>(insts));
+        context.AddBodyBlock(else_block_id);
+      }
+
+      // Load result from alloca in merge block.
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::NameRef{.type_id = opt_member_type,
+                         .name_id = SemIR::NameId::None,
+                         .value_id = temp_id}));
+    }
+    // Fallthrough: member not found in optional's inner type.
   }
 
   // Check if base is a NameRef pointing to an EnumDecl (e.g. `Color.red`).
@@ -1356,10 +1567,15 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
             SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
       }
 
-      // Also handle static method access on a struct/class type name
-      // (e.g. `Geometry.square(5)` where Geometry is a NameRef → StructType).
-      if (auto struct_type = actual_inst.TryAs<SemIR::StructType>()) {
-        auto& scope = context.name_scopes().Get(struct_type->name_scope_id);
+      // Also handle static method access and nested type access on a struct/class
+      // type name (e.g. `Geometry.square(5)` or `Matrix.Row(a:1,b:2)`).
+      auto type_scope_id = SemIR::NameScopeId::None;
+      if (auto struct_type = actual_inst.TryAs<SemIR::StructType>())
+        type_scope_id = struct_type->name_scope_id;
+      else if (auto class_type = actual_inst.TryAs<SemIR::ClassType>())
+        type_scope_id = class_type->name_scope_id;
+      if (type_scope_id.has_value()) {
+        auto& scope = context.name_scopes().Get(type_scope_id);
         auto ident_id = context.identifiers().Lookup(member_name);
         if (ident_id.has_value()) {
           auto name_id = SemIR::NameId::ForIdentifier(ident_id);
@@ -1367,6 +1583,7 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
           if (it != scope.names.end()) {
             auto member_inst_id = it->second;
             auto member_inst = context.insts().Get(member_inst_id);
+            // Static method on struct/class type.
             if (auto fn_decl = member_inst.TryAs<SemIR::FunctionDecl>()) {
               auto& fn = context.functions().Get(fn_decl->function_id);
               if (fn.is_static) {
@@ -1376,6 +1593,17 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
                                    .name_id = name_id,
                                    .value_id = member_inst_id}));
               }
+            }
+            // M62: Nested type access on a struct/class type name
+            // (e.g. `Matrix.Row`, `Outer.Inner`).
+            if (member_inst.Is<SemIR::StructType>() ||
+                member_inst.Is<SemIR::ClassType>() ||
+                member_inst.Is<SemIR::EnumDecl>()) {
+              return context.AddInst(SemIR::LocIdAndInst(
+                  SemIR::LocId(node_id),
+                  SemIR::NameRef{.type_id = SemIR::TypeType::TypeId,
+                                 .name_id = name_id,
+                                 .value_id = member_inst_id}));
             }
           }
         }
@@ -1422,6 +1650,92 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
             SemIR::IntEq{.type_id = bool_type,
                          .lhs_id = len_id,
                          .rhs_id = zero_id}));
+      }
+      // M61: String methods.
+      auto string_type = context.GetBuiltinType("String");
+      if (member_name == "uppercased") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::StringUppercased{.type_id = string_type,
+                                    .str_id = base_id}));
+      }
+      if (member_name == "lowercased") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::StringLowercased{.type_id = string_type,
+                                    .str_id = base_id}));
+      }
+      if (member_name == "trimmed") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::StringTrimmed{.type_id = string_type, .str_id = base_id}));
+      }
+      // Arg-taking string methods: emit StringMethodRef pending marker.
+      if (member_name == "hasPrefix" || member_name == "hasSuffix" ||
+          member_name == "contains") {
+        auto ident_id = context.identifiers().Add(member_name);
+        auto method_name_id = SemIR::NameId::ForIdentifier(ident_id);
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::StringMethodRef{.type_id = SemIR::ErrorInst::TypeId,
+                                   .str_id = base_id,
+                                   .method_name_id = method_name_id}));
+      }
+    }
+  }
+
+  // M65: Dynamic array methods (.count, .isEmpty, .append).
+  if (base_id.has_value() && !member_name.empty()) {
+    // Resolve base to DynamicArrayInit through NameRef → VarStorage.
+    auto base_inst = context.insts().Get(base_id);
+    SemIR::InstId dyn_arr_id = SemIR::InstId::None;
+    SemIR::InstId real_base_id = base_id;
+    if (auto nr = base_inst.TryAs<SemIR::NameRef>()) {
+      real_base_id = nr->value_id;
+      base_inst = context.insts().Get(real_base_id);
+    }
+    if (base_inst.Is<SemIR::VarStorage>()) {
+      auto dai = context.GetDynamicArrayVar(real_base_id);
+      if (dai.has_value()) {
+        dyn_arr_id = dai;
+        base_inst = context.insts().Get(dyn_arr_id);
+      }
+    } else if (base_inst.Is<SemIR::DynamicArrayInit>()) {
+      dyn_arr_id = real_base_id;
+    }
+    if (dyn_arr_id.has_value()) {
+      auto int_type = context.GetBuiltinType("Int");
+      auto bool_type = SemIR::TypeId::ForTypeConstant(
+          SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+      if (member_name == "count") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::DynamicArrayCount{.type_id = int_type,
+                                     .array_id = dyn_arr_id}));
+      }
+      if (member_name == "isEmpty") {
+        auto cnt_id = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::DynamicArrayCount{.type_id = int_type,
+                                     .array_id = dyn_arr_id}));
+        auto zero_id = context.AddInst(SemIR::LocIdAndInst::NoLoc(
+            SemIR::IntValue{.type_id = int_type,
+                            .int_id = context.ints().Add(0LL)}));
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntEq{.type_id = bool_type,
+                         .lhs_id = cnt_id,
+                         .rhs_id = zero_id}));
+      }
+      // .append() — emit a pending marker; HandleCallExpr resolves it.
+      if (member_name == "append") {
+        auto ident_id = context.identifiers().Add("append");
+        auto method_name_id = SemIR::NameId::ForIdentifier(ident_id);
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::DynamicArrayMethodRef{.type_id = SemIR::ErrorInst::TypeId,
+                                         .array_id = dyn_arr_id,
+                                         .method_name_id = method_name_id}));
       }
     }
   }
@@ -2554,6 +2868,14 @@ auto HandleArrayExpr(Context& context, Parse::NodeId node_id)
     }
   }
 
+  // M65: Empty array literal → DynamicArrayInit (heap-backed dynamic array).
+  if (elem_ids.empty()) {
+    auto int_type = context.GetBuiltinType("Int");
+    return context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::DynamicArrayInit{.type_id = int_type}));
+  }
+
   // Infer element type from first element.
   SemIR::TypeId elem_type_id = SemIR::ErrorInst::TypeId;
   if (!elem_ids.empty() && elem_ids[0].has_value()) {
@@ -2611,6 +2933,20 @@ auto HandleSubscriptExpr(Context& context, Parse::NodeId node_id)
       arr_inst = context.insts().Get(real_arr_id);
     }
     if (arr_inst.Is<SemIR::VarStorage>()) {
+      // M65: Check for dynamic array first.
+      auto dai_id = context.GetDynamicArrayVar(real_arr_id);
+      if (dai_id.has_value()) {
+        // Dynamic array element access.
+        auto dai_inst = context.insts().Get(dai_id);
+        if (auto dai = dai_inst.TryAs<SemIR::DynamicArrayInit>()) {
+          elem_type_id = context.GetBuiltinType("Int");  // default Int element
+          return context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::DynamicArrayAccess{.type_id = elem_type_id,
+                                        .array_id = dai_id,
+                                        .index_id = index_id}));
+        }
+      }
       // For var arrays: look up the ArrayLiteralInit via array_var_init_map_.
       auto ali_id = context.GetArrayVarInit(real_arr_id);
       if (ali_id.has_value()) {
@@ -2663,6 +2999,52 @@ auto HandleSubscriptExpr(Context& context, Parse::NodeId node_id)
         SemIR::DictAccess{.type_id = opt_type_id,
                           .dict_id = actual_dict_id,
                           .key_id = index_id}));
+  }
+
+  // M64: User-defined subscript — look up "subscript" in struct/class scope.
+  if (array_id.has_value()) {
+    auto arr_type_id = GetInstType(context, array_id);
+    if (arr_type_id.has_value() && arr_type_id.is_concrete()) {
+      auto arr_ti = context.types().GetTypeInstId(arr_type_id);
+      if (arr_ti.has_value()) {
+        auto arr_inst = context.insts().Get(arr_ti);
+        SemIR::NameScopeId scope_id = SemIR::NameScopeId::None;
+        if (auto st = arr_inst.TryAs<SemIR::StructType>())
+          scope_id = st->name_scope_id;
+        else if (auto ct = arr_inst.TryAs<SemIR::ClassType>())
+          scope_id = ct->name_scope_id;
+        if (scope_id.has_value()) {
+          auto sub_ident_id = context.identifiers().Lookup("subscript");
+          if (sub_ident_id.has_value()) {
+            auto sub_name_id = SemIR::NameId::ForIdentifier(sub_ident_id);
+            auto& scope = context.name_scopes().Get(scope_id);
+            auto it = scope.names.find(sub_name_id.index);
+            if (it != scope.names.end()) {
+              auto fn_decl_inst = context.insts().Get(it->second);
+              if (auto fn_decl = fn_decl_inst.TryAs<SemIR::FunctionDecl>()) {
+                auto& fn = context.functions().Get(fn_decl->function_id);
+                auto ret_type_id =
+                    fn.return_type_inst_id.has_value()
+                        ? context.types().GetTypeIdForTypeInstId(
+                              fn.return_type_inst_id)
+                        : SemIR::ErrorInst::TypeId;
+                llvm::SmallVector<SemIR::InstId> call_args = {array_id};
+                if (index_id.has_value()) call_args.push_back(index_id);
+                auto args_block_id = context.inst_blocks().AddPlaceholder();
+                context.inst_blocks().ReplacePlaceholder(
+                    args_block_id,
+                    llvm::ArrayRef<SemIR::InstId>(call_args));
+                return context.AddInst(SemIR::LocIdAndInst(
+                    SemIR::LocId(node_id),
+                    SemIR::Call{.type_id = ret_type_id,
+                                .callee_id = it->second,
+                                .args_id = args_block_id}));
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   return context.AddInst(SemIR::LocIdAndInst(

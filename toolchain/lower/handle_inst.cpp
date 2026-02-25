@@ -779,6 +779,24 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     // M49: String length — handled via SILGen path.
     case SemIR::InstKind::StringLen:
       break;
+
+    // M61: String method calls — handled via SILGen path.
+    case SemIR::InstKind::StringMethodRef:
+    case SemIR::InstKind::StringUppercased:
+    case SemIR::InstKind::StringLowercased:
+    case SemIR::InstKind::StringTrimmed:
+    case SemIR::InstKind::StringHasPrefix:
+    case SemIR::InstKind::StringHasSuffix:
+    case SemIR::InstKind::StringContains:
+      break;
+
+    // M65: Dynamic array operations — handled via SILGen path.
+    case SemIR::InstKind::DynamicArrayInit:
+    case SemIR::InstKind::DynamicArrayAppend:
+    case SemIR::InstKind::DynamicArrayCount:
+    case SemIR::InstKind::DynamicArrayAccess:
+    case SemIR::InstKind::DynamicArrayMethodRef:
+      break;
   }
 }
 

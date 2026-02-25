@@ -497,9 +497,10 @@ auto HandleGuardStatement(Context& context, Parse::NodeId node_id) -> void {
 auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
   auto children = context.children_source_order(node_id);
 
-  // Extract: pattern node, sequence node, body node.
+  // Extract: pattern node, sequence node, where node (optional), body node.
   Parse::NodeId pattern_node = Parse::NodeId::None;
   Parse::NodeId sequence_node = Parse::NodeId::None;
+  Parse::NodeId where_node = Parse::NodeId::None;   // M63: where clause
   Parse::NodeId body_node = Parse::NodeId::None;
 
   for (auto child : children) {
@@ -511,9 +512,13 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
       pattern_node = child;
     } else if (child_kind == Parse::NodeKind::CodeBlock) {
       body_node = child;
-    } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr) &&
-               !sequence_node.has_value()) {
-      sequence_node = child;
+    } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+      // First Expr is the sequence; second Expr (if any) is the where condition.
+      if (!sequence_node.has_value()) {
+        sequence_node = child;
+      } else if (!where_node.has_value()) {
+        where_node = child;  // M63: where clause expression
+      }
     }
   }
 
@@ -664,11 +669,36 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
         context.AddNameToScope(loop_var_name_id, binding_id);
       }
 
-      if (body_node.has_value()) HandleCodeBlock(context, body_node);
+      // M63: If where clause is present, wrap body execution conditionally.
+      if (where_node.has_value()) {
+        auto where_exec_id = context.inst_blocks().AddPlaceholder();
+        auto inc_block_id = context.inst_blocks().AddPlaceholder();
+        auto where_cond_id = HandleExpr(context, where_node);
+        context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::BranchIf{.target_id = SemIR::LabelId(where_exec_id),
+                             .cond_id = where_cond_id}));
+        context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::Branch{.target_id = SemIR::LabelId(inc_block_id)}));
+        // body_block_id terminated; SwitchInstBlock will pop+finalize it.
+        context.SwitchInstBlock(where_exec_id);
+        context.AddBodyBlock(where_exec_id);
+        if (body_node.has_value()) HandleCodeBlock(context, body_node);
+        if (!context.IsCurrentBlockTerminated()) {
+          context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::Branch{.target_id = SemIR::LabelId(inc_block_id)}));
+        }
+        context.PopLoopContext();
+        context.SwitchInstBlock(inc_block_id);
+        context.AddBodyBlock(inc_block_id);
+      } else {
+        if (body_node.has_value()) HandleCodeBlock(context, body_node);
+        context.PopLoopContext();
+      }
 
-      context.PopLoopContext();
-
-      // Increment index.
+      // Increment index (goes into current block: body_block_id or inc_block_id).
       auto idx_reload_id = context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
           SemIR::NameRef{.type_id = int_type,
@@ -810,12 +840,37 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
     // Push loop context so break/continue can find their targets.
     context.PushLoopContext(merge_block_id, cond_block_id);
 
-    // Process body statements.
-    if (body_node.has_value()) {
-      HandleCodeBlock(context, body_node);
+    // M63: If where clause present, conditionally execute body.
+    if (where_node.has_value()) {
+      auto where_exec_id = context.inst_blocks().AddPlaceholder();
+      auto inc_block_id = context.inst_blocks().AddPlaceholder();
+      auto where_cond_id = HandleExpr(context, where_node);
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::BranchIf{.target_id = SemIR::LabelId(where_exec_id),
+                           .cond_id = where_cond_id}));
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(inc_block_id)}));
+      // SwitchInstBlock finalizes body_block_id and starts where_exec_id.
+      context.SwitchInstBlock(where_exec_id);
+      context.AddBodyBlock(where_exec_id);
+      if (body_node.has_value()) HandleCodeBlock(context, body_node);
+      if (!context.IsCurrentBlockTerminated()) {
+        context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::Branch{.target_id = SemIR::LabelId(inc_block_id)}));
+      }
+      context.PopLoopContext();
+      context.SwitchInstBlock(inc_block_id);
+      context.AddBodyBlock(inc_block_id);
+    } else {
+      // Process body statements.
+      if (body_node.has_value()) {
+        HandleCodeBlock(context, body_node);
+      }
+      context.PopLoopContext();
     }
-
-    context.PopLoopContext();
 
     // Increment loop variable: i = i + 1.
     // These go into the tail block (which may differ from body_block_id).

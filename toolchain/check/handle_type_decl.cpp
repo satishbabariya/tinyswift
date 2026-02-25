@@ -385,6 +385,266 @@ static auto GenerateComputedPropertyGetter(
   }
 }
 
+// M64: Generates getter (and optionally setter) functions for a subscript
+// declaration: `subscript(i: Int) -> T { get { ... } set { ... } }`.
+// Getter: TypeName.subscript.get(self: T, i: I) -> V
+// Setter: TypeName.subscript.set(self: inout T, i: I, newValue: V)
+static auto HandleSubscriptDefinition(Context& context,
+                                      Parse::NodeId node_id) -> void {
+  auto children = context.children_source_order(node_id);
+
+  // Find SubscriptDefinitionStart and AccessorBlock.
+  Parse::NodeId start_node_id = Parse::NodeId::None;
+  Parse::NodeId accessor_block = Parse::NodeId::None;
+  for (auto child : children) {
+    auto ck = context.node_kind(child);
+    if (ck == Parse::NodeKind::SubscriptDefinitionStart) start_node_id = child;
+    if (ck == Parse::NodeKind::AccessorBlock) accessor_block = child;
+  }
+  if (!start_node_id.has_value()) return;
+
+  // Extract return type and params from SubscriptDefinitionStart.
+  SemIR::TypeId return_type_id = SemIR::ErrorInst::TypeId;
+  llvm::SmallVector<std::pair<SemIR::NameId, SemIR::TypeId>> params;
+
+  for (auto sc : context.children_source_order(start_node_id)) {
+    auto ck = context.node_kind(sc);
+    if (ck == Parse::NodeKind::ReturnType ||
+        ck.category().HasAnyOf(Parse::NodeCategory::Type)) {
+      // Try to get the type from ReturnType's children.
+      if (ck == Parse::NodeKind::ReturnType) {
+        for (auto rc : context.children_source_order(sc)) {
+          if (context.node_kind(rc).category().HasAnyOf(
+                  Parse::NodeCategory::Type) ||
+              context.node_kind(rc) == Parse::NodeKind::IdentifierType) {
+            return_type_id = HandleTypeExpr(context, rc);
+            break;
+          }
+        }
+      } else {
+        return_type_id = HandleTypeExpr(context, sc);
+      }
+    }
+    if (ck == Parse::NodeKind::ExplicitParamList) {
+      for (auto pc : context.children_source_order(sc)) {
+        if (context.node_kind(pc) == Parse::NodeKind::FunctionParam) {
+          SemIR::NameId pname = SemIR::NameId::None;
+          SemIR::TypeId ptype = SemIR::ErrorInst::TypeId;
+          for (auto fpc : context.children_source_order(pc)) {
+            auto fck = context.node_kind(fpc);
+            if (fck == Parse::NodeKind::IdentifierNameNotBeforeParams ||
+                fck == Parse::NodeKind::IdentifierNameBeforeParams ||
+                fck == Parse::NodeKind::IdentifierPattern) {
+              auto txt = context.token_text(context.node_token(fpc));
+              if (!txt.empty() && txt != "_") {
+                pname = SemIR::NameId::ForIdentifier(context.identifiers().Add(txt));
+              }
+            } else if (fck == Parse::NodeKind::TypeAnnotation ||
+                       fck.category().HasAnyOf(Parse::NodeCategory::Type)) {
+              ptype = HandleTypeExpr(context, fpc);
+            }
+          }
+          if (pname.has_value()) params.push_back({pname, ptype});
+        }
+      }
+    }
+  }
+
+  // Get enclosing type name.
+  auto enclosing_type_id = context.CurrentTypeInstId();
+  if (!enclosing_type_id.has_value()) return;
+  auto type_inst = context.insts().Get(enclosing_type_id);
+  llvm::StringRef type_name;
+  if (auto st = type_inst.TryAs<SemIR::StructType>()) {
+    auto& scope = context.name_scopes().Get(st->name_scope_id);
+    auto id_opt = scope.name_id.AsIdentifierId();
+    if (id_opt.has_value()) type_name = context.identifiers().Get(id_opt);
+  } else if (auto ct = type_inst.TryAs<SemIR::ClassType>()) {
+    auto& scope = context.name_scopes().Get(ct->name_scope_id);
+    auto id_opt = scope.name_id.AsIdentifierId();
+    if (id_opt.has_value()) type_name = context.identifiers().Get(id_opt);
+  }
+
+  static std::deque<std::string>* sub_name_storage = new std::deque<std::string>();
+
+  // Build getter function name "TypeName.subscript.get".
+  sub_name_storage->push_back(std::string(type_name) + ".subscript.get");
+  auto getter_mangled_id = SemIR::NameId::ForIdentifier(
+      context.identifiers().Add(sub_name_storage->back()));
+
+  auto self_type_id = SemIR::TypeId::ForTypeConstant(
+      SemIR::ConstantId::ForConcreteConstant(enclosing_type_id));
+  auto self_ident_id = context.identifiers().Add("self");
+  auto self_name_id = SemIR::NameId::ForIdentifier(self_ident_id);
+
+  // Build getter params: [self: T, i: I, ...].
+  llvm::SmallVector<SemIR::InstId> getter_param_ids;
+  auto getter_self_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::ValueParam{.type_id = self_type_id,
+                        .index = SemIR::CallParamIndex(0),
+                        .pretty_name_id = self_name_id}));
+  getter_param_ids.push_back(getter_self_id);
+  for (size_t i = 0; i < params.size(); ++i) {
+    auto pi = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::ValueParam{.type_id = params[i].second,
+                          .index = SemIR::CallParamIndex(static_cast<int32_t>(i + 1)),
+                          .pretty_name_id = params[i].first}));
+    getter_param_ids.push_back(pi);
+  }
+
+  // Create getter SemIR Function.
+  SemIR::Function getter_fn;
+  getter_fn.name_id = getter_mangled_id;
+  getter_fn.parent_scope_id = context.CurrentScopeId();
+  getter_fn.return_type_inst_id = context.types().GetTypeInstId(return_type_id);
+  auto g_params_id = context.inst_blocks().AddPlaceholder();
+  context.inst_blocks().ReplacePlaceholder(
+      g_params_id, llvm::ArrayRef<SemIR::InstId>(getter_param_ids));
+  getter_fn.call_params_id = g_params_id;
+  auto g_decl_id = context.inst_blocks().AddPlaceholder();
+  context.inst_blocks().ReplacePlaceholder(g_decl_id, llvm::ArrayRef<SemIR::InstId>());
+  getter_fn.decl_block_id = g_decl_id;
+  auto getter_fn_id = context.functions().Add(getter_fn);
+
+  auto getter_decl_id = context.AddInst(SemIR::LocIdAndInst::UncheckedLoc(
+      SemIR::LocId(node_id),
+      SemIR::FunctionDecl{.type_id = SemIR::TypeType::TypeId,
+                          .function_id = getter_fn_id,
+                          .decl_block_id = g_decl_id}));
+
+  // Register getter under "subscript" in type scope.
+  auto sub_ident_id = context.identifiers().Add("subscript");
+  auto sub_name_id = SemIR::NameId::ForIdentifier(sub_ident_id);
+  context.AddNameToScope(sub_name_id, getter_decl_id);
+
+  // Also register the return type for SubscriptExpr callers.
+  // (HandleSubscriptExpr looks up "subscript" → FunctionDecl and emits Call.)
+
+  // Detect get/set accessor bodies.
+  Parse::NodeId getter_body = Parse::NodeId::None;
+  Parse::NodeId setter_body = Parse::NodeId::None;
+  Parse::NodeId pending_code_block = Parse::NodeId::None;
+  bool has_explicit = false;
+  if (accessor_block.has_value()) {
+    for (auto ac : context.children_source_order(accessor_block)) {
+      auto ack = context.node_kind(ac);
+      if (ack == Parse::NodeKind::AccessorBlockStart ||
+          ack == Parse::NodeKind::CodeBlockStart) continue;
+      if (ack == Parse::NodeKind::CodeBlock) {
+        pending_code_block = ac;
+      } else if (ack == Parse::NodeKind::GetAccessor) {
+        has_explicit = true;
+        if (pending_code_block.has_value()) {
+          getter_body = pending_code_block;
+          pending_code_block = Parse::NodeId::None;
+        }
+      } else if (ack == Parse::NodeKind::SetAccessor) {
+        has_explicit = true;
+        if (pending_code_block.has_value()) {
+          setter_body = pending_code_block;
+          pending_code_block = Parse::NodeId::None;
+        }
+      }
+    }
+    if (!has_explicit) getter_body = accessor_block;
+  }
+
+  // Build getter body.
+  if (getter_body.has_value()) {
+    context.SetCurrentFunction(getter_fn_id);
+    context.SetCurrentType(enclosing_type_id);
+    auto g_scope_id = context.name_scopes().Add(
+        getter_decl_id, getter_mangled_id, context.CurrentScopeId());
+    context.PushScope(g_scope_id);
+    context.AddNameToScope(self_name_id, getter_self_id);
+    for (size_t i = 0; i < params.size(); ++i) {
+      context.AddNameToScope(params[i].first, getter_param_ids[i + 1]);
+    }
+    auto g_block_id = context.PushInstBlock();
+    context.functions().Get(getter_fn_id).body_block_ids.push_back(g_block_id);
+    HandleCodeBlock(context, getter_body);
+    context.PopInstBlock();
+    context.ClearCurrentFunction();
+    context.ClearCurrentType();
+    context.PopScope();
+  }
+
+  // Build setter if present.
+  if (setter_body.has_value()) {
+    sub_name_storage->push_back(std::string(type_name) + ".subscript.set");
+    auto setter_mangled_id = SemIR::NameId::ForIdentifier(
+        context.identifiers().Add(sub_name_storage->back()));
+    sub_name_storage->push_back("subscript.set");
+    auto setter_lookup_id = SemIR::NameId::ForIdentifier(
+        context.identifiers().Add(sub_name_storage->back()));
+
+    auto setter_self_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::InoutParam{.type_id = self_type_id,
+                          .index = SemIR::CallParamIndex(0),
+                          .name_id = self_name_id}));
+
+    llvm::SmallVector<SemIR::InstId> setter_param_ids = {setter_self_id};
+    for (size_t i = 0; i < params.size(); ++i) {
+      auto pi = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::ValueParam{.type_id = params[i].second,
+                            .index = SemIR::CallParamIndex(static_cast<int32_t>(i + 1)),
+                            .pretty_name_id = params[i].first}));
+      setter_param_ids.push_back(pi);
+    }
+    auto nv_ident = context.identifiers().Add("newValue");
+    auto nv_name = SemIR::NameId::ForIdentifier(nv_ident);
+    auto nv_param = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::ValueParam{.type_id = return_type_id,
+                          .index = SemIR::CallParamIndex(
+                              static_cast<int32_t>(params.size() + 1)),
+                          .pretty_name_id = nv_name}));
+    setter_param_ids.push_back(nv_param);
+
+    SemIR::Function setter_fn;
+    setter_fn.name_id = setter_mangled_id;
+    setter_fn.parent_scope_id = context.CurrentScopeId();
+    setter_fn.is_mutating = true;
+    auto s_params_id = context.inst_blocks().AddPlaceholder();
+    context.inst_blocks().ReplacePlaceholder(
+        s_params_id, llvm::ArrayRef<SemIR::InstId>(setter_param_ids));
+    setter_fn.call_params_id = s_params_id;
+    auto s_decl_id = context.inst_blocks().AddPlaceholder();
+    context.inst_blocks().ReplacePlaceholder(s_decl_id, llvm::ArrayRef<SemIR::InstId>());
+    setter_fn.decl_block_id = s_decl_id;
+    auto setter_fn_id = context.functions().Add(setter_fn);
+
+    auto setter_decl_id = context.AddInst(SemIR::LocIdAndInst::UncheckedLoc(
+        SemIR::LocId(node_id),
+        SemIR::FunctionDecl{.type_id = SemIR::TypeType::TypeId,
+                            .function_id = setter_fn_id,
+                            .decl_block_id = s_decl_id}));
+    context.AddNameToScope(setter_lookup_id, setter_decl_id);
+
+    context.SetCurrentFunction(setter_fn_id);
+    context.SetCurrentType(enclosing_type_id);
+    auto s_scope_id = context.name_scopes().Add(
+        setter_decl_id, setter_mangled_id, context.CurrentScopeId());
+    context.PushScope(s_scope_id);
+    context.AddNameToScope(self_name_id, setter_self_id);
+    for (size_t i = 0; i < params.size(); ++i) {
+      context.AddNameToScope(params[i].first, setter_param_ids[i + 1]);
+    }
+    context.AddNameToScope(nv_name, nv_param);
+    auto s_block_id = context.PushInstBlock();
+    context.functions().Get(setter_fn_id).body_block_ids.push_back(s_block_id);
+    HandleCodeBlock(context, setter_body);
+    context.PopInstBlock();
+    context.ClearCurrentFunction();
+    context.ClearCurrentType();
+    context.PopScope();
+  }
+}
+
 // Generates a custom init function for an `init(...)` declaration.
 // The init function:
 //   - Has the explicit parameters (no self param)
@@ -655,6 +915,20 @@ auto HandleTypeMembers(Context& context,
           continue;
         }
 
+        // M62: Nested type definitions inside a type body.
+        if (bc_kind == Parse::NodeKind::StructDefinition ||
+            bc_kind == Parse::NodeKind::ClassDefinition ||
+            bc_kind == Parse::NodeKind::EnumDefinition) {
+          HandleStatement(context, bc);
+          continue;
+        }
+
+        // M64: Subscript declarations inside a type body.
+        if (bc_kind == Parse::NodeKind::SubscriptDefinition) {
+          HandleSubscriptDefinition(context, bc);
+          continue;
+        }
+
         if (bc_kind.category().HasAnyOf(Parse::NodeCategory::Statement |
                                         Parse::NodeCategory::Decl)) {
           HandleStatement(context, bc);
@@ -666,6 +940,20 @@ auto HandleTypeMembers(Context& context,
     // InitDefinition as a direct child (not inside CodeBlock).
     if (child_kind == Parse::NodeKind::InitDefinition) {
       HandleInitDefinition(context, child);
+      continue;
+    }
+
+    // M62: Nested type definitions as direct children.
+    if (child_kind == Parse::NodeKind::StructDefinition ||
+        child_kind == Parse::NodeKind::ClassDefinition ||
+        child_kind == Parse::NodeKind::EnumDefinition) {
+      HandleStatement(context, child);
+      continue;
+    }
+
+    // M64: Subscript declarations as direct children.
+    if (child_kind == Parse::NodeKind::SubscriptDefinition) {
+      HandleSubscriptDefinition(context, child);
       continue;
     }
 

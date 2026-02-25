@@ -754,7 +754,7 @@ static auto ParseSubscriptDecl(Context& context) -> void {
   // Return type.
   if (context.Peek() == Lex::TokenKind::MinusGreater) {
     auto arrow = context.Consume();
-    ParseTypeAnnotation(context);
+    ParseType(context);
     context.AddNode(NodeKind::ReturnType, arrow);
   }
 

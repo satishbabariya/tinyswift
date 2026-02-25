@@ -447,6 +447,10 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
       if (init_inst.Is<SemIR::ArrayLiteralInit>()) {
         context.SetArrayVarInit(var_id, init_id);
       }
+      // M65: Track dynamic array vars.
+      if (init_inst.Is<SemIR::DynamicArrayInit>()) {
+        context.SetDynamicArrayVar(var_id, init_id);
+      }
     }
   }
 

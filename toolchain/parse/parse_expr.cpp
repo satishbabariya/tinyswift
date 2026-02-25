@@ -504,6 +504,14 @@ static auto ParsePostfixExpr(Context& context) -> void {
       continue;
     }
 
+    // M60: Postfix `?` as Question token when followed by `.` (optional chaining `?.`).
+    if (kind == Lex::TokenKind::Question &&
+        context.PeekNext() == Lex::TokenKind::Period) {
+      auto op = context.Consume();
+      context.AddNode(NodeKind::PostfixOperatorExpr, op);
+      continue;
+    }
+
     break;
   }
 }

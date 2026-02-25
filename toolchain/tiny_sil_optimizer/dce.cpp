@@ -19,9 +19,11 @@ auto HasSideEffects(TinySIL::SILInstKind kind) -> bool {
     case TinySIL::SILInstKind::AllocStack:
     case TinySIL::SILInstKind::DeallocStack:
     case TinySIL::SILInstKind::AllocBox:
-    // Function calls.
+    // Function calls and builtins (may have side effects like dynarray_append,
+    // print_int, etc.).
     case TinySIL::SILInstKind::Apply:
     case TinySIL::SILInstKind::PartialApply:
+    case TinySIL::SILInstKind::BuiltinInst:
     // Terminators.
     case TinySIL::SILInstKind::Branch:
     case TinySIL::SILInstKind::CondBranch:

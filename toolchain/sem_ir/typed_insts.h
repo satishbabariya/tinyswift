@@ -1048,6 +1048,104 @@ struct StringLen {
   InstId operand_id; // the String value
 };
 
+// M61: Pending string method call — resolved in HandleCallExpr.
+// type_id is placeholder (ErrorInst::TypeId); real result type assigned by HandleCallExpr.
+struct StringMethodRef {
+  static constexpr auto Kind = InstKind::StringMethodRef.Define<Parse::NodeId>(
+      {.ir_name = "string_method_ref"});
+  TypeId type_id;        // placeholder
+  InstId str_id;         // the String value
+  NameId method_name_id; // which method (uppercased, hasPrefix, etc.)
+};
+
+// M61: Zero-arg string transformations.
+struct StringUppercased {
+  static constexpr auto Kind = InstKind::StringUppercased.Define<Parse::NodeId>(
+      {.ir_name = "string_uppercased"});
+  TypeId type_id;    // String
+  InstId str_id;
+};
+struct StringLowercased {
+  static constexpr auto Kind = InstKind::StringLowercased.Define<Parse::NodeId>(
+      {.ir_name = "string_lowercased"});
+  TypeId type_id;    // String
+  InstId str_id;
+};
+struct StringTrimmed {
+  static constexpr auto Kind = InstKind::StringTrimmed.Define<Parse::NodeId>(
+      {.ir_name = "string_trimmed"});
+  TypeId type_id;    // String
+  InstId str_id;
+};
+
+// M61: String predicate methods (one arg).
+struct StringHasPrefix {
+  static constexpr auto Kind = InstKind::StringHasPrefix.Define<Parse::NodeId>(
+      {.ir_name = "string_has_prefix"});
+  TypeId type_id;  // Bool
+  InstId str_id;
+  InstId arg_id;   // prefix string
+};
+struct StringHasSuffix {
+  static constexpr auto Kind = InstKind::StringHasSuffix.Define<Parse::NodeId>(
+      {.ir_name = "string_has_suffix"});
+  TypeId type_id;  // Bool
+  InstId str_id;
+  InstId arg_id;   // suffix string
+};
+struct StringContains {
+  static constexpr auto Kind = InstKind::StringContains.Define<Parse::NodeId>(
+      {.ir_name = "string_contains"});
+  TypeId type_id;  // Bool
+  InstId str_id;
+  InstId arg_id;   // substring
+};
+
+// M65: Dynamic array creation (var arr: [T] = []).
+// type_id is the pointer to the opaque array (ErrorInst::TypeId used as ptr marker).
+struct DynamicArrayInit {
+  static constexpr auto Kind = InstKind::DynamicArrayInit.Define<Parse::NodeId>(
+      {.ir_name = "dynamic_array_init"});
+  TypeId type_id;      // element type
+};
+
+// M65: arr.append(x) — side effect only.
+struct DynamicArrayAppend {
+  static constexpr auto Kind = InstKind::DynamicArrayAppend.Define<Parse::NodeId>(
+      {.ir_name = "dynamic_array_append",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // ErrorInst::TypeId (void)
+  InstId array_id;   // the dynamic array var
+  InstId elem_id;    // element to append
+};
+
+// M65: arr.count — runtime length.
+struct DynamicArrayCount {
+  static constexpr auto Kind = InstKind::DynamicArrayCount.Define<Parse::NodeId>(
+      {.ir_name = "dynamic_array_count"});
+  TypeId type_id;   // Int
+  InstId array_id;
+};
+
+// M65: arr[i] — runtime element access.
+struct DynamicArrayAccess {
+  static constexpr auto Kind = InstKind::DynamicArrayAccess.Define<Parse::NodeId>(
+      {.ir_name = "dynamic_array_access"});
+  TypeId type_id;    // element type
+  InstId array_id;
+  InstId index_id;
+};
+
+// M65: Pending dynamic array method call — resolved in HandleCallExpr.
+// Used for arr.append(...) where arg is not yet known.
+struct DynamicArrayMethodRef {
+  static constexpr auto Kind = InstKind::DynamicArrayMethodRef.Define<Parse::NodeId>(
+      {.ir_name = "dynamic_array_method_ref"});
+  TypeId type_id;        // placeholder (ErrorInst::TypeId)
+  InstId array_id;       // the dynamic array
+  NameId method_name_id; // which method ("append" etc.)
+};
+
 // These concepts are an implementation detail of the library, not public API.
 namespace Internal {
 

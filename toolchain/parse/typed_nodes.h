@@ -1243,7 +1243,7 @@ struct ImplicitlyUnwrappedOptionalType {
 // `[Type]`
 struct ArrayType {
   static constexpr auto Kind = NodeKind::ArrayType.Define(
-      {.category = NodeCategory::Type, .child_count = 2});
+      {.category = NodeCategory::Type, .child_count = 1});
 
   Lex::OpenSquareBracketTokenIndex token;
   AnyTypeExprId element;
@@ -1253,7 +1253,7 @@ struct ArrayType {
 // `[Key: Value]`
 struct DictionaryType {
   static constexpr auto Kind = NodeKind::DictionaryType.Define(
-      {.category = NodeCategory::Type, .child_count = 3});
+      {.category = NodeCategory::Type, .child_count = 2});
 
   Lex::OpenSquareBracketTokenIndex token;
   AnyTypeExprId key;

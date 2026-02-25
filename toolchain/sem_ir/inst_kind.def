@@ -187,4 +187,20 @@ TINYSWIFT_SEM_IR_INST_KIND(StringLen)
 TINYSWIFT_SEM_IR_INST_KIND(InoutParam)
 TINYSWIFT_SEM_IR_INST_KIND(AddressOf)
 
+// String methods (M61)
+TINYSWIFT_SEM_IR_INST_KIND(StringMethodRef)    // pending marker resolved by HandleCallExpr
+TINYSWIFT_SEM_IR_INST_KIND(StringUppercased)   // s.uppercased() -> String
+TINYSWIFT_SEM_IR_INST_KIND(StringLowercased)   // s.lowercased() -> String
+TINYSWIFT_SEM_IR_INST_KIND(StringTrimmed)      // s.trimmed() -> String
+TINYSWIFT_SEM_IR_INST_KIND(StringHasPrefix)    // s.hasPrefix(p) -> Bool
+TINYSWIFT_SEM_IR_INST_KIND(StringHasSuffix)    // s.hasSuffix(s) -> Bool
+TINYSWIFT_SEM_IR_INST_KIND(StringContains)     // s.contains(sub) -> Bool
+
+// Dynamic arrays (M65)
+TINYSWIFT_SEM_IR_INST_KIND(DynamicArrayInit)      // var arr: [Int] = []
+TINYSWIFT_SEM_IR_INST_KIND(DynamicArrayAppend)    // arr.append(x)
+TINYSWIFT_SEM_IR_INST_KIND(DynamicArrayCount)     // arr.count (runtime)
+TINYSWIFT_SEM_IR_INST_KIND(DynamicArrayAccess)    // arr[i]
+TINYSWIFT_SEM_IR_INST_KIND(DynamicArrayMethodRef) // pending marker for arr.append
+
 #undef TINYSWIFT_SEM_IR_INST_KIND
