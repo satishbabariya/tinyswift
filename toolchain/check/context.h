@@ -260,6 +260,29 @@ class Context {
     return id;
   }
 
+  // M80: Pending generic argument clause from GenericSpecExpr.
+  auto SetPendingGenericArgClause(Parse::NodeId node_id) -> void {
+    pending_generic_arg_clause_ = node_id;
+  }
+  auto TakePendingGenericArgClause() -> Parse::NodeId {
+    auto id = pending_generic_arg_clause_;
+    pending_generic_arg_clause_ = Parse::NodeId::None;
+    return id;
+  }
+
+  // --- M81: Error handling catch block target ---
+  // When inside a do-catch, HandleTryExpr branches to this catch block on error.
+  auto PushCatchBlock(SemIR::InstBlockId catch_id) -> void {
+    catch_block_stack_.push_back(catch_id);
+  }
+  auto PopCatchBlock() -> void {
+    catch_block_stack_.pop_back();
+  }
+  auto CurrentCatchBlock() const -> SemIR::InstBlockId {
+    return catch_block_stack_.empty() ? SemIR::InstBlockId::None
+                                      : catch_block_stack_.back();
+  }
+
   // --- Deferred blocks for defer statement (M51) ---
   // `defer { ... }` pushes the CodeBlock parse node here. Each return
   // statement emits deferred blocks LIFO before its ReturnExpr.
@@ -453,8 +476,14 @@ class Context {
   // CallExpr's subtree (orphaned by GenericArgumentClause in the parse tree).
   SemIR::InstId pending_callee_id_ = SemIR::InstId::None;
 
+  // M80: Pending generic argument clause node from GenericSpecExpr.
+  Parse::NodeId pending_generic_arg_clause_ = Parse::NodeId::None;
+
   // Stack of active loop contexts (for break/continue targets).
   llvm::SmallVector<LoopContext> loop_stack_;
+
+  // M81: Stack of catch block targets for try expressions.
+  llvm::SmallVector<SemIR::InstBlockId> catch_block_stack_;
 
   // Stack of deferred CodeBlock parse nodes (M51: defer statement).
   // Each `defer { ... }` pushes its CodeBlock here.

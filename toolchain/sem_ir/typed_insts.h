@@ -978,6 +978,21 @@ struct ThrowValue {
   InstId error_id;
 };
 
+// M81: Check if an error is pending in the thread-local error slot.
+// Returns a Bool (true if error is set).
+struct ErrorCheck {
+  static constexpr auto Kind = InstKind::ErrorCheck.Define<Parse::NodeId>(
+      {.ir_name = "error_check"});
+  TypeId type_id;  // Bool
+};
+
+// M81: Clear the thread-local error slot.
+struct ErrorClear {
+  static constexpr auto Kind = InstKind::ErrorClear.Define<Parse::NodeId>(
+      {.ir_name = "error_clear",
+       .constant_kind = InstConstantKind::Never});
+};
+
 // M42: Dictionary initialization `["k": v, ...]`.
 // entries_id stores interleaved [key0, val0, key1, val1, ...].
 struct DictInit {

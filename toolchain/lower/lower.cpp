@@ -1093,6 +1093,47 @@ auto LowerSILInst(
         if (ptr && idx) {
           setSILValue(inst.result, builder.CreateGEP(builder.getInt64Ty(), ptr, {idx}));
         }
+      // M81: Error handling runtime calls.
+      } else if (name == "error_set") {
+        auto* fn_type = llvm::FunctionType::get(
+            builder.getVoidTy(), {builder.getInt64Ty()}, false);
+        auto callee = context.module().getOrInsertFunction(
+            "__tinyswift_error_set", fn_type);
+        llvm::Value* val = nullptr;
+        if (!inst.operand_list.empty()) {
+          val = getSILValue(inst.operand_list[0]);
+        }
+        if (!val) {
+          // Use literal_value as fallback.
+          val = builder.getInt64(inst.literal_value);
+        }
+        // Widen to i64 if needed (e.g. enum tag is i8).
+        if (!val->getType()->isIntegerTy(64)) {
+          val = builder.CreateSExt(val, builder.getInt64Ty());
+        }
+        builder.CreateCall(callee, {val});
+      } else if (name == "error_check") {
+        auto* fn_type = llvm::FunctionType::get(
+            builder.getInt32Ty(), {}, false);
+        auto callee = context.module().getOrInsertFunction(
+            "__tinyswift_error_check", fn_type);
+        auto* result_i32 = builder.CreateCall(callee, {});
+        // Truncate i32 to i1 for branch condition.
+        auto* result_i1 = builder.CreateICmpNE(
+            result_i32, builder.getInt32(0));
+        setSILValue(inst.result, result_i1);
+      } else if (name == "error_clear") {
+        auto* fn_type = llvm::FunctionType::get(
+            builder.getVoidTy(), {}, false);
+        auto callee = context.module().getOrInsertFunction(
+            "__tinyswift_error_clear", fn_type);
+        builder.CreateCall(callee, {});
+      } else if (name == "error_get") {
+        auto* fn_type = llvm::FunctionType::get(
+            builder.getInt64Ty(), {}, false);
+        auto callee = context.module().getOrInsertFunction(
+            "__tinyswift_error_get", fn_type);
+        setSILValue(inst.result, builder.CreateCall(callee, {}));
       } else {
         llvm::errs() << "WARNING: unrecognized builtin in LowerSILInst: "
                      << name << "\n";

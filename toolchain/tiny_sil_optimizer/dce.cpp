@@ -52,7 +52,8 @@ auto HasSideEffects(const TinySIL::SILInstruction& inst) -> bool {
           name == "string_lowercased" ||
           name == "string_trimmed" ||
           name == "array_literal_init" ||
-          name == "array_element_addr") {
+          name == "array_element_addr" ||
+          name.starts_with("error_")) {
         return true;
       }
       // Pure builtins (arithmetic, comparison, access) — can be eliminated

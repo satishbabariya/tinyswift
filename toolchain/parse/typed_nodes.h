@@ -1346,6 +1346,17 @@ struct GenericArgumentClause {
   Lex::TokenIndex token;
 };
 
+// M80: `Wrapper<Int>` in expression context — wraps base identifier + generic
+// arguments into a single Expr node so MemberAccessExpr (child_count=2) works.
+struct GenericSpecExpr {
+  static constexpr auto Kind = NodeKind::GenericSpecExpr.Define(
+      {.category = NodeCategory::Expr, .child_count = 2});
+
+  AnyExprId base;
+  GenericArgumentClauseId generic_args;
+  Lex::TokenIndex token;
+};
+
 // `where T == Int`
 struct SameTypeRequirement {
   static constexpr auto Kind = NodeKind::SameTypeRequirement.Define(

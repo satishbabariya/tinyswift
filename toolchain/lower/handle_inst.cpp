@@ -784,8 +784,10 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     case SemIR::InstKind::AddressOf:
       break;
 
-    // M41: throw — handled via SILGen path.
+    // M41/M81: error handling — handled via SILGen path.
     case SemIR::InstKind::ThrowValue:
+    case SemIR::InstKind::ErrorCheck:
+    case SemIR::InstKind::ErrorClear:
       break;
 
     // M42: Dictionary operations — handled via SILGen path.

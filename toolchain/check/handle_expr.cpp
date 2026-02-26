@@ -1630,9 +1630,15 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
   SemIR::InstId base_id = SemIR::InstId::None;
   llvm::StringRef member_name;
   bool is_optional_chain = false;  // M60: x?.foo
+  Parse::NodeId generic_arg_clause_node = Parse::NodeId::None;  // M80
 
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
+    // M80: Capture GenericArgumentClause if it appears as a direct child.
+    if (child_kind == Parse::NodeKind::GenericArgumentClause) {
+      generic_arg_clause_node = child;
+      continue;
+    }
     if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
       if (!base_id.has_value()) {
         // M60: Detect optional chaining operator (x?.foo).
@@ -1663,6 +1669,11 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
                    Parse::NodeCategory::MemberName)) {
       member_name = context.token_text(context.node_token(child));
     }
+  }
+
+  // M80: If GenericSpecExpr set pending generic args, pick them up now.
+  if (!generic_arg_clause_node.has_value()) {
+    generic_arg_clause_node = context.TakePendingGenericArgClause();
   }
 
   // M60: Optional chaining desugaring (x?.foo → Optional<FooType>).
@@ -1826,6 +1837,36 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
     if (actual_base_id.has_value()) {
       auto actual_inst = context.insts().Get(actual_base_id);
       if (auto enum_decl = actual_inst.TryAs<SemIR::EnumDecl>()) {
+        // M80: If this is a generic enum template with type args, specialize
+        // before looking up the case in the scope.
+        if (generic_arg_clause_node.has_value()) {
+          auto& orig_scope = context.name_scopes().Get(enum_decl->name_scope_id);
+          auto tmpl_it = context.generic_type_templates().find(
+              orig_scope.name_id.index);
+          if (tmpl_it != context.generic_type_templates().end()) {
+            llvm::SmallVector<SemIR::TypeId> generic_type_args;
+            for (auto cc : context.children_source_order(
+                     generic_arg_clause_node)) {
+              auto cc_kind = context.node_kind(cc);
+              if (cc_kind == Parse::NodeKind::GenericArgumentClauseStart ||
+                  cc_kind == Parse::NodeKind::PatternListComma) {
+                continue;
+              }
+              if (cc_kind.category().HasAnyOf(Parse::NodeCategory::Type)) {
+                generic_type_args.push_back(HandleTypeExpr(context, cc));
+              }
+            }
+            if (!generic_type_args.empty()) {
+              auto specialized_id = SpecializeGenericType(
+                  context, orig_scope.name_id.index, generic_type_args);
+              if (specialized_id.has_value()) {
+                actual_base_id = specialized_id;
+                actual_inst = context.insts().Get(specialized_id);
+                enum_decl = actual_inst.TryAs<SemIR::EnumDecl>();
+              }
+            }
+          }
+        }
         auto& scope = context.name_scopes().Get(enum_decl->name_scope_id);
         auto ident_id = context.identifiers().Lookup(member_name);
         if (ident_id.has_value()) {
@@ -3518,15 +3559,44 @@ auto HandleAsExclaimExpr(Context& context, Parse::NodeId /*node_id*/)
   return lhs_id.has_value() ? lhs_id : SemIR::InstId::None;
 }
 
-// M41: `try expr` — pass through the inner expression.
+// M81: `try expr` — evaluate inner expression, check error slot.
+// If inside a do-catch, branch to catch block on error.
 auto HandleTryExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
   auto children = context.children_source_order(node_id);
+  SemIR::InstId result_id = SemIR::InstId::None;
   for (auto child : children) {
     if (context.node_kind(child).category().HasAnyOf(Parse::NodeCategory::Expr)) {
-      return HandleExpr(context, child);
+      result_id = HandleExpr(context, child);
+      break;
     }
   }
-  return SemIR::InstId::None;
+
+  // If there's a catch block target, emit error check + conditional branch.
+  auto catch_block = context.CurrentCatchBlock();
+  if (catch_block.has_value()) {
+    auto bool_type = context.GetBuiltinType("Bool");
+    auto error_check_id = context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::ErrorCheck{.type_id = bool_type}));
+
+    // Create a continue block for the no-error path.
+    auto continue_block_id = context.inst_blocks().AddPlaceholder();
+
+    // BranchIf(error → catch) + Branch(no error → continue).
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::BranchIf{.target_id = SemIR::LabelId(catch_block),
+                         .cond_id = error_check_id}));
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(continue_block_id)}));
+
+    // Switch to continue block — subsequent code goes here.
+    context.SwitchInstBlock(continue_block_id);
+    context.AddBodyBlock(continue_block_id);
+  }
+
+  return result_id;
 }
 
 // M40: `&varName` — address-of expression.
@@ -3684,6 +3754,22 @@ auto HandleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
   }
   if (kind == Parse::NodeKind::MemberAccessExpr) {
     return HandleMemberAccessExpr(context, node_id);
+  }
+  // M80: GenericSpecExpr wraps `Identifier<Args>` — evaluate the base
+  // identifier and store the generic argument clause for use by the
+  // parent MemberAccessExpr.
+  if (kind == Parse::NodeKind::GenericSpecExpr) {
+    auto spec_children = context.children_source_order(node_id);
+    SemIR::InstId base_result = SemIR::InstId::None;
+    for (auto child : spec_children) {
+      auto ck = context.node_kind(child);
+      if (ck == Parse::NodeKind::GenericArgumentClause) {
+        context.SetPendingGenericArgClause(child);
+      } else if (ck.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+        base_result = HandleExpr(context, child);
+      }
+    }
+    return base_result;
   }
   if (kind == Parse::NodeKind::InfixOperatorExpr) {
     return HandleInfixOperatorExpr(context, node_id);

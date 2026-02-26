@@ -172,6 +172,10 @@ auto TokenizedBuffer::GetTokenText(TokenIndex token) const -> llvm::StringRef {
       if (*p == '/' && p + 1 < end && (*(p + 1) == '/' || *(p + 1) == '*')) {
         break;
       }
+      // M80: Stop after '>' before '.' to match lexer token splitting.
+      if (*p == '.' && p > start && *(p - 1) == '>') {
+        break;
+      }
       ++p;
     }
     return llvm::StringRef(start, p - start);

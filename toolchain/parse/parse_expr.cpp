@@ -436,8 +436,15 @@ static auto ParsePostfixExpr(Context& context) -> void {
          kind == Lex::TokenKind::OperatorPrefix) &&
         context.GetTokenText() == "<") {
       ParseGenericArguments(context);
-      // After parsing generic args, update kind for the next token.
-      kind = context.Peek();
+      // M80: If followed by `.`, wrap base+generic_args into GenericSpecExpr
+      // so MemberAccessExpr (child_count=2) captures the whole type as one child.
+      if (context.Peek() == Lex::TokenKind::Period) {
+        context.AddNode(NodeKind::GenericSpecExpr,
+                        Lex::TokenIndex(context.position().index - 1));
+      }
+      // After parsing generic args, re-evaluate from top of postfix loop
+      // so `.member` check at the top can handle the Period token.
+      continue;
     }
 
     // Call expression: `(args...)`

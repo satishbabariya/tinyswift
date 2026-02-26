@@ -166,8 +166,10 @@ TINYSWIFT_SEM_IR_INST_KIND(IntShiftRight)
 // String conversion (M38)
 TINYSWIFT_SEM_IR_INST_KIND(IntToString)
 
-// Error handling (M41)
+// Error handling (M41/M81)
 TINYSWIFT_SEM_IR_INST_KIND(ThrowValue)
+TINYSWIFT_SEM_IR_INST_KIND(ErrorCheck)
+TINYSWIFT_SEM_IR_INST_KIND(ErrorClear)
 
 // Dictionary operations (M42)
 TINYSWIFT_SEM_IR_INST_KIND(DictInit)

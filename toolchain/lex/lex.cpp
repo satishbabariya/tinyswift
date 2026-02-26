@@ -1143,6 +1143,11 @@ class Lexer {
           break;
         }
       }
+      // M80: Stop after '>' before '.' to allow `Type<Args>.member` syntax.
+      // Without this, `>.` is lexed as a single operator token.
+      if (*cursor_ == '.' && cursor_ > start && *(cursor_ - 1) == '>') {
+        break;
+      }
       ++cursor_;
     }
 

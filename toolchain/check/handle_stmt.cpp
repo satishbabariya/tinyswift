@@ -1177,8 +1177,19 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
   }
 
   // ---- Phase 6: Build body blocks ----
+  // Use PushInstBlockWithId to emit instructions directly into body_block_ids[i].
+  // This ensures that if nested control flow (e.g., HandleTryExpr) calls
+  // SwitchInstBlock, body_block_ids[i] is properly finalized with the correct
+  // instructions, and any continuation blocks are also correctly handled.
   for (size_t i = 0; i < arms.size(); ++i) {
-    context.PushInstBlock();
+    context.PushInstBlockWithId(body_block_ids[i]);
+    // Register the body block BEFORE emitting body statements, so that any
+    // continuation blocks created during emission (e.g., by HandleTryExpr's
+    // SwitchInstBlock) appear AFTER the body block in the function's block
+    // list. SILGen processes blocks in order, so the body block (which defines
+    // values like call results) must come before continuation blocks that use
+    // those values.
+    context.AddBodyBlock(body_block_ids[i]);
 
     // If this arm has an enum payload binding (e.g., `.success(let v)`),
     // inject the binding at the start of the body block.
@@ -1244,11 +1255,13 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
           SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
     }
 
-    auto tmp_id = context.PopInstBlock();
-    auto body_insts = context.inst_blocks().Get(tmp_id);
-    context.inst_blocks().ReplacePlaceholder(
-        body_block_ids[i], llvm::ArrayRef<SemIR::InstId>(body_insts));
-    context.AddBodyBlock(body_block_ids[i]);
+    // PopInstBlock finalizes whatever is currently on top of the stack.
+    // If no SwitchInstBlock was called during body emission, this pops
+    // body_block_ids[i] and finalizes it directly.
+    // If SwitchInstBlock WAS called (e.g., by HandleTryExpr inside a do-catch),
+    // body_block_ids[i] was already finalized by SwitchInstBlock, and this
+    // pops the continuation block instead.
+    context.PopInstBlock();
   }
 }
 
@@ -1406,19 +1419,83 @@ auto HandleThrowStatement(Context& context, Parse::NodeId node_id) -> void {
       SemIR::ThrowValue{.error_id = error_id}));
 }
 
-// M41: `do { body } catch { handler }` — execute only the try body.
-// Catch clauses are skipped (no unwinding in M41). Since `throw` is a
-// terminator, control never reaches the catch body on the happy path.
+// M81: `do { body } catch { handler }` — full error handling.
+// Sets up a catch block target that HandleTryExpr will branch to on error.
 auto HandleDoStatement(Context& context, Parse::NodeId node_id) -> void {
   auto children = context.children_source_order(node_id);
+
+  Parse::NodeId try_body_node = Parse::NodeId::None;
+  llvm::SmallVector<Parse::NodeId, 2> catch_clause_nodes;
+
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
     if (child_kind == Parse::NodeKind::DoIntroducer) continue;
     if (child_kind == Parse::NodeKind::CodeBlock) {
-      // Try body: execute normally.
-      HandleCodeBlock(context, child);
+      try_body_node = child;
+    } else if (child_kind == Parse::NodeKind::DoCatchClause) {
+      catch_clause_nodes.push_back(child);
     }
-    // DoCatchClause: skip entirely in M41 (no error propagation).
+  }
+
+  // If no catch clauses, just execute the try body (same as M41).
+  if (catch_clause_nodes.empty()) {
+    if (try_body_node.has_value()) HandleCodeBlock(context, try_body_node);
+    return;
+  }
+
+  // Create catch and merge blocks.
+  auto catch_block_id = context.inst_blocks().AddPlaceholder();
+  auto merge_block_id = context.inst_blocks().AddPlaceholder();
+
+  // Push catch block so HandleTryExpr can branch to it on error.
+  context.PushCatchBlock(catch_block_id);
+
+  // Emit the try body.
+  if (try_body_node.has_value()) {
+    HandleCodeBlock(context, try_body_node);
+  }
+
+  context.PopCatchBlock();
+
+  // After the try body, branch unconditionally to merge — but only if the
+  // try body didn't already terminate (e.g., with return).
+  bool try_body_terminated = context.IsCurrentBlockTerminated();
+  if (!try_body_terminated) {
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+    // Switch emission to merge block (code after do-catch goes here).
+    // Only switch if the try body didn't return — otherwise we'd corrupt
+    // the block stack when nested inside switch case PushInstBlock.
+    context.SwitchInstBlock(merge_block_id);
+    context.AddBodyBlock(merge_block_id);
+  }
+
+  // Build the catch block.
+  {
+    context.PushInstBlock();
+
+    // Clear the error slot at the start of the catch block.
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::ErrorClear{}));
+
+    // Execute the first catch clause body.
+    for (auto catch_node : catch_clause_nodes) {
+      for (auto cc : context.children_source_order(catch_node)) {
+        if (context.node_kind(cc) == Parse::NodeKind::CodeBlock) {
+          HandleCodeBlock(context, cc);
+          break;
+        }
+      }
+      break;  // Only handle first catch clause.
+    }
+
+    auto tmp_id = context.PopInstBlock();
+    auto catch_insts = context.inst_blocks().Get(tmp_id);
+    context.inst_blocks().ReplacePlaceholder(
+        catch_block_id, llvm::ArrayRef<SemIR::InstId>(catch_insts));
+    context.AddBodyBlock(catch_block_id);
   }
 }
 

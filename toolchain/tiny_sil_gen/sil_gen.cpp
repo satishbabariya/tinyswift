@@ -1068,9 +1068,45 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     return;
   }
 
-  // M41: ThrowValue — terminates the block (unreachable in simplified form).
-  if (inst.Is<SemIR::ThrowValue>()) {
-    auto sil_inst = MakeVoidInst(TinySIL::SILInstKind::Unreachable);
+  // M81: ThrowValue — set thread-local error + return default.
+  if (auto tv = inst.TryAs<SemIR::ThrowValue>()) {
+    // Emit error_set(error_value).
+    auto error_val = ctx.GetValue(tv->error_id);
+    auto set_inst = MakeVoidInst(TinySIL::SILInstKind::BuiltinInst);
+    set_inst->builtin_name = "error_set";
+    if (error_val.is_valid()) {
+      set_inst->operand_list.push_back(error_val);
+    } else {
+      // Fallback: set error to 1 if we can't get the value.
+      set_inst->literal_value = 1;
+    }
+    ctx.emit(std::move(set_inst));
+
+    // Return default value (0 for integer types).
+    auto zero = AllocValue(ctx, ctx.GetSILType(SemIR::ErrorInst::TypeId));
+    auto zero_inst = MakeInst(TinySIL::SILInstKind::IntegerLiteral, zero);
+    zero_inst->literal_value = 0;
+    ctx.emit(std::move(zero_inst));
+    auto ret_inst = MakeVoidInst(TinySIL::SILInstKind::ReturnInst);
+    ret_inst->setOperand(0, zero);
+    ctx.emit(std::move(ret_inst));
+    return;
+  }
+
+  // M81: ErrorCheck — returns i1 (true if error is pending).
+  if (auto ec = inst.TryAs<SemIR::ErrorCheck>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(ec->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "error_check";
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M81: ErrorClear — clear the thread-local error slot.
+  if (inst.Is<SemIR::ErrorClear>()) {
+    auto sil_inst = MakeVoidInst(TinySIL::SILInstKind::BuiltinInst);
+    sil_inst->builtin_name = "error_clear";
     ctx.emit(std::move(sil_inst));
     return;
   }
