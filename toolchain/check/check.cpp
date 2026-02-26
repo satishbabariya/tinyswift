@@ -132,6 +132,10 @@ auto CheckParseTrees(
     auto& tree_and_subtrees = tree_and_subtrees_getters.Get(file_roots.check_ir_id)();
     context.SetCurrentTreeAndSubtrees(tree_and_subtrees);
     context.SetCurrentFile(file_roots.check_ir_id);
+    // M89: Clear stale pending state from previous file to prevent cross-file
+    // NodeId mismatches (attribute/access nodes belong to a specific parse tree).
+    context.TakePendingAttribute();
+    context.TakePendingAccessLevel();
 
     for (auto root : file_roots.roots) {
       if (handle_access_modifier(context, root)) continue;
@@ -153,6 +157,8 @@ auto CheckParseTrees(
     auto& tree_and_subtrees = tree_and_subtrees_getters.Get(file_roots.check_ir_id)();
     context.SetCurrentTreeAndSubtrees(tree_and_subtrees);
     context.SetCurrentFile(file_roots.check_ir_id);
+    context.TakePendingAttribute();
+    context.TakePendingAccessLevel();
 
     for (auto root : file_roots.roots) {
       if (handle_access_modifier(context, root)) continue;
@@ -181,6 +187,8 @@ auto CheckParseTrees(
     auto& tree_and_subtrees = tree_and_subtrees_getters.Get(file_roots.check_ir_id)();
     context.SetCurrentTreeAndSubtrees(tree_and_subtrees);
     context.SetCurrentFile(file_roots.check_ir_id);
+    context.TakePendingAttribute();
+    context.TakePendingAccessLevel();
 
     for (auto root : file_roots.roots) {
       if (handle_access_modifier(context, root)) continue;
@@ -198,6 +206,8 @@ auto CheckParseTrees(
     auto& tree_and_subtrees = tree_and_subtrees_getters.Get(file_roots.check_ir_id)();
     context.SetCurrentTreeAndSubtrees(tree_and_subtrees);
     context.SetCurrentFile(file_roots.check_ir_id);
+    context.TakePendingAttribute();
+    context.TakePendingAccessLevel();
 
     for (auto root : file_roots.roots) {
       if (handle_access_modifier(context, root)) continue;

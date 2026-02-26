@@ -386,6 +386,7 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
     fn.generic_params = generic_params;
     fn.template_node_id = node_id;
     fn.template_sig_node_id = sig_node_id;
+    fn.source_check_ir_id = context.current_file_id();
     fn.is_static = is_static_hint;
     fn.is_mutating = is_mutating_hint;
     fn.is_throwing = sig.is_throwing;
@@ -440,6 +441,13 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
       }
     } else if (auto ct = type_inst.TryAs<SemIR::ClassType>()) {
       auto& scope = context.name_scopes().Get(ct->name_scope_id);
+      auto ident_opt = scope.name_id.AsIdentifierId();
+      if (ident_opt.has_value()) {
+        type_name = context.identifiers().Get(ident_opt);
+      }
+    } else if (auto ed = type_inst.TryAs<SemIR::EnumDecl>()) {
+      // M89: Enum methods need name mangling too.
+      auto& scope = context.name_scopes().Get(ed->name_scope_id);
       auto ident_opt = scope.name_id.AsIdentifierId();
       if (ident_opt.has_value()) {
         type_name = context.identifiers().Get(ident_opt);
@@ -744,6 +752,7 @@ auto HandleFunctionDecl(Context& context, Parse::NodeId node_id) -> void {
     fn.is_generic_template = true;
     fn.generic_params = generic_params;
     fn.template_sig_node_id = node_id;
+    fn.source_check_ir_id = context.current_file_id();
   }
 
   if (sig.return_type_id.has_value()) {

@@ -1012,6 +1012,10 @@ auto HandleTypeMembers(Context& context,
         auto bc_kind = context.node_kind(bc);
         if (bc_kind == Parse::NodeKind::CodeBlockStart) continue;
 
+        // M89: Skip enum case nodes — they are processed by HandleEnumDefinition,
+        // not by HandleTypeMembers.
+        if (bc_kind == Parse::NodeKind::EnumCaseDecl) continue;
+
         // StaticModifier / MutatingModifier / AccessModifier are siblings of
         // FunctionDefinition. Track them so the next declaration can use them.
         if (bc_kind == Parse::NodeKind::StaticModifier) {
@@ -1117,6 +1121,9 @@ auto HandleTypeMembers(Context& context,
       continue;
     }
 
+    // M89: Skip enum case nodes as direct children.
+    if (child_kind == Parse::NodeKind::EnumCaseDecl) continue;
+
     // InitDefinition as a direct child (not inside CodeBlock).
     if (child_kind == Parse::NodeKind::InitDefinition) {
       HandleInitDefinition(context, child);
@@ -1189,6 +1196,7 @@ auto HandleStructDefinition(Context& context, Parse::NodeId node_id) -> void {
         tmpl.start_node_id = start_node_id;
         tmpl.generic_param_names.assign(generic_params.begin(), generic_params.end());
         tmpl.original_type_inst_id = struct_type_id;
+        tmpl.source_check_ir_id = context.current_file_id();
         context.generic_type_templates().insert({name_id.index, tmpl});
       }
       return;  // Skip body processing for generic template.
@@ -1267,6 +1275,7 @@ auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void {
         tmpl.start_node_id = start_node_id;
         tmpl.generic_param_names.assign(generic_params.begin(), generic_params.end());
         tmpl.original_type_inst_id = class_type_id;
+        tmpl.source_check_ir_id = context.current_file_id();
         context.generic_type_templates().insert({name_id.index, tmpl});
       }
       return;
@@ -1390,6 +1399,7 @@ auto HandleEnumDefinition(Context& context, Parse::NodeId node_id) -> void {
         tmpl.start_node_id = start_node_id;
         tmpl.generic_param_names.assign(generic_params.begin(), generic_params.end());
         tmpl.original_type_inst_id = enum_type_id;
+        tmpl.source_check_ir_id = context.current_file_id();
         context.generic_type_templates().insert({name_id.index, tmpl});
       }
       context.inst_blocks().ReplacePlaceholder(
@@ -1527,6 +1537,11 @@ auto HandleEnumDefinition(Context& context, Parse::NodeId node_id) -> void {
   // Finalize cases block.
   context.inst_blocks().ReplacePlaceholder(
       cases_block_id, llvm::ArrayRef<SemIR::InstId>(case_inst_ids));
+
+  // M89: Process methods, computed properties, init, subscripts inside enum body.
+  context.SetCurrentType(enum_type_id);
+  HandleTypeMembers(context, children);
+  context.ClearCurrentType();
 
   context.PopScope();
 }

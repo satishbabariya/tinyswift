@@ -87,6 +87,13 @@ auto SpecializeGenericFunction(Context& context,
   context.ClearDeferredBlocks();
   auto saved_type_param_bindings = context.type_param_bindings();
   auto saved_is_specializing = context.is_specializing();
+  auto& saved_fn_tree = context.tree_and_subtrees();
+
+  // M89: Switch to template's source file tree for cross-file instantiation.
+  if (context.all_trees() != nullptr) {
+    auto& source_tree = context.all_trees()->Get(template_fn.source_check_ir_id)();
+    context.SetCurrentTreeAndSubtrees(source_tree);
+  }
 
   // Bind type parameters to concrete types.
   context.type_param_bindings().clear();
@@ -110,6 +117,7 @@ auto SpecializeGenericFunction(Context& context,
     context.type_param_bindings() = saved_type_param_bindings;
     context.set_is_specializing(saved_is_specializing);
     context.SetCurrentFunction(saved_function_id);
+    context.SetCurrentTreeAndSubtrees(saved_fn_tree);
     context.ClearDeferredBlocks();
     for (auto block : saved_deferred) {
       context.PushDeferredBlock(block);
@@ -134,6 +142,7 @@ auto SpecializeGenericFunction(Context& context,
   context.type_param_bindings() = saved_type_param_bindings;
   context.set_is_specializing(saved_is_specializing);
   context.SetCurrentFunction(saved_function_id);
+  context.SetCurrentTreeAndSubtrees(saved_fn_tree);
   context.ClearDeferredBlocks();
   for (auto block : saved_deferred) {
     context.PushDeferredBlock(block);
@@ -229,6 +238,13 @@ auto SpecializeGenericType(Context& context,
   auto saved_bindings = context.type_param_bindings();
   auto saved_specializing = context.is_specializing();
   auto saved_type_id = context.CurrentTypeInstId();
+  auto& saved_tree = context.tree_and_subtrees();
+
+  // M89: Switch to the template's source file tree for cross-file instantiation.
+  if (context.all_trees() != nullptr) {
+    auto& source_tree = context.all_trees()->Get(tmpl.source_check_ir_id)();
+    context.SetCurrentTreeAndSubtrees(source_tree);
+  }
 
   // Bind type parameters.
   context.type_param_bindings().clear();
@@ -291,6 +307,8 @@ auto SpecializeGenericType(Context& context,
   context.type_param_bindings() = saved_bindings;
   context.set_is_specializing(saved_specializing);
   context.SetCurrentType(saved_type_id);
+  // M89: Restore original tree.
+  context.SetCurrentTreeAndSubtrees(saved_tree);
 
   // Cache and return.
   if (new_type_inst_id.has_value()) {
