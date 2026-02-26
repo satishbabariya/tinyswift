@@ -39,6 +39,8 @@ cc_library(
         "driver.cpp",
         "driver_env.h",
         "driver_subcommand.cpp",
+        "format_subcommand.cpp",
+        "format_subcommand.h",
     ],
     hdrs = [
         "driver.h",
@@ -63,6 +65,7 @@ cc_library(
         "//toolchain/codegen",
         "//toolchain/diagnostics:emitter",
         "//toolchain/diagnostics:sorting_consumer",
+        "//toolchain/format",
         "//toolchain/lex",
         "//toolchain/lower",
         "//toolchain/lower:options",

@@ -10,6 +10,7 @@
 #include "common/pretty_stack_trace_function.h"
 #include "common/version.h"
 #include "toolchain/driver/compile_subcommand.h"
+#include "toolchain/driver/format_subcommand.h"
 
 namespace TinySwift {
 
@@ -24,9 +25,9 @@ struct Options {
   bool include_diagnostic_kind = false;
 
   CompileSubcommand compile;
+  FormatSubcommand format;
 
   // TODO: Add additional subcommands as needed:
-  // - format: Format source code
   // - language-server: LSP support
   // - link: Link compiled objects
 
@@ -72,6 +73,7 @@ When printing diagnostics, include the diagnostic kind as part of output.
       [&](auto& arg_b) { arg_b.Set(&include_diagnostic_kind); });
 
   compile.AddTo(b, &selected_subcommand);
+  format.AddTo(b, &selected_subcommand);
 
   b.RequiresSubcommand();
 }

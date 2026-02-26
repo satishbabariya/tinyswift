@@ -39,6 +39,7 @@ constexpr Kind UntestedKinds[] = {
     Kind::FailureBuildingRuntimes,
     Kind::FailureRunningClang,
     Kind::FailureRunningClangToLink,
+    Kind::FormatOutputFileError,
 
     // These aren't feasible to test with a normal testcase.
     Kind::TooManyTokens,
