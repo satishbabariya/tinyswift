@@ -203,4 +203,16 @@ TINYSWIFT_SEM_IR_INST_KIND(DynamicArrayCount)     // arr.count (runtime)
 TINYSWIFT_SEM_IR_INST_KIND(DynamicArrayAccess)    // arr[i]
 TINYSWIFT_SEM_IR_INST_KIND(DynamicArrayMethodRef) // pending marker for arr.append
 
+// Unsafe pointer operations (M77)
+TINYSWIFT_SEM_IR_INST_KIND(UnsafePtrAllocate)     // UnsafeMutablePointer<T>.allocate(capacity:)
+TINYSWIFT_SEM_IR_INST_KIND(UnsafePtrDeallocate)   // ptr.deallocate()
+TINYSWIFT_SEM_IR_INST_KIND(UnsafePtrSubscript)    // ptr[i] read
+TINYSWIFT_SEM_IR_INST_KIND(UnsafePtrSubscriptAddr) // ptr[i] write address
+TINYSWIFT_SEM_IR_INST_KIND(UnsafePtrMethodRef)    // pending marker for ptr.allocate/deallocate
+
+// ARC operations (M78)
+TINYSWIFT_SEM_IR_INST_KIND(AllocClass)            // heap-allocate class + init fields
+TINYSWIFT_SEM_IR_INST_KIND(Retain)                // increment refcount
+TINYSWIFT_SEM_IR_INST_KIND(Release)               // decrement refcount, free if zero
+
 #undef TINYSWIFT_SEM_IR_INST_KIND

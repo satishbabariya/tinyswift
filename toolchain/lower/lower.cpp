@@ -1007,6 +1007,92 @@ auto LowerSILInst(
               "__tinyswift_dynarray_get_int", fty);
           setSILValue(inst.result, builder.CreateCall(callee, {arr_ptr, idx_val}));
         }
+      // M78: ARC operations.
+      } else if (name == "alloc_class") {
+        // __tinyswift_alloc(payload_size) → ptr to fields.
+        // literal_value holds the class TypeId index.
+        auto class_type_id = SemIR::TypeId(static_cast<int32_t>(inst.literal_value));
+        auto* fields_struct = GetClassFieldsType(context, class_type_id);
+        auto& layout = context.module().getDataLayout();
+        uint64_t size = layout.getTypeAllocSize(fields_struct);
+        auto* size_val = llvm::ConstantInt::get(builder.getInt64Ty(), size);
+        auto* alloc_fty = llvm::FunctionType::get(
+            builder.getPtrTy(), {builder.getInt64Ty()}, false);
+        auto alloc_callee = context.module().getOrInsertFunction(
+            "__tinyswift_alloc", alloc_fty);
+        auto* obj_ptr = builder.CreateCall(alloc_callee, {size_val});
+        // Store initial field values via GEP+store.
+        for (size_t i = 0; i < inst.operand_list.size(); ++i) {
+          auto* field_val = getSILValue(inst.operand_list[i]);
+          if (field_val) {
+            auto* gep = builder.CreateStructGEP(fields_struct, obj_ptr,
+                                                static_cast<unsigned>(i));
+            builder.CreateStore(field_val, gep);
+          }
+        }
+        setSILValue(inst.result, obj_ptr);
+      } else if (name == "retain") {
+        // __tinyswift_retain(obj).
+        auto* obj = getSILValue(inst.operands[0]);
+        if (obj) {
+          auto* fty = llvm::FunctionType::get(
+              builder.getVoidTy(), {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_retain", fty);
+          builder.CreateCall(callee, {obj});
+        }
+      } else if (name == "release") {
+        // __tinyswift_release(obj, deinit_fn_ptr_or_null).
+        auto* obj = getSILValue(inst.operands[0]);
+        if (obj) {
+          llvm::Value* deinit_ptr = llvm::ConstantPointerNull::get(builder.getPtrTy());
+          if (inst.operands[1].is_valid()) {
+            auto* fn = getSILValue(inst.operands[1]);
+            if (fn) deinit_ptr = fn;
+          }
+          auto* fty = llvm::FunctionType::get(
+              builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_release", fty);
+          builder.CreateCall(callee, {obj, deinit_ptr});
+        }
+
+      // M77: UnsafePointer operations.
+      } else if (name == "unsafe_ptr_allocate") {
+        // malloc(capacity * elem_size) → ptr.
+        auto* capacity = getSILValue(inst.operands[0]);
+        auto* elem_size = getSILValue(inst.operands[1]);
+        if (capacity && elem_size) {
+          auto* total = builder.CreateMul(capacity, elem_size);
+          auto* fty = llvm::FunctionType::get(
+              builder.getPtrTy(), {builder.getInt64Ty()}, false);
+          auto callee = context.module().getOrInsertFunction("malloc", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {total}));
+        }
+      } else if (name == "unsafe_ptr_deallocate") {
+        // free(ptr).
+        auto* ptr = getSILValue(inst.operands[0]);
+        if (ptr) {
+          auto* fty = llvm::FunctionType::get(
+              builder.getVoidTy(), {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction("free", fty);
+          builder.CreateCall(callee, {ptr});
+        }
+      } else if (name == "unsafe_ptr_subscript") {
+        // GEP(i64, ptr, idx) + load.
+        auto* ptr = getSILValue(inst.operands[0]);
+        auto* idx = getSILValue(inst.operands[1]);
+        if (ptr && idx) {
+          auto* gep = builder.CreateGEP(builder.getInt64Ty(), ptr, {idx});
+          setSILValue(inst.result, builder.CreateLoad(builder.getInt64Ty(), gep));
+        }
+      } else if (name == "unsafe_ptr_subscript_addr") {
+        // GEP(i64, ptr, idx) → address for store.
+        auto* ptr = getSILValue(inst.operands[0]);
+        auto* idx = getSILValue(inst.operands[1]);
+        if (ptr && idx) {
+          setSILValue(inst.result, builder.CreateGEP(builder.getInt64Ty(), ptr, {idx}));
+        }
       } else {
         llvm::errs() << "WARNING: unrecognized builtin in LowerSILInst: "
                      << name << "\n";
@@ -1035,9 +1121,21 @@ auto LowerSILInst(
     case TinySIL::SILInstKind::StructExtract: {
       auto* base = getSILValue(inst.operands[0]);
       if (base && inst.element_index >= 0) {
-        auto* val = builder.CreateExtractValue(
-            base, {static_cast<unsigned>(inst.element_index)});
-        setSILValue(inst.result, val);
+        // M78: If the base is a pointer (class instance), use GEP+load.
+        if (base->getType()->isPointerTy()) {
+          auto base_type_id = SemIR::TypeId(inst.operands[0].type.type_index);
+          auto* fields_struct = GetClassFieldsType(context, base_type_id);
+          auto* gep = builder.CreateStructGEP(
+              fields_struct, base,
+              static_cast<unsigned>(inst.element_index));
+          auto* result_ty = GetLLVMTypeForSIL(context, inst.result.type);
+          auto* loaded = builder.CreateLoad(result_ty, gep);
+          setSILValue(inst.result, loaded);
+        } else {
+          auto* val = builder.CreateExtractValue(
+              base, {static_cast<unsigned>(inst.element_index)});
+          setSILValue(inst.result, val);
+        }
       }
       break;
     }
@@ -1048,7 +1146,15 @@ auto LowerSILInst(
       auto* base_ptr = getSILValue(inst.operands[0]);
       if (base_ptr && inst.element_index >= 0) {
         auto struct_sil_type = inst.operands[0].type.getObjectType();
-        auto* struct_llvm_type = GetLLVMTypeForSIL(context, struct_sil_type);
+        auto base_type_id = SemIR::TypeId(struct_sil_type.type_index);
+        // M78: For class types, use fields struct type for GEP.
+        auto base_type_inst = context.sem_ir().types().GetAsInst(base_type_id);
+        llvm::Type* struct_llvm_type;
+        if (base_type_inst.Is<SemIR::ClassType>()) {
+          struct_llvm_type = GetClassFieldsType(context, base_type_id);
+        } else {
+          struct_llvm_type = GetLLVMTypeForSIL(context, struct_sil_type);
+        }
         auto* gep = builder.CreateStructGEP(
             struct_llvm_type, base_ptr,
             static_cast<unsigned>(inst.element_index));

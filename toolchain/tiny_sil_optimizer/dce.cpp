@@ -43,6 +43,10 @@ auto HasSideEffects(const TinySIL::SILInstruction& inst) -> bool {
       if (name.starts_with("print_") ||
           name.starts_with("dynarray_") ||
           name.starts_with("dict_") ||
+          name.starts_with("unsafe_ptr_") ||
+          name == "alloc_class" ||
+          name == "retain" ||
+          name == "release" ||
           name == "string_concat" ||
           name == "string_uppercased" ||
           name == "string_lowercased" ||

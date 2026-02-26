@@ -72,6 +72,10 @@ auto HandleReturnStatement(Context& context, Parse::NodeId node_id) -> void {
       }
     }
 
+    // M78: Emit ARC releases for class locals before returning.
+    // The return value (if class-typed) is excluded from cleanup.
+    context.EmitCleanupReleases(node_id);
+
     // M51: Emit deferred blocks LIFO before returning.
     // The return expression has already been evaluated (expr_id is set above),
     // so deferred code runs AFTER the return value is captured.

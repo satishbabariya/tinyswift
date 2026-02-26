@@ -461,6 +461,14 @@ class Context {
   // Each return statement emits these LIFO before emitting ReturnExpr/Return.
   llvm::SmallVector<Parse::NodeId> deferred_blocks_;
 
+  // M78: ARC cleanup tracking — each scope level tracks class-typed locals.
+  struct ClassCleanup {
+    SemIR::InstId var_id;       // VarStorage or ValueBinding holding the class ref
+    SemIR::TypeId type_id;      // ClassType
+    SemIR::InstId deinit_id;    // FunctionDecl for deinit, or InstId::None
+  };
+  llvm::SmallVector<llvm::SmallVector<ClassCleanup>> class_cleanup_stack_;
+
   // M74: Access level for declarations (keyed by InstId.index).
   llvm::DenseMap<int32_t, SemIR::AccessLevel> access_level_map_;
 
@@ -576,6 +584,42 @@ class Context {
   auto IsDynamicArrayVar(SemIR::InstId var_id) -> bool {
     return dynamic_array_var_map_.count(var_id.index) > 0;
   }
+
+  // M78: ARC cleanup tracking.
+  // Returns true if a TypeId is a class reference type.
+  auto IsReferenceType(SemIR::TypeId type_id) -> bool;
+
+  // Push/pop cleanup scope for function/block entry/exit.
+  auto PushCleanupScope() -> void {
+    class_cleanup_stack_.push_back({});
+  }
+  auto PopCleanupScope(Parse::NodeId loc) -> void;
+
+  // Register a class-typed local for cleanup at scope exit.
+  auto AddClassCleanup(SemIR::InstId var_id, SemIR::TypeId type_id,
+                       SemIR::InstId deinit_id = SemIR::InstId::None) -> void {
+    if (!class_cleanup_stack_.empty()) {
+      class_cleanup_stack_.back().push_back({var_id, type_id, deinit_id});
+    }
+  }
+
+  // Remove a class-typed local from cleanup (for return value ownership transfer).
+  auto RemoveClassCleanup(SemIR::InstId var_id) -> void {
+    if (class_cleanup_stack_.empty()) return;
+    auto& scope = class_cleanup_stack_.back();
+    for (auto it = scope.begin(); it != scope.end(); ++it) {
+      if (it->var_id == var_id) {
+        scope.erase(it);
+        return;
+      }
+    }
+  }
+
+  // Emit releases for current scope without popping (used before return).
+  auto EmitCleanupReleases(Parse::NodeId loc) -> void;
+
+  // Look up __deinit in a class's NameScope.
+  auto GetClassDeinitId(SemIR::TypeId type_id) -> SemIR::InstId;
 };
 
 }  // namespace TinySwift::Check

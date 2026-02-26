@@ -596,6 +596,43 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
                                     .elem_id = elem_id}));
     }
 
+    // M77: UnsafePointer method call — resolve UnsafePtrMethodRef.
+    if (auto upm = callee_inst.TryAs<SemIR::UnsafePtrMethodRef>()) {
+      auto method_ident = upm->method_name_id.AsIdentifierId();
+      llvm::StringRef method_text = method_ident.has_value()
+          ? context.identifiers().Get(method_ident) : llvm::StringRef();
+      if (method_text == "deallocate") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::UnsafePtrDeallocate{.type_id = SemIR::ErrorInst::TypeId,
+                                       .ptr_id = upm->ptr_id}));
+      }
+      if (method_text == "allocate") {
+        // Static call: UnsafeMutablePointer<Int>.allocate(capacity: N)
+        auto ptr_type = GetInstType(context, upm->ptr_id);
+        SemIR::InstId capacity_id = SemIR::InstId::None;
+        if (!labeled_args.empty()) {
+          capacity_id = labeled_args[0].value_id;
+        } else {
+          // Default capacity 1.
+          auto int_type = context.GetBuiltinType("Int");
+          capacity_id = context.AddInst(SemIR::LocIdAndInst::NoLoc(
+              SemIR::IntValue{.type_id = int_type,
+                              .int_id = context.ints().Add(1LL)}));
+        }
+        auto int_type = context.GetBuiltinType("Int");
+        // Element size = 8 bytes (Int = i64).
+        auto elem_size_id = context.AddInst(SemIR::LocIdAndInst::NoLoc(
+            SemIR::IntValue{.type_id = int_type,
+                            .int_id = context.ints().Add(8LL)}));
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::UnsafePtrAllocate{.type_id = ptr_type,
+                                     .capacity_id = capacity_id,
+                                     .elem_size_id = elem_size_id}));
+      }
+    }
+
     if (auto bm = callee_inst.TryAs<SemIR::BoundMethod>()) {
       // --- Method call: p.method(args...) → MethodName(self: p, args...) ---
       auto fn_decl_inst = context.insts().Get(bm->function_id);
@@ -1162,7 +1199,7 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
         }
       }
 
-      // Memberwise init for classes (count inherited + own fields).
+      // M78: Memberwise init for classes — emit AllocClass (heap-allocated).
       int num_fields = 0;
       for (auto& [name_idx, inst_id] : scope.names) {
         auto field_inst = context.insts().Get(inst_id);
@@ -1201,7 +1238,7 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
           args_block_id, llvm::ArrayRef<SemIR::InstId>(valid_args));
       return context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
-          SemIR::StructInit{.type_id = type_id, .args_id = args_block_id}));
+          SemIR::AllocClass{.type_id = type_id, .args_id = args_block_id}));
 
     } else if (auto closure_expr = callee_inst.TryAs<SemIR::ClosureExpr>()) {
       // --- Closure call: apply the closure as a function ---
@@ -1932,6 +1969,51 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
             SemIR::StringMethodRef{.type_id = SemIR::ErrorInst::TypeId,
                                    .str_id = base_id,
                                    .method_name_id = method_name_id}));
+      }
+    }
+  }
+
+  // M77: UnsafePointer methods (.deallocate, .allocate).
+  if (base_id.has_value() && !member_name.empty()) {
+    // Check if base is a pointer-typed VALUE (e.g. ptr.deallocate).
+    auto base_type_id_ptr = GetInstType(context, base_id);
+    bool is_ptr_value = false;
+    if (base_type_id_ptr.has_value() && base_type_id_ptr.is_concrete()) {
+      auto ptr_ti = context.types().GetTypeInstId(base_type_id_ptr);
+      if (ptr_ti.has_value()) {
+        auto ptr_inst = context.insts().Get(ptr_ti);
+        if (ptr_inst.Is<SemIR::PointerType>()) {
+          is_ptr_value = true;
+        }
+      }
+    }
+    // Also check if base is a PointerType TYPE instruction (static call like
+    // UnsafeMutablePointer<Int>.allocate(capacity:)).
+    bool is_ptr_type = false;
+    if (!is_ptr_value) {
+      auto base_inst = context.insts().Get(base_id);
+      if (base_inst.Is<SemIR::PointerType>()) {
+        is_ptr_type = true;
+      }
+    }
+    if (is_ptr_value || is_ptr_type) {
+      if (member_name == "deallocate" && is_ptr_value) {
+        auto ident_id = context.identifiers().Add("deallocate");
+        auto method_name_id = SemIR::NameId::ForIdentifier(ident_id);
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::UnsafePtrMethodRef{.type_id = SemIR::ErrorInst::TypeId,
+                                      .ptr_id = base_id,
+                                      .method_name_id = method_name_id}));
+      }
+      if (member_name == "allocate") {
+        auto ident_id = context.identifiers().Add("allocate");
+        auto method_name_id = SemIR::NameId::ForIdentifier(ident_id);
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::UnsafePtrMethodRef{.type_id = SemIR::ErrorInst::TypeId,
+                                      .ptr_id = base_id,
+                                      .method_name_id = method_name_id}));
       }
     }
   }
@@ -2918,6 +3000,32 @@ auto HandleAssignmentExpr(Context& context, Parse::NodeId node_id)
       }
     }
 
+    // M77: Check if base is pointer type — emit UnsafePtrSubscriptAddr.
+    if (array_id.has_value() && index_id.has_value()) {
+      auto base_type_id = GetInstType(context, array_id);
+      if (base_type_id.has_value() && base_type_id.is_concrete()) {
+        auto ptr_ti = context.types().GetTypeInstId(base_type_id);
+        if (ptr_ti.has_value()) {
+          auto ptr_inst = context.insts().Get(ptr_ti);
+          if (ptr_inst.Is<SemIR::PointerType>()) {
+            auto int_type = context.GetBuiltinType("Int");
+            lhs_id = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::UnsafePtrSubscriptAddr{.type_id = int_type,
+                                              .ptr_id = array_id,
+                                              .index_id = index_id}));
+            // Emit RHS and Assign.
+            if (rhs_child.has_value()) {
+              rhs_id = HandleExpr(context, rhs_child);
+            }
+            return context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::Assign{.lhs_id = lhs_id, .rhs_id = rhs_id}));
+          }
+        }
+      }
+    }
+
     // Determine element type and actual array alloca id.
     // For var arrays: look through NameRef → VarStorage → array_var_init_map_.
     // For let arrays: look through NameRef → ValueBinding → ArrayLiteralInit.
@@ -3174,6 +3282,25 @@ auto HandleSubscriptExpr(Context& context, Parse::NodeId node_id)
     } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
       // The index expression (after SubscriptExprStart).
       index_id = HandleExpr(context, child);
+    }
+  }
+
+  // M77: Check if base is a pointer type — emit UnsafePtrSubscript/Addr.
+  if (array_id.has_value() && index_id.has_value()) {
+    auto base_type_id = GetInstType(context, array_id);
+    if (base_type_id.has_value() && base_type_id.is_concrete()) {
+      auto ptr_ti = context.types().GetTypeInstId(base_type_id);
+      if (ptr_ti.has_value()) {
+        auto ptr_inst = context.insts().Get(ptr_ti);
+        if (ptr_inst.Is<SemIR::PointerType>()) {
+          auto int_type = context.GetBuiltinType("Int");
+          return context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::UnsafePtrSubscript{.type_id = int_type,
+                                        .ptr_id = array_id,
+                                        .index_id = index_id}));
+        }
+      }
     }
   }
 

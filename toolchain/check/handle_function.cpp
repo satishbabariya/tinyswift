@@ -232,7 +232,17 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
             } else if (fpc_kind == Parse::NodeKind::TypeAnnotation ||
                        fpc_kind.category().HasAnyOf(
                            Parse::NodeCategory::Type)) {
-              param_type_id = HandleTypeExpr(context, fpc);
+              // For generic types like `UnsafeMutablePointer<Int>`, the
+              // IdentifierType appears as a direct child of FunctionParam
+              // (outside TypeAnnotation's subtree), so it's processed first
+              // and sets param_type_id correctly. The subsequent TypeAnnotation
+              // may fail to resolve (its children are just GenericArgumentClause).
+              // Don't overwrite a valid type with an error.
+              auto resolved = HandleTypeExpr(context, fpc);
+              if (resolved != SemIR::ErrorInst::TypeId ||
+                  param_type_id == SemIR::ErrorInst::TypeId) {
+                param_type_id = resolved;
+              }
             } else if (fpc_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
               // Trailing expr child is the default value expression.
               default_node = fpc;
@@ -299,6 +309,14 @@ auto ExtractFunctionSignature(Context& context, Parse::NodeId sig_node_id)
             sig.return_type_id = HandleTypeExpr(context, rtc);
             break;
           }
+        }
+        // Fallback: for generic return types like `UnsafeMutablePointer<Int>`,
+        // the IdentifierType is a sibling of ReturnType (outside its subtree),
+        // collected in pre_return_type_nodes. Use it if ReturnType had no
+        // Type children of its own.
+        if (!sig.return_type_id.has_value() && !pre_return_type_nodes.empty()) {
+          sig.return_type_id =
+              HandleTypeExpr(context, pre_return_type_nodes.back());
         }
       }
       pre_return_type_nodes.clear();
@@ -647,10 +665,20 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
   auto body_block_id = context.PushInstBlock();
   context.functions().Get(function_id).body_block_ids.push_back(body_block_id);
 
+  // M78: Push ARC cleanup scope for function body.
+  context.PushCleanupScope();
+
   // Process body statements via HandleCodeBlock which handles source ordering
   // and condition expression association for if/while/guard.
   if (body_code_block.has_value()) {
     HandleCodeBlock(context, body_code_block);
+  }
+
+  // M78: Pop ARC cleanup scope (emits releases for any remaining class locals).
+  if (body_code_block.has_value()) {
+    context.PopCleanupScope(body_code_block);
+  } else {
+    context.PopCleanupScope(node_id);
   }
 
   context.PopInstBlock();

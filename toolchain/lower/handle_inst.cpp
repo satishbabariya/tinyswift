@@ -410,10 +410,24 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
       auto access = inst.As<SemIR::FieldAccess>();
       auto* base = context.GetLocal(access.base_id);
 
-      // If the base is a pointer (alloca), use GEP + load.
+      // If the base is a pointer (alloca or class ref), use GEP + load.
       if (base->getType()->isPointerTy()) {
         auto base_inst = sem_ir.insts().Get(access.base_id);
-        llvm::Type* struct_type = context.GetType(base_inst.type_id());
+        auto base_type_id = base_inst.type_id();
+        // M78: For class types, base is a heap pointer — use fields struct for GEP.
+        llvm::Type* struct_type = nullptr;
+        auto base_type_inst = sem_ir.types().GetAsInst(base_type_id);
+        if (base_type_inst.Is<SemIR::ClassType>()) {
+          struct_type = GetClassFieldsType(context, base_type_id);
+          // Base is already a pointer to fields (from alloc_class).
+          // For VarStorage of class type: load the pointer first.
+          if (base_inst.Is<SemIR::VarStorage>()) {
+            base = context.builder().CreateLoad(
+                llvm::PointerType::get(context.llvm_context(), 0), base);
+          }
+        } else {
+          struct_type = context.GetType(base_type_id);
+        }
         auto* gep = context.builder().CreateStructGEP(
             struct_type, base, access.index.index);
         llvm::Type* field_type = context.GetType(access.type_id);
@@ -430,11 +444,23 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
 
     case SemIR::InstKind::FieldAddr: {
       // Compute the address of a struct field (for lvalue member assignment).
-      // base_id must be a VarStorage (alloca pointer to the struct).
       auto addr = inst.As<SemIR::FieldAddr>();
       auto* base_ptr = context.GetLocal(addr.base_id);
       auto base_inst = sem_ir.insts().Get(addr.base_id);
-      llvm::Type* struct_type = context.GetType(base_inst.type_id());
+      auto base_type_id = base_inst.type_id();
+      // M78: For class types, use fields struct for GEP.
+      llvm::Type* struct_type = nullptr;
+      auto base_type_inst = sem_ir.types().GetAsInst(base_type_id);
+      if (base_type_inst.Is<SemIR::ClassType>()) {
+        struct_type = GetClassFieldsType(context, base_type_id);
+        // For VarStorage of class type: load the pointer first.
+        if (base_inst.Is<SemIR::VarStorage>() || base_inst.Is<SemIR::InoutParam>()) {
+          base_ptr = context.builder().CreateLoad(
+              llvm::PointerType::get(context.llvm_context(), 0), base_ptr);
+        }
+      } else {
+        struct_type = context.GetType(base_type_id);
+      }
       auto* gep = context.builder().CreateStructGEP(
           struct_type, base_ptr, static_cast<unsigned>(addr.index.index));
       context.SetLocal(inst_id, gep);
@@ -796,6 +822,20 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     case SemIR::InstKind::DynamicArrayCount:
     case SemIR::InstKind::DynamicArrayAccess:
     case SemIR::InstKind::DynamicArrayMethodRef:
+      break;
+
+    // M77: UnsafePointer operations — handled via SILGen path.
+    case SemIR::InstKind::UnsafePtrAllocate:
+    case SemIR::InstKind::UnsafePtrDeallocate:
+    case SemIR::InstKind::UnsafePtrSubscript:
+    case SemIR::InstKind::UnsafePtrSubscriptAddr:
+    case SemIR::InstKind::UnsafePtrMethodRef:
+      break;
+
+    // M78: ARC operations — handled via SILGen path.
+    case SemIR::InstKind::AllocClass:
+    case SemIR::InstKind::Retain:
+    case SemIR::InstKind::Release:
       break;
   }
 }

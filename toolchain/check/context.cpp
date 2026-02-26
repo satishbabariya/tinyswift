@@ -271,4 +271,65 @@ auto Context::GetBuiltinType(llvm::StringRef name) -> SemIR::TypeId {
   return SemIR::ErrorInst::TypeId;
 }
 
+// M78: Check if a TypeId is a class reference type.
+auto Context::IsReferenceType(SemIR::TypeId type_id) -> bool {
+  if (!type_id.has_value() || !type_id.is_concrete()) return false;
+  auto type_inst_id = types().GetTypeInstId(type_id);
+  if (!type_inst_id.has_value()) return false;
+  auto type_inst = insts().Get(type_inst_id);
+  return type_inst.Is<SemIR::ClassType>();
+}
+
+// M78: Emit Release instructions for all tracked class-typed locals in
+// the current scope (LIFO order), then pop the scope.
+auto Context::PopCleanupScope(Parse::NodeId loc) -> void {
+  if (class_cleanup_stack_.empty()) return;
+  auto scope = std::move(class_cleanup_stack_.back());
+  class_cleanup_stack_.pop_back();
+  // Skip emitting releases if the current block is already terminated
+  // (e.g., by a return statement that already emitted its own releases
+  // via EmitCleanupReleases).
+  if (IsCurrentBlockTerminated()) return;
+  // Emit releases in reverse (LIFO) order.
+  for (int i = static_cast<int>(scope.size()) - 1; i >= 0; --i) {
+    auto& cleanup = scope[i];
+    AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(loc),
+        SemIR::Release{.type_id = SemIR::ErrorInst::TypeId,
+                       .value_id = cleanup.var_id,
+                       .deinit_id = cleanup.deinit_id}));
+  }
+}
+
+// M78: Emit Release for all current scope locals without popping.
+auto Context::EmitCleanupReleases(Parse::NodeId loc) -> void {
+  if (class_cleanup_stack_.empty()) return;
+  auto& scope = class_cleanup_stack_.back();
+  for (int i = static_cast<int>(scope.size()) - 1; i >= 0; --i) {
+    auto& cleanup = scope[i];
+    AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(loc),
+        SemIR::Release{.type_id = SemIR::ErrorInst::TypeId,
+                       .value_id = cleanup.var_id,
+                       .deinit_id = cleanup.deinit_id}));
+  }
+}
+
+// M78/M79: Look up __deinit in a class's NameScope.
+auto Context::GetClassDeinitId(SemIR::TypeId type_id) -> SemIR::InstId {
+  if (!type_id.has_value() || !type_id.is_concrete()) return SemIR::InstId::None;
+  auto type_inst_id = types().GetTypeInstId(type_id);
+  if (!type_inst_id.has_value()) return SemIR::InstId::None;
+  auto type_inst = insts().Get(type_inst_id);
+  auto ct = type_inst.TryAs<SemIR::ClassType>();
+  if (!ct) return SemIR::InstId::None;
+  auto& scope = name_scopes().Get(ct->name_scope_id);
+  auto deinit_ident_id = identifiers().Lookup("__deinit");
+  if (!deinit_ident_id.has_value()) return SemIR::InstId::None;
+  auto deinit_name_id = SemIR::NameId::ForIdentifier(deinit_ident_id);
+  auto it = scope.names.find(deinit_name_id.index);
+  if (it != scope.names.end()) return it->second;
+  return SemIR::InstId::None;
+}
+
 }  // namespace TinySwift::Check

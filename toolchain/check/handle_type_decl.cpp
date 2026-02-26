@@ -876,6 +876,118 @@ static auto HandleInitDefinition(Context& context,
   context.PopScope();
 }
 
+// M79: Generates a deinit function for a `deinit { }` declaration.
+// The deinit function:
+//   - Has one parameter: self (class-typed pointer)
+//   - Has void return type
+//   - Body is the user's deinit block
+static auto HandleDeinitDefinition(Context& context,
+                                   Parse::NodeId node_id) -> void {
+  auto children = context.children_source_order(node_id);
+
+  // Find CodeBlock (body) child.
+  Parse::NodeId body_code_block = Parse::NodeId::None;
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::CodeBlock) {
+      body_code_block = child;
+    }
+  }
+
+  // Get the enclosing class type.
+  auto enclosing_type_id = context.CurrentTypeInstId();
+  if (!enclosing_type_id.has_value()) return;
+
+  auto type_inst = context.insts().Get(enclosing_type_id);
+  auto ct = type_inst.TryAs<SemIR::ClassType>();
+  if (!ct) return;  // deinit is only valid in class types.
+
+  auto& scope = context.name_scopes().Get(ct->name_scope_id);
+  llvm::StringRef type_name;
+  auto ident_opt = scope.name_id.AsIdentifierId();
+  if (ident_opt.has_value()) type_name = context.identifiers().Get(ident_opt);
+
+  // Build mangled name "TypeName.__deinit".
+  static llvm::SmallVector<std::string>* deinit_name_storage =
+      new llvm::SmallVector<std::string>();
+  deinit_name_storage->push_back(std::string(type_name) + ".__deinit");
+  auto mangled_ident_id =
+      context.identifiers().Add(deinit_name_storage->back());
+  auto mangled_name_id = SemIR::NameId::ForIdentifier(mangled_ident_id);
+
+  auto class_type_id = SemIR::TypeId::ForTypeConstant(
+      SemIR::ConstantId::ForConcreteConstant(enclosing_type_id));
+
+  // Create self parameter (class-typed pointer, passed as InoutParam).
+  auto self_param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::ValueParam{
+          .type_id = class_type_id,
+          .index = SemIR::CallParamIndex(0),
+          .pretty_name_id = SemIR::NameId::ForIdentifier(
+              context.identifiers().Add("self"))}));
+
+  auto params_block_id = context.inst_blocks().AddPlaceholder();
+  context.inst_blocks().ReplacePlaceholder(
+      params_block_id, llvm::ArrayRef<SemIR::InstId>{self_param_id});
+
+  // Build SemIR Function (void return).
+  SemIR::Function fn;
+  fn.name_id = mangled_name_id;
+  fn.parent_scope_id = context.CurrentScopeId();
+  fn.call_params_id = params_block_id;
+  // No return_type_inst_id → void return.
+
+  auto decl_block_id = context.inst_blocks().AddPlaceholder();
+  context.inst_blocks().ReplacePlaceholder(decl_block_id,
+                                           llvm::ArrayRef<SemIR::InstId>());
+  fn.decl_block_id = decl_block_id;
+
+  auto function_id = context.functions().Add(fn);
+
+  // Emit FunctionDecl instruction.
+  auto fn_decl_id = context.AddInst(SemIR::LocIdAndInst::UncheckedLoc(
+      SemIR::LocId(node_id),
+      SemIR::FunctionDecl{.type_id = SemIR::TypeType::TypeId,
+                          .function_id = function_id,
+                          .decl_block_id = decl_block_id}));
+
+  // Register under "__deinit" in the class scope.
+  auto deinit_ident_id = context.identifiers().Add("__deinit");
+  auto deinit_name_id = SemIR::NameId::ForIdentifier(deinit_ident_id);
+  context.AddNameToScope(deinit_name_id, fn_decl_id);
+
+  // Set up the deinit function body.
+  context.SetCurrentFunction(function_id);
+
+  auto body_scope_id = context.name_scopes().Add(
+      fn_decl_id, mangled_name_id, context.CurrentScopeId());
+  context.PushScope(body_scope_id);
+
+  // Register self param in body scope.
+  auto self_ident_id = context.identifiers().Add("self");
+  auto self_name_id_body = SemIR::NameId::ForIdentifier(self_ident_id);
+  context.AddNameToScope(self_name_id_body, self_param_id);
+
+  auto body_block_id = context.PushInstBlock();
+  context.functions().Get(function_id).body_block_ids.push_back(body_block_id);
+
+  // Process body statements.
+  if (body_code_block.has_value()) {
+    HandleCodeBlock(context, body_code_block);
+  }
+
+  // Auto-return void.
+  if (!context.IsCurrentBlockTerminated()) {
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id), SemIR::Return{}));
+  }
+
+  context.PopInstBlock();
+  context.ClearCurrentFunction();
+  context.PopScope();
+}
+
 // Processes the members of a type definition body.
 auto HandleTypeMembers(Context& context,
                        llvm::ArrayRef<Parse::NodeId> children) -> void {
@@ -971,6 +1083,12 @@ auto HandleTypeMembers(Context& context,
           continue;
         }
 
+        // M79: Deinit declaration.
+        if (bc_kind == Parse::NodeKind::DeinitDefinition) {
+          HandleDeinitDefinition(context, bc);
+          continue;
+        }
+
         // FunctionDefinition: pass static and mutating hints.
         if (bc_kind == Parse::NodeKind::FunctionDefinition) {
           HandleFunctionDefinition(context, bc, this_is_static, this_is_mutating);
@@ -1002,6 +1120,12 @@ auto HandleTypeMembers(Context& context,
     // InitDefinition as a direct child (not inside CodeBlock).
     if (child_kind == Parse::NodeKind::InitDefinition) {
       HandleInitDefinition(context, child);
+      continue;
+    }
+
+    // M79: DeinitDefinition as a direct child.
+    if (child_kind == Parse::NodeKind::DeinitDefinition) {
+      HandleDeinitDefinition(context, child);
       continue;
     }
 

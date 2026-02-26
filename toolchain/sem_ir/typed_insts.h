@@ -1146,6 +1146,80 @@ struct DynamicArrayMethodRef {
   NameId method_name_id; // which method ("append" etc.)
 };
 
+// M77: UnsafeMutablePointer<T>.allocate(capacity:) → ptr.
+// capacity_id is the Int capacity, elem_size is a compile-time constant.
+struct UnsafePtrAllocate {
+  static constexpr auto Kind = InstKind::UnsafePtrAllocate.Define<Parse::NodeId>(
+      {.ir_name = "unsafe_ptr_allocate"});
+  TypeId type_id;         // PointerType (result)
+  InstId capacity_id;     // Int value for capacity
+  InstId elem_size_id;    // Int constant for element size in bytes
+};
+
+// M77: ptr.deallocate() — free heap memory.
+struct UnsafePtrDeallocate {
+  static constexpr auto Kind = InstKind::UnsafePtrDeallocate.Define<Parse::NodeId>(
+      {.ir_name = "unsafe_ptr_deallocate",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // ErrorInst::TypeId (void)
+  InstId ptr_id;     // the pointer to deallocate
+};
+
+// M77: ptr[i] — read element at index.
+struct UnsafePtrSubscript {
+  static constexpr auto Kind = InstKind::UnsafePtrSubscript.Define<Parse::NodeId>(
+      {.ir_name = "unsafe_ptr_subscript"});
+  TypeId type_id;    // element type (Int)
+  InstId ptr_id;
+  InstId index_id;
+};
+
+// M77: ptr[i] address for write — GEP only, no load.
+struct UnsafePtrSubscriptAddr {
+  static constexpr auto Kind = InstKind::UnsafePtrSubscriptAddr.Define<Parse::NodeId>(
+      {.ir_name = "unsafe_ptr_subscript_addr",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // element type (Int)
+  InstId ptr_id;
+  InstId index_id;
+};
+
+// M77: Pending method reference for ptr.allocate/deallocate.
+struct UnsafePtrMethodRef {
+  static constexpr auto Kind = InstKind::UnsafePtrMethodRef.Define<Parse::NodeId>(
+      {.ir_name = "unsafe_ptr_method_ref"});
+  TypeId type_id;           // placeholder (ErrorInst::TypeId)
+  InstId ptr_id;            // the pointer (or type for static calls)
+  NameId method_name_id;    // "allocate" or "deallocate"
+};
+
+// M78: Heap-allocate a class instance and store initial field values.
+struct AllocClass {
+  static constexpr auto Kind = InstKind::AllocClass.Define<Parse::NodeId>(
+      {.ir_name = "alloc_class"});
+  TypeId type_id;           // ClassType
+  InstBlockId args_id;      // field values to store
+};
+
+// M78: Increment reference count.
+struct Retain {
+  static constexpr auto Kind = InstKind::Retain.Define<Parse::NodeId>(
+      {.ir_name = "retain",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;           // ErrorInst::TypeId (void side-effect)
+  InstId value_id;          // class-typed pointer to retain
+};
+
+// M78: Decrement reference count; free if zero.
+struct Release {
+  static constexpr auto Kind = InstKind::Release.Define<Parse::NodeId>(
+      {.ir_name = "release",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;           // ErrorInst::TypeId (void side-effect)
+  InstId value_id;          // class-typed pointer to release
+  InstId deinit_id;         // FunctionDecl for deinit, or InstId::None
+};
+
 // These concepts are an implementation detail of the library, not public API.
 namespace Internal {
 

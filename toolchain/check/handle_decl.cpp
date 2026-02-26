@@ -225,6 +225,21 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
       SemIR::LocId(node_id),
       SemIR::NameBindingDecl{.pattern_block_id = pattern_block_id}));
 
+  // M78: Emit Retain when copying an existing class reference (not AllocClass).
+  if (context.IsReferenceType(type_id) && init_id.has_value()) {
+    auto init_inst = context.insts().Get(init_id);
+    if (!init_inst.Is<SemIR::AllocClass>()) {
+      // Check if this is a Call to a custom init — those transfer ownership,
+      // no Retain needed. For NameRef copies and other sources, Retain.
+      if (!init_inst.Is<SemIR::Call>()) {
+        context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::Retain{.type_id = SemIR::ErrorInst::TypeId,
+                          .value_id = init_id}));
+      }
+    }
+  }
+
   // Emit ValueBinding.
   auto binding_id = context.AddInst(SemIR::LocIdAndInst(
       SemIR::LocId(name_node_id.has_value() ? name_node_id : node_id),
@@ -233,6 +248,12 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
                           .value_id = init_id.has_value()
                                           ? init_id
                                           : SemIR::InstId::None}));
+
+  // M78: Register class-typed let binding for ARC cleanup at scope exit.
+  if (context.IsReferenceType(type_id)) {
+    auto deinit_id = context.GetClassDeinitId(type_id);
+    context.AddClassCleanup(binding_id, type_id, deinit_id);
+  }
 
   // Register name in scope.
   if (name_id.has_value()) {
@@ -450,6 +471,17 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
                         .pattern_id = SemIR::AbsoluteInstId(
                             SemIR::InstId::None)}));
 
+  // M78: Emit Retain when copying an existing class reference (not AllocClass).
+  if (context.IsReferenceType(type_id) && init_id.has_value()) {
+    auto init_inst = context.insts().Get(init_id);
+    if (!init_inst.Is<SemIR::AllocClass>() && !init_inst.Is<SemIR::Call>()) {
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Retain{.type_id = SemIR::ErrorInst::TypeId,
+                        .value_id = init_id}));
+    }
+  }
+
   // Emit Assign if we have an initializer.
   if (init_id.has_value()) {
     context.AddInst(SemIR::LocIdAndInst(
@@ -468,6 +500,12 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
         context.SetDynamicArrayVar(var_id, init_id);
       }
     }
+  }
+
+  // M78: Register class-typed var for ARC cleanup at scope exit.
+  if (context.IsReferenceType(type_id)) {
+    auto deinit_id = context.GetClassDeinitId(type_id);
+    context.AddClassCleanup(var_id, type_id, deinit_id);
   }
 
   // Register name in scope.

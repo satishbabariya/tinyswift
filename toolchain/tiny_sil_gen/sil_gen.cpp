@@ -1296,6 +1296,117 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
   // M65: DynamicArrayMethodRef — pending marker, should be resolved before sil_gen.
   if (inst.Is<SemIR::DynamicArrayMethodRef>()) { return; }
 
+  // M77: UnsafePtrAllocate — call malloc(capacity * elem_size).
+  if (auto upa = inst.TryAs<SemIR::UnsafePtrAllocate>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(upa->type_id).getAddressType());
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "unsafe_ptr_allocate";
+    sil_inst->setOperand(0, ctx.GetValue(upa->capacity_id));
+    sil_inst->setOperand(1, ctx.GetValue(upa->elem_size_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M77: UnsafePtrDeallocate — call free(ptr).
+  if (auto upd = inst.TryAs<SemIR::UnsafePtrDeallocate>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(upd->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "unsafe_ptr_deallocate";
+    sil_inst->setOperand(0, ctx.GetValue(upd->ptr_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M77: UnsafePtrSubscript — GEP + load.
+  if (auto ups = inst.TryAs<SemIR::UnsafePtrSubscript>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(ups->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "unsafe_ptr_subscript";
+    sil_inst->setOperand(0, ctx.GetValue(ups->ptr_id));
+    sil_inst->setOperand(1, ctx.GetValue(ups->index_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M77: UnsafePtrSubscriptAddr — GEP for store (address).
+  if (auto upsa = inst.TryAs<SemIR::UnsafePtrSubscriptAddr>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(upsa->type_id).getAddressType());
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "unsafe_ptr_subscript_addr";
+    sil_inst->setOperand(0, ctx.GetValue(upsa->ptr_id));
+    sil_inst->setOperand(1, ctx.GetValue(upsa->index_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M77: UnsafePtrMethodRef — pending marker, resolved in check phase.
+  if (inst.Is<SemIR::UnsafePtrMethodRef>()) { return; }
+
+  // M78: AllocClass — call __tinyswift_alloc(size) then GEP+store fields.
+  if (auto ac = inst.TryAs<SemIR::AllocClass>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(ac->type_id).getAddressType());
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "alloc_class";
+    // Pass field values as operand_list.
+    if (ac->args_id.has_value() &&
+        ac->args_id != SemIR::InstBlockId::Empty) {
+      auto field_ids = ctx.sem_ir().inst_blocks().Get(ac->args_id);
+      for (auto field_id : field_ids) {
+        auto fv = ctx.GetValue(field_id);
+        if (fv.is_valid()) {
+          sil_inst->operand_list.push_back(fv);
+        }
+      }
+    }
+    // Store the class type_id as literal_value for lowering to compute size.
+    sil_inst->literal_value = static_cast<int64_t>(ac->type_id.index);
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M78: Retain — call __tinyswift_retain(obj).
+  if (auto ret = inst.TryAs<SemIR::Retain>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(ret->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "retain";
+    sil_inst->setOperand(0, ctx.GetValue(ret->value_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M78: Release — call __tinyswift_release(obj, deinit_fn_ptr_or_null).
+  if (auto rel = inst.TryAs<SemIR::Release>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(rel->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "release";
+    sil_inst->setOperand(0, ctx.GetValue(rel->value_id));
+    // deinit_id: if set, emit a function_ref and pass as operand 1.
+    if (rel->deinit_id.has_value()) {
+      auto deinit_inst = sem_ir.insts().Get(rel->deinit_id);
+      if (auto fn_decl = deinit_inst.TryAs<SemIR::FunctionDecl>()) {
+        auto& function = sem_ir.functions().Get(fn_decl->function_id);
+        std::string func_name = ctx.GetFunctionName(function);
+        auto fn_ptr_type = TinySIL::SILType{
+            .type_index = rel->type_id.index, .is_address = false};
+        auto fn_ref_val = AllocValue(ctx, fn_ptr_type);
+        auto fn_ref_inst =
+            MakeInst(TinySIL::SILInstKind::FunctionRef, fn_ref_val);
+        fn_ref_inst->function_name = func_name;
+        ctx.emit(std::move(fn_ref_inst));
+        sil_inst->setOperand(1, fn_ref_val);
+      }
+    }
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
   // M40: InoutParam — like ValueParam, but tracks as pointer.
   if (auto inout_param = inst.TryAs<SemIR::InoutParam>()) {
     if (!ctx.HasValue(inst_id)) {

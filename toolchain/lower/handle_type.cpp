@@ -93,38 +93,9 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
     }
 
     case SemIR::InstKind::ClassType: {
-      auto class_type = inst.As<SemIR::ClassType>();
-      auto& scope = sem_ir.name_scopes().Get(class_type.name_scope_id);
-      llvm::StringRef name = "";
-      if (scope.name_id.AsIdentifierId().has_value()) {
-        name = sem_ir.identifiers().Get(scope.name_id.AsIdentifierId());
-      }
-
-      auto* llvm_struct = llvm::StructType::create(context.llvm_context(), name);
-
-      // Collect StructField entries (own + inherited) sorted by field index.
-      struct FieldEntry {
-        int32_t idx;
-        SemIR::TypeId type_id;
-      };
-      llvm::SmallVector<FieldEntry> fields;
-      for (const auto& kv : scope.names) {
-        auto fi = sem_ir.insts().Get(kv.second);
-        if (auto sf = fi.TryAs<SemIR::StructField>()) {
-          fields.push_back({sf->index.index, sf->type_id});
-        }
-      }
-      std::sort(fields.begin(), fields.end(),
-                [](const FieldEntry& a, const FieldEntry& b) {
-                  return a.idx < b.idx;
-                });
-      llvm::SmallVector<llvm::Type*> field_types;
-      for (const auto& fe : fields) {
-        field_types.push_back(context.GetType(fe.type_id));
-      }
-      // Always set body (even empty) to avoid opaque struct.
-      llvm_struct->setBody(field_types);
-      return llvm_struct;
+      // M78: Classes are reference types — represented as opaque pointers.
+      // The fields struct is accessed via GetClassFieldsType() for GEP.
+      return llvm::PointerType::get(context.llvm_context(), 0);
     }
 
     case SemIR::InstKind::EnumDecl: {
@@ -186,6 +157,52 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
       // For any type we don't specifically handle, fall back to void.
       return llvm::Type::getVoidTy(context.llvm_context());
   }
+}
+
+// M78: Returns the LLVM struct type for a class's fields layout.
+// Used by alloc_class (size computation) and FieldAccess/FieldAddr (GEP).
+auto GetClassFieldsType(Context& context, SemIR::TypeId class_type_id)
+    -> llvm::StructType* {
+  auto& sem_ir = context.sem_ir();
+  auto inst = sem_ir.types().GetAsInst(class_type_id);
+  auto class_type = inst.As<SemIR::ClassType>();
+  auto& scope = sem_ir.name_scopes().Get(class_type.name_scope_id);
+
+  llvm::StringRef name = "";
+  if (scope.name_id.AsIdentifierId().has_value()) {
+    name = sem_ir.identifiers().Get(scope.name_id.AsIdentifierId());
+  }
+
+  // Use a stable name so we don't create duplicate struct types.
+  std::string fields_name = (name.str() + ".fields");
+  auto* existing = llvm::StructType::getTypeByName(context.llvm_context(), fields_name);
+  if (existing && !existing->isOpaque()) {
+    return existing;
+  }
+
+  auto* llvm_struct = llvm::StructType::create(context.llvm_context(), fields_name);
+
+  struct FieldEntry {
+    int32_t idx;
+    SemIR::TypeId type_id;
+  };
+  llvm::SmallVector<FieldEntry> fields;
+  for (const auto& kv : scope.names) {
+    auto fi = sem_ir.insts().Get(kv.second);
+    if (auto sf = fi.TryAs<SemIR::StructField>()) {
+      fields.push_back({sf->index.index, sf->type_id});
+    }
+  }
+  std::sort(fields.begin(), fields.end(),
+            [](const FieldEntry& a, const FieldEntry& b) {
+              return a.idx < b.idx;
+            });
+  llvm::SmallVector<llvm::Type*> field_types;
+  for (const auto& fe : fields) {
+    field_types.push_back(context.GetType(fe.type_id));
+  }
+  llvm_struct->setBody(field_types);
+  return llvm_struct;
 }
 
 }  // namespace TinySwift::Lower

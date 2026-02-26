@@ -73,6 +73,10 @@ class Context {
 auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type*;
 auto LowerInst(Context& context, SemIR::InstId inst_id) -> void;
 
+// M78: Returns the LLVM struct type for a class's fields layout.
+auto GetClassFieldsType(Context& context, SemIR::TypeId class_type_id)
+    -> llvm::StructType*;
+
 }  // namespace TinySwift::Lower
 
 #endif  // TINYSWIFT_TOOLCHAIN_LOWER_CONTEXT_H_
