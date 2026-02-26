@@ -79,17 +79,31 @@ static auto ParseAttributes(Context& context) -> void {
     auto at = context.Consume();
     context.AddLeafNode(NodeKind::AttributeStart, at);
 
-    // Parse the attribute name.
+    // Parse the attribute name and emit it as a leaf node so the check
+    // phase can read the attribute kind (e.g. "extern", "cdecl").
     if (context.Peek() == Lex::TokenKind::Identifier) {
-      context.Consume();
+      auto name_tok = context.Consume();
+      context.AddLeafNode(NodeKind::IdentifierNameNotBeforeParams, name_tok);
     }
 
-    // Parse optional parenthesized arguments.
+    // Parse optional parenthesized arguments and emit each token as a leaf
+    // node so the check phase can extract attribute arguments (e.g. "C",
+    // "get_answer").
     if (context.Peek() == Lex::TokenKind::OpenParen) {
       auto open = context.Consume();
-      // Skip over balanced parens.
       auto close = context.GetMatchedClosingToken(open);
-      context.SkipTo(close);
+      // Emit interior tokens as leaf nodes.
+      while (context.Peek() != Lex::TokenKind::CloseParen &&
+             context.position() < close) {
+        auto tok = context.Consume();
+        auto tok_kind = context.tokens().GetKind(tok);
+        if (tok_kind == Lex::TokenKind::StringLiteral) {
+          context.AddLeafNode(NodeKind::StringLiteral, tok);
+        } else if (tok_kind == Lex::TokenKind::Identifier) {
+          context.AddLeafNode(NodeKind::IdentifierNameNotBeforeParams, tok);
+        }
+        // Skip commas and other punctuation.
+      }
       context.Consume();  // ')'
     }
 

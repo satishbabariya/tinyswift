@@ -62,11 +62,30 @@ TINYSWIFT_DIAGNOSTIC(MissingStructField, Error,
                      "missing field '{0}' in struct initialization",
                      std::string);
 
-// Manages the semantic checking context for a single file.
+// Manages the semantic checking context, shared across all files in a module.
 class Context {
  public:
   Context(Unit& unit, const Parse::TreeAndSubtrees& tree_and_subtrees,
           Diagnostics::Consumer& consumer);
+
+  // --- Multi-file support (M73) ---
+
+  // Switches the current tree and subtrees pointer (for multi-file checking).
+  auto SetCurrentTreeAndSubtrees(const Parse::TreeAndSubtrees& tree_and_subtrees) -> void;
+
+  // Sets the store of all file trees for cross-file generic instantiation.
+  auto SetAllTrees(const Parse::GetTreeAndSubtreesStore* store) -> void {
+    all_trees_ = store;
+  }
+
+  // Returns the store of all file trees, or nullptr if single-file.
+  auto all_trees() const -> const Parse::GetTreeAndSubtreesStore* {
+    return all_trees_;
+  }
+
+  // Tracks which file is currently being processed.
+  auto SetCurrentFile(SemIR::CheckIRId id) -> void { current_file_id_ = id; }
+  auto current_file_id() const -> SemIR::CheckIRId { return current_file_id_; }
 
   // --- SemIR store access ---
   auto sem_ir() -> SemIR::File& { return *sem_ir_; }
@@ -165,6 +184,33 @@ class Context {
   // Returns the innermost loop context, or nullptr if not in a loop.
   auto CurrentLoop() const -> const LoopContext*;
 
+  // --- Pending access level (M74) ---
+  // When an AccessModifier node is encountered as a sibling before a
+  // declaration, store the access level for the next declaration to consume.
+  auto SetPendingAccessLevel(SemIR::AccessLevel level) -> void {
+    pending_access_level_ = level;
+    has_pending_access_level_ = true;
+  }
+  auto TakePendingAccessLevel() -> SemIR::AccessLevel {
+    if (has_pending_access_level_) {
+      has_pending_access_level_ = false;
+      return pending_access_level_;
+    }
+    return SemIR::AccessLevel::Internal;  // default
+  }
+
+  // --- Pending attribute for @extern/@cdecl (M75/M76) ---
+  // When an Attribute node is encountered as a sibling before a declaration,
+  // store the parse node for the declaration handler to extract.
+  auto SetPendingAttribute(Parse::NodeId node_id) -> void {
+    pending_attribute_node_id_ = node_id;
+  }
+  auto TakePendingAttribute() -> Parse::NodeId {
+    auto id = pending_attribute_node_id_;
+    pending_attribute_node_id_ = Parse::NodeId::None;
+    return id;
+  }
+
   // --- Pending condition for if/while/guard ---
   // The parser places condition expressions as siblings before the statement
   // node. HandleCodeBlock stores the parse NodeId here for the statement
@@ -255,6 +301,8 @@ class Context {
     Parse::NodeId start_node_id = Parse::NodeId::None;
     llvm::SmallVector<SemIR::Function::GenericParamInfo> generic_param_names;
     SemIR::InstId original_type_inst_id = SemIR::InstId::None;
+    // M73: Which file this template was defined in (for cross-file instantiation).
+    SemIR::CheckIRId source_check_ir_id = SemIR::CheckIRId(0);
   };
 
   // --- Type resolution ---
@@ -362,7 +410,12 @@ class Context {
 
   SemIR::File* sem_ir_;
   const Parse::TreeAndSubtrees* tree_and_subtrees_;
+  Diagnostics::Consumer* consumer_;  // M73: stored for emitter re-creation
   TokenEmitter emitter_;
+
+  // M73: Multi-file state.
+  const Parse::GetTreeAndSubtreesStore* all_trees_ = nullptr;
+  SemIR::CheckIRId current_file_id_ = SemIR::CheckIRId(0);
 
   // Stack of inst block builders. Each entry is a (placeholder_id, insts) pair.
   struct InstBlockEntry {
@@ -379,6 +432,13 @@ class Context {
 
   // Current enclosing struct/class type (set during HandleTypeMembers).
   SemIR::InstId current_type_id_ = SemIR::InstId::None;
+
+  // M74: Pending access level from AccessModifier sibling.
+  SemIR::AccessLevel pending_access_level_ = SemIR::AccessLevel::Internal;
+  bool has_pending_access_level_ = false;
+
+  // M75/M76: Pending attribute parse node from Attribute sibling.
+  Parse::NodeId pending_attribute_node_id_ = Parse::NodeId::None;
 
   // Pending condition parse node for if/while/guard statements.
   Parse::NodeId pending_condition_node_id_ = Parse::NodeId::None;
@@ -400,6 +460,12 @@ class Context {
   // Each `defer { ... }` pushes its CodeBlock here.
   // Each return statement emits these LIFO before emitting ReturnExpr/Return.
   llvm::SmallVector<Parse::NodeId> deferred_blocks_;
+
+  // M74: Access level for declarations (keyed by InstId.index).
+  llvm::DenseMap<int32_t, SemIR::AccessLevel> access_level_map_;
+
+  // M74: Scope ID that a private declaration belongs to (keyed by InstId.index).
+  llvm::DenseMap<int32_t, SemIR::NameScopeId> private_decl_scope_map_;
 
   // Map from NameId.index to TypeId for typealias declarations.
   llvm::DenseMap<int32_t, SemIR::TypeId> typealias_map_;
@@ -429,6 +495,24 @@ class Context {
   std::deque<std::string> generic_name_storage_;
 
  public:
+  // M74: Set access level for a declaration InstId.
+  auto SetAccessLevel(SemIR::InstId inst_id, SemIR::AccessLevel level,
+                      SemIR::NameScopeId declaring_scope = SemIR::NameScopeId::None) -> void {
+    access_level_map_.insert_or_assign(inst_id.index, level);
+    if (level == SemIR::AccessLevel::Private && declaring_scope.has_value()) {
+      private_decl_scope_map_.insert_or_assign(inst_id.index, declaring_scope);
+    }
+  }
+
+  // M74: Get access level for a declaration InstId.
+  auto GetAccessLevel(SemIR::InstId inst_id) -> SemIR::AccessLevel {
+    auto it = access_level_map_.find(inst_id.index);
+    if (it != access_level_map_.end()) {
+      return it->second;
+    }
+    return SemIR::AccessLevel::Internal;
+  }
+
   auto typealias_map() -> llvm::DenseMap<int32_t, SemIR::TypeId>& {
     return typealias_map_;
   }

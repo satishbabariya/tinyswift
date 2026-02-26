@@ -18,44 +18,103 @@
 
 namespace TinySwift::Check {
 
+// M73: Collects roots in source order for a given tree.
+static auto CollectRootsSourceOrder(
+    const Parse::TreeAndSubtrees& tree_and_subtrees)
+    -> llvm::SmallVector<Parse::NodeId> {
+  llvm::SmallVector<Parse::NodeId> roots_vec;
+  for (auto root : tree_and_subtrees.roots()) {
+    roots_vec.push_back(root);
+  }
+  std::reverse(roots_vec.begin(), roots_vec.end());
+  return roots_vec;
+}
+
 auto CheckParseTrees(
     llvm::MutableArrayRef<Unit> units,
     const Parse::GetTreeAndSubtreesStore& tree_and_subtrees_getters,
     llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> /*fs*/,
     const CheckParseTreesOptions& options,
     std::shared_ptr<clang::CompilerInvocation> /*clang_invocation*/) -> void {
+  if (units.empty()) {
+    return;
+  }
+
+  // M73: For multi-file compilation, all files share ONE Context using the
+  // primary unit (units[0]). All SemIR accumulates into units[0].sem_ir.
+  // Each pass runs across ALL files before advancing to the next pass.
+
+  auto& primary_unit = units[0];
+  TINYSWIFT_VLOG_TO(options.vlog_stream, "*** Checking (multi-file): {0} ***\n",
+                 primary_unit.sem_ir->filename());
+
+  auto& primary_tree_and_subtrees =
+      tree_and_subtrees_getters.Get(primary_unit.sem_ir->check_ir_id())();
+  Context context(primary_unit, primary_tree_and_subtrees, *primary_unit.consumer);
+  context.SetAllTrees(&tree_and_subtrees_getters);
+
+  // Create the package-level name scope and push it.
+  auto package_scope_id = context.name_scopes().Add(
+      SemIR::Namespace::PackageInstId, SemIR::NameId::None,
+      SemIR::NameScopeId::None);
+  context.PushScope(package_scope_id);
+
+  // Push a top-level instruction block.
+  context.PushInstBlock();
+
+  // Collect roots for each file.
+  struct FileRoots {
+    SemIR::CheckIRId check_ir_id;
+    llvm::SmallVector<Parse::NodeId> roots;
+  };
+  llvm::SmallVector<FileRoots> all_file_roots;
+
   for (auto& unit : units) {
-    TINYSWIFT_VLOG_TO(options.vlog_stream, "*** Checking: {0} ***\n",
-                   unit.sem_ir->filename());
+    auto check_ir_id = unit.sem_ir->check_ir_id();
+    auto& tree_and_subtrees = tree_and_subtrees_getters.Get(check_ir_id)();
+    auto roots = CollectRootsSourceOrder(tree_and_subtrees);
+    all_file_roots.push_back({check_ir_id, std::move(roots)});
+  }
 
-    auto& tree_and_subtrees =
-        tree_and_subtrees_getters.Get(unit.sem_ir->check_ir_id())();
-    Context context(unit, tree_and_subtrees, *unit.consumer);
+  // Track which roots were processed as type definitions or extensions,
+  // keyed by (file_index, node_index).
+  llvm::DenseSet<int64_t> processed_type_roots;
+  auto make_key = [](int file_idx, uint32_t node_idx) -> int64_t {
+    return (static_cast<int64_t>(file_idx) << 32) | node_idx;
+  };
 
-    // Create the package-level name scope and push it.
-    auto package_scope_id = context.name_scopes().Add(
-        SemIR::Namespace::PackageInstId, SemIR::NameId::None,
-        SemIR::NameScopeId::None);
-    context.PushScope(package_scope_id);
-
-    // Push a top-level instruction block.
-    context.PushInstBlock();
-
-    // Collect top-level roots in source order.
-    // tree_and_subtrees.roots() returns in RPO (reverse source order), so we
-    // collect and reverse to get source order.
-    llvm::SmallVector<Parse::NodeId> roots_vec;
-    for (auto root : tree_and_subtrees.roots()) {
-      roots_vec.push_back(root);
+  // Helper: detect AccessModifier and set pending access level (M74).
+  auto handle_access_modifier = [&](Context& ctx, Parse::NodeId root) -> bool {
+    auto kind = ctx.node_kind(root);
+    if (kind == Parse::NodeKind::AccessModifier) {
+      auto token = ctx.node_token(root);
+      auto text = ctx.token_text(token);
+      if (text == "public") {
+        ctx.SetPendingAccessLevel(SemIR::AccessLevel::Public);
+      } else if (text == "private") {
+        ctx.SetPendingAccessLevel(SemIR::AccessLevel::Private);
+      } else {
+        ctx.SetPendingAccessLevel(SemIR::AccessLevel::Internal);
+      }
+      return true;
     }
-    std::reverse(roots_vec.begin(), roots_vec.end());
+    // M75/M76: Store Attribute nodes for next declaration to consume.
+    if (kind == Parse::NodeKind::Attribute) {
+      ctx.SetPendingAttribute(root);
+      return true;
+    }
+    return false;
+  };
 
-    // Pass 1a: Process all top-level type definitions (enum, struct, class) and
-    // typealias declarations first so their names are in scope when function
-    // signatures are resolved. Track which roots were processed here so Pass 2
-    // can skip them.
-    llvm::DenseSet<uint32_t> processed_type_roots;
-    for (auto root : roots_vec) {
+  // --- Pass 1a: Process all top-level type definitions across ALL files ---
+  for (int file_idx = 0; file_idx < static_cast<int>(all_file_roots.size()); ++file_idx) {
+    auto& file_roots = all_file_roots[file_idx];
+    auto& tree_and_subtrees = tree_and_subtrees_getters.Get(file_roots.check_ir_id)();
+    context.SetCurrentTreeAndSubtrees(tree_and_subtrees);
+    context.SetCurrentFile(file_roots.check_ir_id);
+
+    for (auto root : file_roots.roots) {
+      if (handle_access_modifier(context, root)) continue;
       auto kind = context.node_kind(root);
       if (kind == Parse::NodeKind::EnumDefinition ||
           kind == Parse::NodeKind::StructDefinition ||
@@ -63,18 +122,22 @@ auto CheckParseTrees(
           kind == Parse::NodeKind::TypealiasDecl ||
           kind == Parse::NodeKind::ProtocolDefinition) {
         HandleStatement(context, root);
-        processed_type_roots.insert(root.index);
+        processed_type_roots.insert(make_key(file_idx, root.index));
       }
     }
+  }
 
-    // Pass 1b: Pre-register all top-level function names (now that type names
-    // are in scope, return types referencing enums/structs resolve correctly).
-    for (auto root : roots_vec) {
+  // --- Pass 1b: Pre-register all top-level function names across ALL files ---
+  for (int file_idx = 0; file_idx < static_cast<int>(all_file_roots.size()); ++file_idx) {
+    auto& file_roots = all_file_roots[file_idx];
+    auto& tree_and_subtrees = tree_and_subtrees_getters.Get(file_roots.check_ir_id)();
+    context.SetCurrentTreeAndSubtrees(tree_and_subtrees);
+    context.SetCurrentFile(file_roots.check_ir_id);
+
+    for (auto root : file_roots.roots) {
+      if (handle_access_modifier(context, root)) continue;
       auto kind = context.node_kind(root);
       if (kind == Parse::NodeKind::FunctionDefinition) {
-        // Register the function's forward declaration (name in scope) without
-        // processing the body. HandleFunctionDecl operates on the
-        // FunctionDefinitionStart child which contains the signature.
         auto children = context.children_source_order(root);
         for (auto child : children) {
           if (context.node_kind(child) ==
@@ -85,25 +148,39 @@ auto CheckParseTrees(
         }
       } else if (kind == Parse::NodeKind::FunctionDecl) {
         HandleFunctionDecl(context, root);
+        // Mark bodyless FunctionDecl as processed so Pass 2 skips it.
+        // This prevents duplicate function entries for @extern declarations.
+        processed_type_roots.insert(make_key(file_idx, root.index));
       }
     }
+  }
 
-    // Pass 1c: Process all top-level extension definitions.
-    // Extensions must run after all type names are registered (Pass 1a) and
-    // function stubs are registered (Pass 1b), but BEFORE function bodies are
-    // processed in Pass 2. This ensures that extension methods are visible to
-    // any function body that calls them, regardless of source order.
-    for (auto root : roots_vec) {
+  // --- Pass 1c: Process all top-level extensions across ALL files ---
+  for (int file_idx = 0; file_idx < static_cast<int>(all_file_roots.size()); ++file_idx) {
+    auto& file_roots = all_file_roots[file_idx];
+    auto& tree_and_subtrees = tree_and_subtrees_getters.Get(file_roots.check_ir_id)();
+    context.SetCurrentTreeAndSubtrees(tree_and_subtrees);
+    context.SetCurrentFile(file_roots.check_ir_id);
+
+    for (auto root : file_roots.roots) {
+      if (handle_access_modifier(context, root)) continue;
       auto kind = context.node_kind(root);
       if (kind == Parse::NodeKind::ExtensionDefinition) {
         HandleStatement(context, root);
-        processed_type_roots.insert(root.index);
+        processed_type_roots.insert(make_key(file_idx, root.index));
       }
     }
+  }
 
-    // Pass 2: Process all top-level declarations fully (including bodies).
-    // Type definitions were already processed in Pass 1a — skip them here.
-    for (auto root : roots_vec) {
+  // --- Pass 2: Process all remaining top-level declarations across ALL files ---
+  for (int file_idx = 0; file_idx < static_cast<int>(all_file_roots.size()); ++file_idx) {
+    auto& file_roots = all_file_roots[file_idx];
+    auto& tree_and_subtrees = tree_and_subtrees_getters.Get(file_roots.check_ir_id)();
+    context.SetCurrentTreeAndSubtrees(tree_and_subtrees);
+    context.SetCurrentFile(file_roots.check_ir_id);
+
+    for (auto root : file_roots.roots) {
+      if (handle_access_modifier(context, root)) continue;
       auto kind = context.node_kind(root);
 
       // Skip FileStart and FileEnd.
@@ -112,31 +189,35 @@ auto CheckParseTrees(
         continue;
       }
 
-      // Skip type definitions already processed in Pass 1a.
-      if (processed_type_roots.count(root.index)) {
+      // Skip type definitions/extensions already processed.
+      if (processed_type_roots.count(make_key(file_idx, root.index))) {
         continue;
       }
 
       HandleStatement(context, root);
     }
+  }
 
-    // Pop the top-level block and set it as the file's top inst block.
-    auto top_block_id = context.PopInstBlock();
-    context.sem_ir().set_top_inst_block_id(top_block_id);
+  // Pop the top-level block and set it as the file's top inst block.
+  auto top_block_id = context.PopInstBlock();
+  context.sem_ir().set_top_inst_block_id(top_block_id);
 
-    context.PopScope();
+  context.PopScope();
 
-    // Don't mark errors for successfully-checked files.
-    // (The stub used to unconditionally set has_errors=true.)
+  // Dump/diagnostics on primary unit only.
+  if (options.raw_dump_stream &&
+      options.include_in_dumps &&
+      options.include_in_dumps->Get(primary_unit.sem_ir->check_ir_id())) {
+    primary_unit.sem_ir->Print(*options.raw_dump_stream,
+                               options.dump_raw_sem_ir_builtins);
+  }
 
-    if (options.raw_dump_stream &&
-        options.include_in_dumps &&
-        options.include_in_dumps->Get(unit.sem_ir->check_ir_id())) {
-      unit.sem_ir->Print(*options.raw_dump_stream,
-                         options.dump_raw_sem_ir_builtins);
-    }
+  primary_unit.consumer->Flush();
 
-    unit.consumer->Flush();
+  // For non-primary units, mark their sem_ir as having no content (all SemIR
+  // accumulated into primary_unit). Also flush their consumers.
+  for (size_t i = 1; i < units.size(); ++i) {
+    units[i].consumer->Flush();
   }
 }
 

@@ -900,14 +900,32 @@ auto HandleTypeMembers(Context& context,
         auto bc_kind = context.node_kind(bc);
         if (bc_kind == Parse::NodeKind::CodeBlockStart) continue;
 
-        // StaticModifier / MutatingModifier are siblings of FunctionDefinition.
-        // Track them so the next FunctionDefinition can use them.
+        // StaticModifier / MutatingModifier / AccessModifier are siblings of
+        // FunctionDefinition. Track them so the next declaration can use them.
         if (bc_kind == Parse::NodeKind::StaticModifier) {
           next_is_static = true;
           continue;
         }
         if (bc_kind == Parse::NodeKind::MutatingModifier) {
           next_is_mutating = true;
+          continue;
+        }
+        // M74: AccessModifier before a member declaration.
+        if (bc_kind == Parse::NodeKind::AccessModifier) {
+          auto token = context.node_token(bc);
+          auto text = context.token_text(token);
+          if (text == "public") {
+            context.SetPendingAccessLevel(SemIR::AccessLevel::Public);
+          } else if (text == "private") {
+            context.SetPendingAccessLevel(SemIR::AccessLevel::Private);
+          } else {
+            context.SetPendingAccessLevel(SemIR::AccessLevel::Internal);
+          }
+          continue;
+        }
+        // M75/M76: Attribute node before a member declaration.
+        if (bc_kind == Parse::NodeKind::Attribute) {
+          context.SetPendingAttribute(bc);
           continue;
         }
 

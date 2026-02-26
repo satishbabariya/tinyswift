@@ -1333,13 +1333,8 @@ auto EmitFunctionBody(Context& ctx, SemIR::FunctionId func_id,
   sil_fn->sem_ir_function_id = func_id.index;
   ctx.set_current_function(sil_fn);
 
-  if (function.body_block_ids.empty()) {
-    sil_fn->is_declaration = true;
-    ctx.clearFunctionState();
-    return;
-  }
-
-  // Build the SIL function type.
+  // Build the SIL function type (before early-return for declarations so
+  // extern/cdecl functions get correct param/return types).
   if (function.return_type_inst_id.has_value()) {
     auto ret_type_id =
         sem_ir.types().GetTypeIdForTypeInstId(function.return_type_inst_id);
@@ -1366,6 +1361,12 @@ auto EmitFunctionBody(Context& ctx, SemIR::FunctionId func_id,
         sil_fn->type.param_conventions.push_back(TinySIL::Ownership::Owned);
       }
     }
+  }
+
+  if (function.body_block_ids.empty()) {
+    sil_fn->is_declaration = true;
+    ctx.clearFunctionState();
+    return;
   }
 
   // Create basic blocks for all body blocks upfront.

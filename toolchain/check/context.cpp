@@ -12,7 +12,16 @@ Context::Context(Unit& unit, const Parse::TreeAndSubtrees& tree_and_subtrees,
                  Diagnostics::Consumer& consumer)
     : sem_ir_(unit.sem_ir),
       tree_and_subtrees_(&tree_and_subtrees),
+      consumer_(&consumer),
       emitter_(&consumer, &tokens()) {}
+
+auto Context::SetCurrentTreeAndSubtrees(
+    const Parse::TreeAndSubtrees& tree_and_subtrees) -> void {
+  tree_and_subtrees_ = &tree_and_subtrees;
+  // Re-create the emitter with the new file's tokens so diagnostics report
+  // correct locations.
+  emitter_ = TokenEmitter(consumer_, &tokens());
+}
 
 auto Context::AddInstInNoBlock(SemIR::LocIdAndInst loc_and_inst)
     -> SemIR::InstId {
@@ -100,7 +109,28 @@ auto Context::LookupName(SemIR::NameId name_id) -> SemIR::InstId {
   for (auto it = scope_stack_.rbegin(); it != scope_stack_.rend(); ++it) {
     auto found = it->names.find(name_id.index);
     if (found != it->names.end()) {
-      return found->second;
+      auto inst_id = found->second;
+      // M74: Enforce private access — skip names marked private if the
+      // current scope is not the declaring scope or a child of it.
+      auto access = GetAccessLevel(inst_id);
+      if (access == SemIR::AccessLevel::Private) {
+        auto decl_scope_it = private_decl_scope_map_.find(inst_id.index);
+        if (decl_scope_it != private_decl_scope_map_.end()) {
+          auto decl_scope = decl_scope_it->second;
+          // Check if the current scope matches or is a child of the declaring scope.
+          bool accessible = false;
+          for (auto sit = scope_stack_.rbegin(); sit != scope_stack_.rend(); ++sit) {
+            if (sit->scope_id == decl_scope) {
+              accessible = true;
+              break;
+            }
+          }
+          if (!accessible) {
+            continue;  // Skip this private name, keep searching outer scopes.
+          }
+        }
+      }
+      return inst_id;
     }
   }
   return SemIR::InstId::None;
@@ -223,6 +253,19 @@ auto Context::GetBuiltinType(llvm::StringRef name) -> SemIR::TypeId {
   if (name == "Void") {
     // Void is represented as the empty tuple type, but for now use TypeType.
     return SemIR::TypeType::TypeId;
+  }
+  // M75: Unsafe pointer types — lower to LLVM opaque pointer (ptr).
+  if (name == "UnsafeRawPointer" || name == "UnsafePointer" ||
+      name == "UnsafeMutableRawPointer" || name == "UnsafeMutablePointer" ||
+      name == "OpaquePointer") {
+    // Reuse PointerType with Int as pointee — lowers to LLVM ptr.
+    auto int_type_inst_id =
+        types().GetTypeInstId(GetBuiltinType("Int"));
+    auto inst_id = AddInstInNoBlock(SemIR::LocIdAndInst::NoLoc(
+        SemIR::PointerType{.type_id = SemIR::TypeType::TypeId,
+                           .pointee_id = int_type_inst_id}));
+    return SemIR::TypeId::ForTypeConstant(
+        SemIR::ConstantId::ForConcreteConstant(inst_id));
   }
   // Unknown type.
   return SemIR::ErrorInst::TypeId;

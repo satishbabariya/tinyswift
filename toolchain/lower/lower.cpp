@@ -81,9 +81,29 @@ static auto DeclareFunctions(Context& context) -> void {
       continue;
     }
 
+    // M75: For @extern("C") functions, use the extern symbol name.
+    std::string effective_name;
+    if (function.is_extern_c && !function.extern_name.empty()) {
+      effective_name = function.extern_name;
+    }
+    // M76: For @cdecl functions, use the cdecl export name.
+    else if (function.is_cdecl && !function.cdecl_name.empty()) {
+      effective_name = function.cdecl_name;
+    } else {
+      effective_name = name.str();
+    }
+
     auto* fn_type = BuildFunctionType(context, function);
     auto* llvm_fn = llvm::Function::Create(
-        fn_type, llvm::Function::ExternalLinkage, name, &context.module());
+        fn_type, llvm::Function::ExternalLinkage, effective_name,
+        &context.module());
+
+    // M76: Set C calling convention for @cdecl functions.
+    if (function.is_cdecl) {
+      llvm_fn->setCallingConv(llvm::CallingConv::C);
+      llvm_fn->setVisibility(llvm::GlobalValue::DefaultVisibility);
+    }
+
     context.SetFunction(func_id, llvm_fn);
   }
 }

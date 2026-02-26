@@ -1493,6 +1493,27 @@ auto HandleCodeBlock(Context& context, Parse::NodeId node_id) -> void {
       continue;
     }
 
+    // M74: AccessModifier is a sibling before declarations in code blocks.
+    if (child_kind == Parse::NodeKind::AccessModifier) {
+      auto token = context.node_token(child);
+      auto text = context.token_text(token);
+      if (text == "public") {
+        context.SetPendingAccessLevel(SemIR::AccessLevel::Public);
+      } else if (text == "private") {
+        context.SetPendingAccessLevel(SemIR::AccessLevel::Private);
+      } else {
+        context.SetPendingAccessLevel(SemIR::AccessLevel::Internal);
+      }
+      continue;
+    }
+
+    // M75/M76: Attribute nodes are siblings before declarations. Skip them
+    // here — they will be extracted by HandleFunctionDecl/HandleFunctionDefinition.
+    if (child_kind == Parse::NodeKind::Attribute) {
+      context.SetPendingAttribute(child);
+      continue;
+    }
+
     if (child_kind.category().HasAnyOf(Parse::NodeCategory::Statement |
                                        Parse::NodeCategory::Decl)) {
       HandleStatement(context, child);

@@ -943,26 +943,27 @@ auto CompileSubcommand::Run(DriverEnv& driver_env) -> DriverResult {
     return make_result();
   }
 
-  // SILGen.
-  for (auto& unit : units) {
-    if (unit->has_source()) {
-      unit->RunSilGen();
-      unit->PostSilGen();
-    }
+  // M73: Multi-file compilation — all SemIR accumulated into primary unit
+  // (units[0]). Only run SILGen/Lower/CodeGen on the primary unit.
+
+  // SILGen (primary unit only).
+  if (units[0]->has_source()) {
+    units[0]->RunSilGen();
+    units[0]->PostSilGen();
   }
   if (options_.phase == CompileOptions::Phase::Sil) {
     return make_result();
   }
 
-  // Lower and optimize.
-  for (const auto& unit : units) {
-    unit->RunLower();
+  // Lower and optimize (primary unit only).
+  if (units[0]->has_source()) {
+    units[0]->RunLower();
 
     if (options_.phase != CompileOptions::Phase::Lower) {
-      unit->RunOptimize();
+      units[0]->RunOptimize();
     }
 
-    unit->PostLower();
+    units[0]->PostLower();
   }
   if (options_.phase == CompileOptions::Phase::Lower ||
       options_.phase == CompileOptions::Phase::Optimize) {
@@ -971,9 +972,9 @@ auto CompileSubcommand::Run(DriverEnv& driver_env) -> DriverResult {
   TINYSWIFT_CHECK(options_.phase == CompileOptions::Phase::CodeGen,
                "CodeGen should be the last stage");
 
-  // Codegen.
-  for (auto& unit : units) {
-    unit->RunCodeGen();
+  // Codegen (primary unit only).
+  if (units[0]->has_source()) {
+    units[0]->RunCodeGen();
   }
   return make_result();
 }

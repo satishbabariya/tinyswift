@@ -53,6 +53,14 @@ auto Context::GetNameString(SemIR::NameId name_id) const -> std::string {
 
 auto Context::GetFunctionName(const SemIR::Function& function) const
     -> std::string {
+  // M75: Use extern name for @extern("C") functions.
+  if (function.is_extern_c && !function.extern_name.empty()) {
+    return function.extern_name;
+  }
+  // M76: Use cdecl name for @cdecl functions.
+  if (function.is_cdecl && !function.cdecl_name.empty()) {
+    return function.cdecl_name;
+  }
   return GetNameString(function.name_id);
 }
 

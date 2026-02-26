@@ -16,6 +16,65 @@ namespace TinySwift::Check {
 
 namespace {
 
+// M75/M76: Extracted attribute info from an @extern("C") or @cdecl("name") node.
+struct AttributeInfo {
+  bool is_extern_c = false;
+  bool is_cdecl = false;
+  std::string cdecl_name;
+};
+
+// Extracts attribute information from an Attribute parse node.
+auto ExtractAttributeInfo(Context& context, Parse::NodeId attr_node_id)
+    -> AttributeInfo {
+  AttributeInfo info;
+  if (!attr_node_id.has_value()) return info;
+
+  auto children = context.children_source_order(attr_node_id);
+  // Attribute children: AttributeStart, then args (string literals, identifiers).
+  // The attribute name is the token after '@' on the AttributeStart node.
+  llvm::StringRef attr_name;
+  llvm::StringRef attr_arg;
+
+  for (auto child : children) {
+    auto kind = context.node_kind(child);
+    if (kind == Parse::NodeKind::AttributeStart) {
+      // The AttributeStart token is '@', but the actual name is the next
+      // identifier. Let's read the token text — it might be the attribute name.
+      auto token = context.node_token(child);
+      attr_name = context.token_text(token);
+      // If token is '@', the name is the next token. Check children for names.
+      continue;
+    }
+    // Child tokens after AttributeStart — could be the attribute name or args.
+    auto token = context.node_token(child);
+    auto text = context.token_text(token);
+    if (attr_name.empty() || attr_name == "@") {
+      attr_name = text;
+    } else {
+      // This is an argument. Remove surrounding quotes if present.
+      if (text.size() >= 2 && text.front() == '"' && text.back() == '"') {
+        attr_arg = text.substr(1, text.size() - 2);
+      } else {
+        attr_arg = text;
+      }
+    }
+  }
+
+  // If attr_name is still "@", try reading the attribute from children tokens.
+  // The pattern is: @extern("C") → AttributeStart(@), Identifier(extern),
+  // StringLiteral("C").
+
+  if (attr_name == "extern") {
+    if (attr_arg == "C" || attr_arg.empty()) {
+      info.is_extern_c = true;
+    }
+  } else if (attr_name == "cdecl") {
+    info.is_cdecl = true;
+    info.cdecl_name = attr_arg.str();
+  }
+  return info;
+}
+
 // M66-M68: Extract generic parameter names and optional constraints from a
 // FunctionDefinitionStart (or StructDefinitionStart, etc.) node.
 auto ExtractGenericParams(Context& context, Parse::NodeId sig_node_id)
@@ -436,6 +495,13 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
     // call-site lookup.
   }
 
+  // M74: Consume pending access level.
+  auto access_level = context.TakePendingAccessLevel();
+
+  // M75/M76: Consume pending attribute.
+  auto attr_node = context.TakePendingAttribute();
+  auto attr_info = ExtractAttributeInfo(context, attr_node);
+
   // Create a new function in the function store.
   SemIR::Function fn;
   fn.name_id = sig.name_id;  // mangled name if inside a type/nested, else original
@@ -444,6 +510,16 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
   fn.is_mutating = is_mutating;
   fn.is_throwing = sig.is_throwing;
   fn.param_default_nodes = sig.param_defaults;
+  fn.access_level = access_level;
+  fn.is_extern_c = attr_info.is_extern_c;
+  fn.is_cdecl = attr_info.is_cdecl;
+  fn.cdecl_name = attr_info.cdecl_name;
+  if (attr_info.is_extern_c && sig.name_id.has_value()) {
+    auto ident_id = sig.name_id.AsIdentifierId();
+    if (ident_id.has_value()) {
+      fn.extern_name = context.identifiers().Get(ident_id).str();
+    }
+  }
 
   // Create parameter patterns and params.
   llvm::SmallVector<SemIR::InstId> param_pattern_ids;
@@ -543,6 +619,9 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
     context.AddNameToScope(original_name_id, fn_decl_id);
   }
 
+  // M74: Record access level for the declaration.
+  context.SetAccessLevel(fn_decl_id, access_level, context.CurrentScopeId());
+
   // Track the current function for body block registration.
   context.SetCurrentFunction(function_id);
 
@@ -595,6 +674,13 @@ auto HandleFunctionDecl(Context& context, Parse::NodeId node_id) -> void {
   // Forward declaration - extract signature and register name.
   auto sig = ExtractFunctionSignature(context, node_id);
 
+  // M74: Consume pending access level.
+  auto access_level = context.TakePendingAccessLevel();
+
+  // M75/M76: Consume pending attribute.
+  auto attr_node = context.TakePendingAttribute();
+  auto attr_info = ExtractAttributeInfo(context, attr_node);
+
   // M66-M68: Detect generic parameters for forward declarations too.
   auto generic_params = ExtractGenericParams(context, node_id);
 
@@ -602,6 +688,17 @@ auto HandleFunctionDecl(Context& context, Parse::NodeId node_id) -> void {
   fn.name_id = sig.name_id;
   fn.parent_scope_id = context.CurrentScopeId();
   fn.param_default_nodes = sig.param_defaults;
+  fn.access_level = access_level;
+  fn.is_extern_c = attr_info.is_extern_c;
+  fn.is_cdecl = attr_info.is_cdecl;
+  fn.cdecl_name = attr_info.cdecl_name;
+  if (attr_info.is_extern_c && fn.name_id.has_value()) {
+    // Use the function's own name as the extern symbol name.
+    auto ident_id = fn.name_id.AsIdentifierId();
+    if (ident_id.has_value()) {
+      fn.extern_name = context.identifiers().Get(ident_id).str();
+    }
+  }
 
   if (!generic_params.empty()) {
     fn.is_generic_template = true;
@@ -611,6 +708,69 @@ auto HandleFunctionDecl(Context& context, Parse::NodeId node_id) -> void {
 
   if (sig.return_type_id.has_value()) {
     fn.return_type_inst_id = context.types().GetTypeInstId(sig.return_type_id);
+  }
+
+  // M75: For @extern("C") (bodyless) functions, create parameter instructions
+  // so callers can resolve parameter counts and types correctly.
+  if (!sig.params.empty()) {
+    llvm::SmallVector<SemIR::InstId> param_pattern_ids;
+    llvm::SmallVector<SemIR::InstId> param_ids;
+
+    for (size_t i = 0; i < sig.params.size(); ++i) {
+      auto [param_name_id, param_type_id] = sig.params[i];
+      auto param_index = SemIR::CallParamIndex(static_cast<int32_t>(i));
+
+      auto entity_name_id = context.entity_names().Add(
+          {.name_id = param_name_id,
+           .parent_scope_id = context.CurrentScopeId()});
+
+      auto pattern_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+          SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id
+                                                      : node_id),
+          SemIR::ValueBindingPattern{
+              .type_id = param_type_id, .entity_name_id = entity_name_id}));
+
+      auto param_pattern_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+          SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id
+                                                      : node_id),
+          SemIR::ValueParamPattern{.type_id = param_type_id,
+                                   .subpattern_id = pattern_id,
+                                   .index = param_index}));
+      param_pattern_ids.push_back(param_pattern_id);
+
+      bool is_inout = (i < sig.param_is_inout.size()) && sig.param_is_inout[i];
+      SemIR::InstId param_id = SemIR::InstId::None;
+      if (is_inout) {
+        param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+            SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id
+                                                        : node_id),
+            SemIR::InoutParam{.type_id = param_type_id,
+                              .index = param_index,
+                              .name_id = param_name_id}));
+      } else {
+        param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+            SemIR::LocId(sig.name_node_id.has_value() ? sig.name_node_id
+                                                        : node_id),
+            SemIR::ValueParam{.type_id = param_type_id,
+                              .index = param_index,
+                              .pretty_name_id = param_name_id}));
+      }
+      param_ids.push_back(param_id);
+    }
+
+    if (!param_ids.empty()) {
+      auto params_block_id = context.inst_blocks().AddPlaceholder();
+      context.inst_blocks().ReplacePlaceholder(
+          params_block_id, llvm::ArrayRef<SemIR::InstId>(param_ids));
+      fn.call_params_id = params_block_id;
+    }
+    if (!param_pattern_ids.empty()) {
+      auto patterns_block_id = context.inst_blocks().AddPlaceholder();
+      context.inst_blocks().ReplacePlaceholder(
+          patterns_block_id,
+          llvm::ArrayRef<SemIR::InstId>(param_pattern_ids));
+      fn.call_param_patterns_id = patterns_block_id;
+    }
   }
 
   auto decl_block_id = context.inst_blocks().AddPlaceholder();
@@ -629,6 +789,9 @@ auto HandleFunctionDecl(Context& context, Parse::NodeId node_id) -> void {
   if (sig.name_id.has_value()) {
     context.AddNameToScope(sig.name_id, fn_decl_id);
   }
+
+  // M74: Record access level for the declaration.
+  context.SetAccessLevel(fn_decl_id, access_level, context.CurrentScopeId());
 }
 
 }  // namespace TinySwift::Check

@@ -16,10 +16,16 @@ namespace TinySwift::SemIR {
 
 class File;
 
+// M74: Access control levels for declarations.
+enum class AccessLevel : uint8_t { Public, Internal, Private };
+
 // A function declaration and definition.
 struct Function : public Printable<Function> {
   // The function's name.
   NameId name_id = NameId::None;
+
+  // M74: Access control level (default: Internal).
+  AccessLevel access_level = AccessLevel::Internal;
 
   // The enclosing scope.
   NameScopeId parent_scope_id = NameScopeId::None;
@@ -48,6 +54,18 @@ struct Function : public Printable<Function> {
   // Whether this function is declared with `throws`.
   bool is_throwing = false;
 
+  // M75: Whether this function is an @extern("C") import.
+  bool is_extern_c = false;
+
+  // M75: The C symbol name for @extern("C") functions (empty = use name_id).
+  std::string extern_name;
+
+  // M76: Whether this function is exported with @cdecl.
+  bool is_cdecl = false;
+
+  // M76: The exported C symbol name for @cdecl functions.
+  std::string cdecl_name;
+
   // M66-M68: Generics support.
   // Whether this function is a generic template (body not yet specialized).
   bool is_generic_template = false;
@@ -62,6 +80,10 @@ struct Function : public Printable<Function> {
   // Parse tree nodes for re-checking during specialization.
   Parse::NodeId template_node_id = Parse::NodeId::None;       // FunctionDefinition
   Parse::NodeId template_sig_node_id = Parse::NodeId::None;    // FunctionDefinitionStart
+
+  // M73: Which file this function template was defined in (for cross-file
+  // generic instantiation). Only meaningful when is_generic_template is true.
+  CheckIRId source_check_ir_id = CheckIRId(0);
 
   // Default value parse nodes for parameters, indexed by param position
   // (0-based, after self is excluded). NodeId::None means no default.
