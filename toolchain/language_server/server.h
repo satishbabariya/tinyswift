@@ -5,13 +5,24 @@
 #ifndef TINYSWIFT_TOOLCHAIN_LANGUAGE_SERVER_SERVER_H_
 #define TINYSWIFT_TOOLCHAIN_LANGUAGE_SERVER_SERVER_H_
 
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "llvm/ADT/StringMap.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/JSON.h"
+#include "toolchain/base/shared_value_stores.h"
 #include "toolchain/diagnostics/consumer.h"
 #include "toolchain/language_server/transport.h"
+#include "toolchain/lex/token_index.h"
+#include "toolchain/lex/tokenized_buffer.h"
+#include "toolchain/parse/tree.h"
+#include "toolchain/sem_ir/file.h"
+#include "toolchain/sem_ir/ids.h"
+#include "toolchain/sem_ir/typed_insts.h"
+#include "toolchain/source/source_buffer.h"
 
 namespace TinySwift::LanguageServer {
 
@@ -42,6 +53,20 @@ class DiagnosticCollector : public Diagnostics::Consumer {
   std::vector<CollectedDiagnostic> collected_;
 };
 
+// Owns all compilation artifacts for an open document, keeping them alive
+// for query handlers (definition, hover, completion).
+struct DocumentState {
+  std::string text;
+  std::string path;
+  DiagnosticCollector collector;
+  std::optional<SourceBuffer> source;
+  std::unique_ptr<SharedValueStores> value_stores;
+  std::optional<Lex::TokenizedBuffer> tokens;
+  std::optional<Parse::Tree> parse_tree;
+  std::unique_ptr<llvm::LLVMContext> llvm_context;
+  std::unique_ptr<SemIR::File> sem_ir;
+};
+
 // The LSP server. Reads JSON-RPC messages from the transport, handles them,
 // and sends responses/notifications back.
 class Server {
@@ -61,7 +86,14 @@ class Server {
   auto HandleDidClose(const llvm::json::Object& msg) -> void;
   auto HandleShutdown(const llvm::json::Object& msg) -> void;
 
-  // Runs lex+parse+check on the given text and publishes diagnostics.
+  // M85: textDocument/definition
+  auto HandleDefinition(const llvm::json::Object& msg) -> void;
+  // M86: textDocument/hover
+  auto HandleHover(const llvm::json::Object& msg) -> void;
+  // M87: textDocument/completion
+  auto HandleCompletion(const llvm::json::Object& msg) -> void;
+
+  // Runs lex+parse+check on the given text and stores results in documents_.
   auto CompileAndPublishDiagnostics(llvm::StringRef uri,
                                     llvm::StringRef text) -> void;
 
@@ -76,11 +108,32 @@ class Server {
   // Converts a file:// URI to a filesystem path.
   static auto UriToPath(llvm::StringRef uri) -> std::string;
 
+  // --- Utility functions for M85-M87 ---
+
+  // Finds the token at the given 0-based line and column.
+  static auto FindTokenAtPosition(const Lex::TokenizedBuffer& tokens,
+                                  int line_0based, int col_0based)
+      -> std::optional<Lex::TokenIndex>;
+
+  // Finds a SemIR instruction whose source location matches the given token.
+  static auto FindInstAtToken(const SemIR::File& sem_ir,
+                              const Parse::Tree& tree,
+                              Lex::TokenIndex target_token)
+      -> std::optional<SemIR::InstId>;
+
+  // Returns a human-readable name for a type.
+  static auto GetTypeDisplayName(const SemIR::File& file, SemIR::TypeId type_id)
+      -> std::string;
+
+  // Returns the NameScopeId for a struct/class/enum type.
+  static auto GetNameScopeForType(const SemIR::File& file,
+                                  SemIR::TypeId type_id) -> SemIR::NameScopeId;
+
   Transport& transport_;
   llvm::raw_ostream& error_;
 
-  // Open documents: URI -> content.
-  llvm::StringMap<std::string> documents_;
+  // Open documents: URI -> DocumentState (owns all compilation artifacts).
+  llvm::StringMap<std::unique_ptr<DocumentState>> documents_;
 
   bool shutdown_requested_ = false;
 };
