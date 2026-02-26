@@ -333,7 +333,28 @@ auto HandleIdentifierNameExpr(Context& context, Parse::NodeId node_id)
       }
       if (auto fn_decl = resolved_inst.TryAs<SemIR::FunctionDecl>()) {
         auto& fn = context.functions().Get(fn_decl->function_id);
+        // Only treat as implicit self method if the function was declared
+        // in the current type's scope (not a free function from an outer
+        // scope that happens to be visible).
+        bool is_type_member = false;
         if (!fn.is_static) {
+          auto enclosing_type = context.CurrentTypeInstId();
+          auto type_inst = context.insts().Get(enclosing_type);
+          SemIR::NameScopeId type_scope_id = SemIR::NameScopeId::None;
+          if (auto st = type_inst.TryAs<SemIR::StructType>()) {
+            type_scope_id = st->name_scope_id;
+          } else if (auto ct = type_inst.TryAs<SemIR::ClassType>()) {
+            type_scope_id = ct->name_scope_id;
+          } else if (auto ed = type_inst.TryAs<SemIR::EnumDecl>()) {
+            type_scope_id = ed->name_scope_id;
+          } else {
+            // M88: Built-in type extension scope.
+            type_scope_id = context.GetBuiltinTypeScope(enclosing_type);
+          }
+          is_type_member = type_scope_id.has_value() &&
+                           fn.parent_scope_id == type_scope_id;
+        }
+        if (is_type_member) {
           auto self_type = GetInstType(context, self_id);
           auto self_ref_id = context.AddInst(SemIR::LocIdAndInst(
               SemIR::LocId(node_id),
@@ -1934,6 +1955,38 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
                   SemIR::NameRef{.type_id = SemIR::TypeType::TypeId,
                                  .name_id = name_id,
                                  .value_id = member_inst_id}));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // M88: Check built-in type scopes for members added via extensions.
+  if (base_id.has_value() && !member_name.empty()) {
+    auto base_type = GetInstType(context, base_id);
+    if (base_type.has_value() && base_type.is_concrete()) {
+      auto base_type_inst_id = context.types().GetTypeInstId(base_type);
+      if (base_type_inst_id.has_value()) {
+        auto builtin_scope_id =
+            context.GetBuiltinTypeScope(base_type_inst_id);
+        if (builtin_scope_id.has_value()) {
+          auto& scope = context.name_scopes().Get(builtin_scope_id);
+          auto ident_id = context.identifiers().Lookup(member_name);
+          if (ident_id.has_value()) {
+            auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+            auto it = scope.names.find(name_id.index);
+            if (it != scope.names.end()) {
+              auto member_inst_id = it->second;
+              auto member_inst = context.insts().Get(member_inst_id);
+              if (member_inst.Is<SemIR::FunctionDecl>()) {
+                return context.AddInst(SemIR::LocIdAndInst(
+                    SemIR::LocId(node_id),
+                    SemIR::BoundMethod{
+                        .type_id = SemIR::TypeType::TypeId,
+                        .base_id = base_id,
+                        .function_id = member_inst_id}));
+              }
             }
           }
         }

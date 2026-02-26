@@ -287,3 +287,69 @@ void __tinyswift_error_clear(void) {
   __tinyswift_has_error = 0;
   __tinyswift_error_value = 0;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Prelude support (M88)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+int64_t __tinyswift_int_abs(int64_t x) {
+  return x < 0 ? -x : x;
+}
+
+int64_t __tinyswift_int_clamp(int64_t x, int64_t lo, int64_t hi) {
+  if (x < lo) return lo;
+  if (x > hi) return hi;
+  return x;
+}
+
+int64_t __tinyswift_int_hash(int64_t x) {
+  // Simple hash: mix bits via multiply-shift.
+  uint64_t h = (uint64_t)x;
+  h ^= h >> 33;
+  h *= 0xff51afd7ed558ccdULL;
+  h ^= h >> 33;
+  h *= 0xc4ceb9fe1a85ec53ULL;
+  h ^= h >> 33;
+  return (int64_t)h;
+}
+
+double __tinyswift_double_abs(double x) {
+  return x < 0.0 ? -x : x;
+}
+
+int64_t __tinyswift_double_hash(double x) {
+  // Hash the raw bits of the double.
+  union { double d; uint64_t u; } conv;
+  conv.d = x;
+  return __tinyswift_int_hash((int64_t)conv.u);
+}
+
+int64_t __tinyswift_string_hash(const char* str) {
+  if (!str) return 0;
+  // djb2 hash.
+  uint64_t h = 5381;
+  for (const char* p = str; *p; ++p) {
+    h = ((h << 5) + h) + (unsigned char)*p;
+  }
+  return (int64_t)h;
+}
+
+int64_t __tinyswift_string_compare(const char* a, const char* b) {
+  if (a == b) return 0;
+  if (!a) return -1;
+  if (!b) return 1;
+  return (int64_t)strcmp(a, b);
+}
+
+int64_t __tinyswift_bool_hash(int64_t x) {
+  return x ? 1 : 0;
+}
+
+void __tinyswift_abort(const char* message) {
+  if (message) {
+    fprintf(stderr, "Fatal error: %s\n", message);
+  } else {
+    fprintf(stderr, "Fatal error\n");
+  }
+  abort();
+}

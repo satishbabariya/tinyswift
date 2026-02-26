@@ -227,6 +227,29 @@ auto Context::GetTypeName(SemIR::TypeId type_id) -> std::string {
   }
 }
 
+// M88: Returns the NameScope for a built-in type, creating one if needed.
+auto Context::GetOrCreateBuiltinTypeScope(SemIR::InstId type_inst_id)
+    -> SemIR::NameScopeId {
+  auto it = builtin_type_scopes_.find(type_inst_id.index);
+  if (it != builtin_type_scopes_.end()) {
+    return it->second;
+  }
+  auto scope_id = name_scopes().Add(type_inst_id, SemIR::NameId::None,
+                                     SemIR::NameScopeId::None);
+  builtin_type_scopes_.insert_or_assign(type_inst_id.index, scope_id);
+  return scope_id;
+}
+
+// M88: Returns the NameScope for a built-in type, or NameScopeId::None.
+auto Context::GetBuiltinTypeScope(SemIR::InstId type_inst_id)
+    -> SemIR::NameScopeId {
+  auto it = builtin_type_scopes_.find(type_inst_id.index);
+  if (it != builtin_type_scopes_.end()) {
+    return it->second;
+  }
+  return SemIR::NameScopeId::None;
+}
+
 auto Context::GetBuiltinType(llvm::StringRef name) -> SemIR::TypeId {
   if (name == "Bool") {
     return SemIR::TypeId::ForTypeConstant(

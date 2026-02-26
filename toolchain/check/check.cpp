@@ -59,6 +59,26 @@ auto CheckParseTrees(
       SemIR::NameScopeId::None);
   context.PushScope(package_scope_id);
 
+  // M88: Register built-in type names in package scope so extensions can
+  // resolve them via LookupName (e.g. `extension Int { ... }`).
+  {
+    static const struct {
+      const char* name;
+      SemIR::InstId inst_id;
+    } builtin_types[] = {
+        {"Bool", SemIR::BoolType::TypeInstId},
+        {"Int", SemIR::IntLiteralType::TypeInstId},
+        {"String", SemIR::StringType::TypeInstId},
+        {"Float", SemIR::FloatType::TypeInstId},
+        {"Double", SemIR::DoubleType::TypeInstId},
+    };
+    for (const auto& bt : builtin_types) {
+      auto ident_id = context.identifiers().Add(bt.name);
+      auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+      context.AddNameToScope(name_id, bt.inst_id);
+    }
+  }
+
   // Push a top-level instruction block.
   context.PushInstBlock();
 

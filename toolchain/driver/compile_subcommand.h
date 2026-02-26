@@ -62,7 +62,7 @@ struct CompileOptions {
   bool stream_errors = false;
   bool preorder_parse_tree = false;
   bool builtin_sem_ir = false;
-  bool prelude_import = false;
+  bool prelude_import = true;
   bool include_debug_info = true;
   bool run_llvm_verifier = true;
 

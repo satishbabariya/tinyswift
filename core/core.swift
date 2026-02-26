@@ -1,5 +1,2 @@
-//
-// A bare-bones Swift standard library
-//
-
-precedencegroup AssignmentPrecedence { assignment: true }
+// Part of the TinySwift Core Prelude (M88).
+// This file is intentionally minimal — see other prelude files.

@@ -328,6 +328,15 @@ class Context {
     SemIR::CheckIRId source_check_ir_id = SemIR::CheckIRId(0);
   };
 
+  // --- M88: Built-in type scopes for extensions ---
+
+  // Returns the NameScope for a built-in type, creating one if needed.
+  auto GetOrCreateBuiltinTypeScope(SemIR::InstId type_inst_id)
+      -> SemIR::NameScopeId;
+
+  // Returns the NameScope for a built-in type, or NameScopeId::None.
+  auto GetBuiltinTypeScope(SemIR::InstId type_inst_id) -> SemIR::NameScopeId;
+
   // --- Type resolution ---
 
   // Resolves a type name string to a builtin TypeId.
@@ -503,6 +512,9 @@ class Context {
 
   // M74: Scope ID that a private declaration belongs to (keyed by InstId.index).
   llvm::DenseMap<int32_t, SemIR::NameScopeId> private_decl_scope_map_;
+
+  // M88: Built-in type scopes for extensions (keyed by TypeInstId.index).
+  llvm::DenseMap<int32_t, SemIR::NameScopeId> builtin_type_scopes_;
 
   // Map from NameId.index to TypeId for typealias declarations.
   llvm::DenseMap<int32_t, SemIR::TypeId> typealias_map_;

@@ -54,6 +54,17 @@ int64_t __tinyswift_error_get(void);
 int     __tinyswift_error_check(void);
 void    __tinyswift_error_clear(void);
 
+// ── Prelude support (M88) ──────────────────────────────────────────────────
+int64_t __tinyswift_int_abs(int64_t x);
+int64_t __tinyswift_int_clamp(int64_t x, int64_t lo, int64_t hi);
+int64_t __tinyswift_int_hash(int64_t x);
+double  __tinyswift_double_abs(double x);
+int64_t __tinyswift_double_hash(double x);
+int64_t __tinyswift_string_hash(const char* str);
+int64_t __tinyswift_string_compare(const char* a, const char* b);
+int64_t __tinyswift_bool_hash(int64_t x);
+void    __tinyswift_abort(const char* message);
+
 #ifdef __cplusplus
 }
 #endif

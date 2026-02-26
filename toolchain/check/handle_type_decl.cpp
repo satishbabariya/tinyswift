@@ -1621,8 +1621,20 @@ auto HandleExtensionDefinition(Context& context, Parse::NodeId node_id)
     type_scope_id = ed->name_scope_id;
   }
 
+  // M88: Fallback — built-in type extension (e.g., `extension Int { ... }`).
   if (!type_scope_id.has_value()) {
-    // Not a known composite type — skip.
+    auto type_inst = context.insts().Get(type_inst_id);
+    if (type_inst.Is<SemIR::BoolType>() ||
+        type_inst.Is<SemIR::IntLiteralType>() ||
+        type_inst.Is<SemIR::StringType>() ||
+        type_inst.Is<SemIR::FloatType>() ||
+        type_inst.Is<SemIR::DoubleType>()) {
+      type_scope_id = context.GetOrCreateBuiltinTypeScope(type_inst_id);
+    }
+  }
+
+  if (!type_scope_id.has_value()) {
+    // Not a known composite or built-in type — skip.
     return;
   }
 

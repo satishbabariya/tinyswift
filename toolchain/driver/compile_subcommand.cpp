@@ -4,6 +4,7 @@
 
 #include "toolchain/driver/compile_subcommand.h"
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -11,6 +12,8 @@
 #include <system_error>
 #include <utility>
 
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 #include "common/pretty_stack_trace_function.h"
 #include "common/vlog.h"
 #include "llvm/ADT/STLExtras.h"
@@ -223,10 +226,10 @@ Selects the amount of optimization to perform.
   b.AddFlag(
       {
           .name = "prelude-import",
-          .help = "Whether to use the implicit prelude import.",
+          .help = "Whether to use the implicit prelude import (default: true).",
       },
       [&](auto& arg_b) {
-        arg_b.Default(false);
+        arg_b.Default(true);
         arg_b.Set(&prelude_import);
       });
   b.AddStringOption(
@@ -792,6 +795,29 @@ auto CompilationUnit::LogCall(llvm::StringLiteral logging_label,
   TINYSWIFT_VLOG("*** {0} done ***\n", logging_label);
 }
 
+// M88: Find the core/ directory containing prelude .swift files.
+// Checks TINYSWIFT_CORE_DIR env var, then looks relative to the binary
+// output directory (bazel-bin/toolchain/../../../core/).
+static auto FindCoreDirectory() -> std::string {
+  // 1. Environment variable override.
+  if (const char* env = std::getenv("TINYSWIFT_CORE_DIR")) {
+    return std::string(env);
+  }
+  // 2. Look for core/ relative to CWD (works in repo root).
+  if (llvm::sys::fs::is_directory("core")) {
+    return "core";
+  }
+  // 3. Try relative to the bazel workspace root patterns.
+  for (const char* rel :
+       {"../core", "../../core", "../../../core",
+        "tinyswift/core"}) {
+    if (llvm::sys::fs::is_directory(rel)) {
+      return std::string(rel);
+    }
+  }
+  return "";
+}
+
 auto CompileSubcommand::Run(DriverEnv& driver_env) -> DriverResult {
   if (!ValidateOptions(driver_env.emitter)) {
     return {.success = false};
@@ -820,13 +846,37 @@ auto CompileSubcommand::Run(DriverEnv& driver_env) -> DriverResult {
     clang_invocation->getCodeGenOpts().DisableLLVMPasses = true;
   }
 
-  // Create CompilationUnits.
+  // M88: Collect prelude files if --prelude-import is enabled.
+  llvm::SmallVector<std::string> prelude_files;
+  if (options_.prelude_import) {
+    auto core_dir = FindCoreDirectory();
+    if (!core_dir.empty()) {
+      std::error_code ec;
+      for (llvm::sys::fs::directory_iterator it(core_dir, ec), end;
+           it != end && !ec; it.increment(ec)) {
+        auto path = it->path();
+        if (llvm::StringRef(path).ends_with(".swift")) {
+          prelude_files.push_back(path);
+        }
+      }
+      std::sort(prelude_files.begin(), prelude_files.end());
+    }
+  }
+
+  // Create CompilationUnits (prelude files first, then user files).
   llvm::SmallVector<std::unique_ptr<CompilationUnit>> units;
-  int total_unit_count = options_.input_filenames.size();
-  for (int i = 0; i < total_unit_count; ++i) {
+  int prelude_count = static_cast<int>(prelude_files.size());
+  int total_unit_count = prelude_count +
+                         static_cast<int>(options_.input_filenames.size());
+  for (int i = 0; i < prelude_count; ++i) {
     units.push_back(std::make_unique<CompilationUnit>(
         SemIR::CheckIRId(i), total_unit_count, &driver_env, &options_,
-        &driver_env.consumer, options_.input_filenames[i], target));
+        &driver_env.consumer, prelude_files[i], target));
+  }
+  for (int i = 0; i < static_cast<int>(options_.input_filenames.size()); ++i) {
+    units.push_back(std::make_unique<CompilationUnit>(
+        SemIR::CheckIRId(prelude_count + i), total_unit_count, &driver_env,
+        &options_, &driver_env.consumer, options_.input_filenames[i], target));
   }
 
   auto on_exit = llvm::scope_exit([&]() {

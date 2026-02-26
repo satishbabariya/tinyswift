@@ -4,6 +4,8 @@
 
 #include "toolchain/check/handle_function.h"
 
+#include <deque>
+
 #include "toolchain/check/handle_expr.h"
 #include "toolchain/check/handle_stmt.h"
 #include "toolchain/check/handle_type.h"
@@ -442,15 +444,25 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
       if (ident_opt.has_value()) {
         type_name = context.identifiers().Get(ident_opt);
       }
+    } else if (type_inst.Is<SemIR::IntLiteralType>()) {
+      type_name = "Int";
+    } else if (type_inst.Is<SemIR::BoolType>()) {
+      type_name = "Bool";
+    } else if (type_inst.Is<SemIR::StringType>()) {
+      type_name = "String";
+    } else if (type_inst.Is<SemIR::FloatType>()) {
+      type_name = "Float";
+    } else if (type_inst.Is<SemIR::DoubleType>()) {
+      type_name = "Double";
     }
 
     if (!type_name.empty() && sig.name_id.has_value() &&
         sig.name_id.AsIdentifierId().has_value()) {
       auto method_name = context.identifiers().Get(sig.name_id.AsIdentifierId());
-      // Build "TypeName.methodName" using persistent heap storage so the
-      // StringRef remains valid for the lifetime of the identifier store.
-      static llvm::SmallVector<std::string>* method_name_storage =
-          new llvm::SmallVector<std::string>();
+      // Build "TypeName.methodName" using a deque so that push_back never
+      // invalidates references to earlier elements (SmallVector can reallocate).
+      static std::deque<std::string>* method_name_storage =
+          new std::deque<std::string>();
       method_name_storage->push_back(
           std::string(type_name) + "." + std::string(method_name));
       auto mangled_ident_id =
@@ -503,7 +515,7 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
   if (outer_function_id.has_value() && !enclosing_type_id.has_value() &&
       sig.name_id.has_value() && sig.name_id.AsIdentifierId().has_value()) {
     static int nested_counter = 0;
-    static auto* nested_name_storage = new llvm::SmallVector<std::string>();
+    static auto* nested_name_storage = new std::deque<std::string>();
     auto orig = context.identifiers().Get(sig.name_id.AsIdentifierId());
     nested_name_storage->push_back(
         "__nested_" + std::to_string(nested_counter++) + "_" + orig.str());
