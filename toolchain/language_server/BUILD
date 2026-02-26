@@ -13,11 +13,25 @@ filegroup(
 
 cc_library(
     name = "language_server",
-    srcs = ["language_server.cpp"],
+    srcs = [
+        "language_server.cpp",
+        "server.cpp",
+        "server.h",
+        "transport.cpp",
+        "transport.h",
+    ],
     hdrs = ["language_server.h"],
     deps = [
         "//common:ostream",
+        "//toolchain/base:shared_value_stores",
+        "//toolchain/check",
         "//toolchain/diagnostics:emitter",
+        "//toolchain/lex",
+        "//toolchain/parse",
+        "//toolchain/parse:tree",
+        "//toolchain/sem_ir:file",
+        "//toolchain/source:source_buffer",
+        "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
     ],
 )

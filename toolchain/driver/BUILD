@@ -41,6 +41,8 @@ cc_library(
         "driver_subcommand.cpp",
         "format_subcommand.cpp",
         "format_subcommand.h",
+        "language_server_subcommand.cpp",
+        "language_server_subcommand.h",
     ],
     hdrs = [
         "driver.h",
@@ -66,6 +68,7 @@ cc_library(
         "//toolchain/diagnostics:emitter",
         "//toolchain/diagnostics:sorting_consumer",
         "//toolchain/format",
+        "//toolchain/language_server",
         "//toolchain/lex",
         "//toolchain/lower",
         "//toolchain/lower:options",

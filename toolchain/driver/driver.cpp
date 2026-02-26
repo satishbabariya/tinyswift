@@ -11,6 +11,7 @@
 #include "common/version.h"
 #include "toolchain/driver/compile_subcommand.h"
 #include "toolchain/driver/format_subcommand.h"
+#include "toolchain/driver/language_server_subcommand.h"
 
 namespace TinySwift {
 
@@ -26,10 +27,7 @@ struct Options {
 
   CompileSubcommand compile;
   FormatSubcommand format;
-
-  // TODO: Add additional subcommands as needed:
-  // - language-server: LSP support
-  // - link: Link compiled objects
+  LanguageServerSubcommand language_server;
 
   // On success, this is set to the subcommand to run.
   DriverSubcommand* selected_subcommand = nullptr;
@@ -74,6 +72,7 @@ When printing diagnostics, include the diagnostic kind as part of output.
 
   compile.AddTo(b, &selected_subcommand);
   format.AddTo(b, &selected_subcommand);
+  language_server.AddTo(b, &selected_subcommand);
 
   b.RequiresSubcommand();
 }
