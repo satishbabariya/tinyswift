@@ -1011,6 +1011,124 @@ struct DictAccess {
   InstId key_id;
 };
 
+// M91: Generic dictionary — create empty `var d: [K:V] = [:]`.
+// type_id carries key type; entries_id carries val type as single-element block.
+struct DictCreate {
+  static constexpr auto Kind = InstKind::DictCreate.Define<Parse::NodeId>(
+      {.ir_name = "dict_create"});
+  TypeId type_id;           // key type id
+  InstBlockId entries_id;   // single-element block holding val type inst id
+};
+
+// M91: Dictionary subscript set `d["k"] = v`.
+// args_id is a 2-element block: [key_id, val_id].
+struct DictSet {
+  static constexpr auto Kind = InstKind::DictSet.Define<Parse::NodeId>(
+      {.ir_name = "dict_set",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;        // ErrorInst::TypeId (void)
+  InstId dict_id;
+  InstBlockId args_id;   // [key_id, val_id]
+};
+
+// M91: Dictionary subscript get `d["k"]` → Optional<V>.
+struct DictGet {
+  static constexpr auto Kind = InstKind::DictGet.Define<Parse::NodeId>(
+      {.ir_name = "dict_get"});
+  TypeId type_id;    // Optional<ValType>
+  InstId dict_id;
+  InstId key_id;
+};
+
+// M91: Dictionary count `d.count` → Int.
+struct DictCount {
+  static constexpr auto Kind = InstKind::DictCount.Define<Parse::NodeId>(
+      {.ir_name = "dict_count"});
+  TypeId type_id;    // Int
+  InstId dict_id;
+};
+
+// M91: Dictionary contains key `d.contains(key:)` → Bool (as Int).
+struct DictContains {
+  static constexpr auto Kind = InstKind::DictContains.Define<Parse::NodeId>(
+      {.ir_name = "dict_contains"});
+  TypeId type_id;    // Int (truthy)
+  InstId dict_id;
+  InstId key_id;
+};
+
+// M91: Dictionary remove `d.removeValue(forKey:)`.
+struct DictRemove {
+  static constexpr auto Kind = InstKind::DictRemove.Define<Parse::NodeId>(
+      {.ir_name = "dict_remove",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // ErrorInst::TypeId (void)
+  InstId dict_id;
+  InstId key_id;
+};
+
+// M91: Pending dictionary method ref (resolved in HandleCallExpr).
+struct DictMethodRef {
+  static constexpr auto Kind = InstKind::DictMethodRef.Define<Parse::NodeId>(
+      {.ir_name = "dict_method_ref"});
+  TypeId type_id;           // placeholder (ErrorInst::TypeId)
+  InstId dict_id;
+  NameId method_name_id;
+};
+
+// M91: Set create `var s: Set<T> = Set<T>()`.
+struct SetCreate {
+  static constexpr auto Kind = InstKind::SetCreate.Define<Parse::NodeId>(
+      {.ir_name = "set_create"});
+  TypeId type_id;    // element type
+};
+
+// M91: Set insert `s.insert(x)`.
+struct SetInsert {
+  static constexpr auto Kind = InstKind::SetInsert.Define<Parse::NodeId>(
+      {.ir_name = "set_insert",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // ErrorInst::TypeId (void)
+  InstId set_id;
+  InstId elem_id;
+};
+
+// M91: Set contains `s.contains(x)` → Int (truthy).
+struct SetContains {
+  static constexpr auto Kind = InstKind::SetContains.Define<Parse::NodeId>(
+      {.ir_name = "set_contains"});
+  TypeId type_id;    // Int
+  InstId set_id;
+  InstId elem_id;
+};
+
+// M91: Set count `s.count` → Int.
+struct SetCount {
+  static constexpr auto Kind = InstKind::SetCount.Define<Parse::NodeId>(
+      {.ir_name = "set_count"});
+  TypeId type_id;    // Int
+  InstId set_id;
+};
+
+// M91: Set remove `s.remove(x)`.
+struct SetRemove {
+  static constexpr auto Kind = InstKind::SetRemove.Define<Parse::NodeId>(
+      {.ir_name = "set_remove",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // ErrorInst::TypeId (void)
+  InstId set_id;
+  InstId elem_id;
+};
+
+// M91: Pending set method ref (resolved in HandleCallExpr).
+struct SetMethodRef {
+  static constexpr auto Kind = InstKind::SetMethodRef.Define<Parse::NodeId>(
+      {.ir_name = "set_method_ref"});
+  TypeId type_id;           // placeholder (ErrorInst::TypeId)
+  InstId set_id;
+  NameId method_name_id;
+};
+
 // M40: An `inout` parameter (pointer ABI, passed by address).
 struct InoutParam {
   static constexpr auto Kind = InstKind::InoutParam.Define<Parse::NodeId>(
@@ -1114,6 +1232,71 @@ struct StringContains {
   TypeId type_id;  // Bool
   InstId str_id;
   InstId arg_id;   // substring
+};
+
+// M92: File I/O built-in functions.
+
+// readLine() -> String
+struct ReadLine {
+  static constexpr auto Kind = InstKind::ReadLine.Define<Parse::NodeId>(
+      {.ir_name = "readline",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // String
+};
+
+// getCurrentDirectory() -> String
+struct FileGetCwd {
+  static constexpr auto Kind = InstKind::FileGetCwd.Define<Parse::NodeId>(
+      {.ir_name = "file_getcwd",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // String
+};
+
+// readFile(path) -> String
+struct FileReadAll {
+  static constexpr auto Kind = InstKind::FileReadAll.Define<Parse::NodeId>(
+      {.ir_name = "file_read_all",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // String
+  InstId path_id;
+};
+
+// fileExists(path) -> Bool
+struct FileExists {
+  static constexpr auto Kind = InstKind::FileExists.Define<Parse::NodeId>(
+      {.ir_name = "file_exists",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Bool (Int)
+  InstId path_id;
+};
+
+// removeFile(path) -> Bool
+struct FileRemove {
+  static constexpr auto Kind = InstKind::FileRemove.Define<Parse::NodeId>(
+      {.ir_name = "file_remove",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Bool (Int)
+  InstId path_id;
+};
+
+// writeFile(path, contents) -> Bool
+struct FileWriteAll {
+  static constexpr auto Kind = InstKind::FileWriteAll.Define<Parse::NodeId>(
+      {.ir_name = "file_write_all",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Bool (Int)
+  InstId path_id;
+  InstId contents_id;
+};
+
+// appendFile(path, contents) -> Bool
+struct FileAppendAll {
+  static constexpr auto Kind = InstKind::FileAppendAll.Define<Parse::NodeId>(
+      {.ir_name = "file_append_all",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Bool (Int)
+  InstId path_id;
+  InstId contents_id;
 };
 
 // M65: Dynamic array creation (var arr: [T] = []).

@@ -163,6 +163,49 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
       // orphaned callee from a generic call (e.g., `Pair<Int, Int>(...)`).
       if (ci + 1 < children.size() &&
           context.node_kind(children[ci + 1]) == Parse::NodeKind::CallExpr) {
+        // M91: Handle Set<T>() constructor directly.
+        if (child_kind == Parse::NodeKind::IdentifierNameExpr) {
+          auto text = context.token_text(context.node_token(child));
+          if (text == "Set") {
+            SemIR::TypeId elem_type_id = context.GetBuiltinType("Int");
+            auto call_node = children[ci + 1];
+            for (auto cn : context.children_source_order(call_node)) {
+              if (context.node_kind(cn) == Parse::NodeKind::CallExprStart) {
+                for (auto sn : context.children_source_order(cn)) {
+                  if (context.node_kind(sn) ==
+                      Parse::NodeKind::GenericArgumentClause) {
+                    for (auto gc : context.children_source_order(sn)) {
+                      auto gc_kind = context.node_kind(gc);
+                      if (gc_kind ==
+                              Parse::NodeKind::GenericArgumentClauseStart ||
+                          gc_kind == Parse::NodeKind::PatternListComma) {
+                        continue;
+                      }
+                      if (gc_kind.category().HasAnyOf(
+                              Parse::NodeCategory::Type)) {
+                        elem_type_id = HandleTypeExpr(context, gc);
+                        break;
+                      }
+                      if (gc_kind == Parse::NodeKind::IdentifierNameExpr) {
+                        auto t = context.token_text(context.node_token(gc));
+                        auto bt = context.GetBuiltinType(t);
+                        if (bt != SemIR::ErrorInst::TypeId) {
+                          elem_type_id = bt;
+                          break;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            init_id = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::SetCreate{.type_id = elem_type_id}));
+            ci += 1;  // skip CallExpr
+            continue;
+          }
+        }
         context.SetPendingCalleeId(HandleExpr(context, child));
         continue;
       }
@@ -419,6 +462,51 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
       // orphaned callee from a generic call (e.g., `Pair<Int, Int>(...)`).
       if (ci + 1 < children.size() &&
           context.node_kind(children[ci + 1]) == Parse::NodeKind::CallExpr) {
+        // M91: Handle Set<T>() constructor directly.
+        // GenericArgumentClause is inside CallExprStart (as its callee child).
+        // Extract element type and emit SetCreate, bypassing HandleCallExpr.
+        if (child_kind == Parse::NodeKind::IdentifierNameExpr) {
+          auto text = context.token_text(context.node_token(child));
+          if (text == "Set") {
+            SemIR::TypeId elem_type_id = context.GetBuiltinType("Int");
+            auto call_node = children[ci + 1];
+            for (auto cn : context.children_source_order(call_node)) {
+              if (context.node_kind(cn) == Parse::NodeKind::CallExprStart) {
+                for (auto sn : context.children_source_order(cn)) {
+                  if (context.node_kind(sn) ==
+                      Parse::NodeKind::GenericArgumentClause) {
+                    for (auto gc : context.children_source_order(sn)) {
+                      auto gc_kind = context.node_kind(gc);
+                      if (gc_kind ==
+                              Parse::NodeKind::GenericArgumentClauseStart ||
+                          gc_kind == Parse::NodeKind::PatternListComma) {
+                        continue;
+                      }
+                      if (gc_kind.category().HasAnyOf(
+                              Parse::NodeCategory::Type)) {
+                        elem_type_id = HandleTypeExpr(context, gc);
+                        break;
+                      }
+                      if (gc_kind == Parse::NodeKind::IdentifierNameExpr) {
+                        auto t = context.token_text(context.node_token(gc));
+                        auto bt = context.GetBuiltinType(t);
+                        if (bt != SemIR::ErrorInst::TypeId) {
+                          elem_type_id = bt;
+                          break;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            init_id = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::SetCreate{.type_id = elem_type_id}));
+            ci += 1;  // skip CallExpr
+            continue;
+          }
+        }
         context.SetPendingCalleeId(HandleExpr(context, child));
         continue;
       }
@@ -495,9 +583,46 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
       if (init_inst.Is<SemIR::ArrayLiteralInit>()) {
         context.SetArrayVarInit(var_id, init_id);
       }
-      // M65: Track dynamic array vars.
+      // M65/M90: Track dynamic array vars and propagate element type.
       if (init_inst.Is<SemIR::DynamicArrayInit>()) {
+        // M90: If the var has a type annotation (e.g. [String]), propagate
+        // the element type to DynamicArrayInit instead of default Int.
+        if (type_id.has_value() && type_id != context.GetBuiltinType("Int")) {
+          auto updated = SemIR::Inst(SemIR::DynamicArrayInit{.type_id = type_id});
+          context.insts().Set(init_id, updated);
+        }
         context.SetDynamicArrayVar(var_id, init_id);
+      }
+      // M91: Track dict vars (DictCreate from `[:]` or DictInit from literals).
+      if (init_inst.Is<SemIR::DictCreate>() || init_inst.Is<SemIR::DictInit>()) {
+        // Propagate key/val types from pending type annotation.
+        auto pending = context.TakePendingDictKeyValTypes();
+        if (pending.has_value()) {
+          auto [kt, vt] = *pending;
+          context.SetDictTypes(init_id, kt, vt);
+          if (init_inst.Is<SemIR::DictCreate>()) {
+            // Update the DictCreate instruction with correct key type.
+            auto val_block = context.inst_blocks().AddPlaceholder();
+            auto vti = SemIR::InstId(context.types().GetTypeInstId(vt).index);
+            context.inst_blocks().ReplacePlaceholder(
+                val_block, llvm::ArrayRef<SemIR::InstId>{vti});
+            context.insts().Set(init_id, SemIR::Inst(
+                SemIR::DictCreate{.type_id = kt, .entries_id = val_block}));
+          }
+        }
+        context.SetDictVar(var_id, init_id);
+      }
+      // M91: Track set vars (SetCreate from `Set<T>()`).
+      if (init_inst.Is<SemIR::SetCreate>()) {
+        auto pending_elem = context.TakePendingSetElemType();
+        if (pending_elem.has_value()) {
+          context.SetSetElemType(init_id, *pending_elem);
+          context.insts().Set(init_id, SemIR::Inst(
+              SemIR::SetCreate{.type_id = *pending_elem}));
+        }
+        context.SetSetVar(var_id, init_id);
+        context.SetSetElemType(init_id,
+            context.insts().Get(init_id).TryAs<SemIR::SetCreate>()->type_id);
       }
     }
   }

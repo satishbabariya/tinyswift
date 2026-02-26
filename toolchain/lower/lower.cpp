@@ -794,6 +794,67 @@ auto LowerSILInst(
           builder.CreateCall(callee, {val});
         }
 
+      // M92: File I/O builtins.
+      } else if (name == "readline") {
+        auto* fty = llvm::FunctionType::get(builder.getPtrTy(), {}, false);
+        auto callee = context.module().getOrInsertFunction(
+            "__tinyswift_readline", fty);
+        setSILValue(inst.result, builder.CreateCall(callee, {}));
+      } else if (name == "file_getcwd") {
+        auto* fty = llvm::FunctionType::get(builder.getPtrTy(), {}, false);
+        auto callee = context.module().getOrInsertFunction(
+            "__tinyswift_file_getcwd", fty);
+        setSILValue(inst.result, builder.CreateCall(callee, {}));
+      } else if (name == "file_read_all") {
+        auto* path_ptr = getSILValue(inst.operands[0]);
+        if (path_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getPtrTy(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_file_read_all", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {path_ptr}));
+        }
+      } else if (name == "file_exists") {
+        auto* path_ptr = getSILValue(inst.operands[0]);
+        if (path_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getInt64Ty(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_file_exists", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {path_ptr}));
+        }
+      } else if (name == "file_remove") {
+        auto* path_ptr = getSILValue(inst.operands[0]);
+        if (path_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getInt64Ty(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_file_remove", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {path_ptr}));
+        }
+      } else if (name == "file_write_all") {
+        auto* path_ptr = getSILValue(inst.operands[0]);
+        auto* data_ptr = getSILValue(inst.operands[1]);
+        if (path_ptr && data_ptr) {
+          auto* fty = llvm::FunctionType::get(
+              builder.getInt64Ty(),
+              {builder.getPtrTy(), builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_file_write_all", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {path_ptr, data_ptr}));
+        }
+      } else if (name == "file_append_all") {
+        auto* path_ptr = getSILValue(inst.operands[0]);
+        auto* data_ptr = getSILValue(inst.operands[1]);
+        if (path_ptr && data_ptr) {
+          auto* fty = llvm::FunctionType::get(
+              builder.getInt64Ty(),
+              {builder.getPtrTy(), builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_file_append_all", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {path_ptr, data_ptr}));
+        }
+
       // M45: String equality.
       } else if (name == "string_eq") {
         auto* lhs = getSILValue(inst.operands[0]);
@@ -823,60 +884,107 @@ auto LowerSILInst(
           setSILValue(inst.result, builder.CreateZExt(inv, builder.getInt64Ty()));
         }
 
-      // M42: Dictionary operations.
+      // M42/M91: Dictionary operations (upgraded to hashmap backend).
       } else if (name == "dict_init") {
-        // operand_list layout: interleaved [key0, val0, key1, val1, ...]
+        // M91: Create hashmap and insert all literal entries.
         // literal_value = number of key-value pairs.
+        // operand_list = interleaved [k0,v0,k1,v1,...].
         int64_t count = inst.literal_value;
-        if (count <= 0) break;
-        // Build two stack arrays: keys (ptr[]) and values (i64[]).
-        auto* count_val = llvm::ConstantInt::get(builder.getInt64Ty(), count);
-        auto* keys_alloca = builder.CreateAlloca(
-            builder.getPtrTy(), count_val, "dict_keys");
-        auto* vals_alloca = builder.CreateAlloca(
-            builder.getInt64Ty(), count_val, "dict_vals");
-        for (int64_t i = 0; i < count; ++i) {
-          size_t ki = static_cast<size_t>(i * 2);      // key at even index
-          size_t vi = static_cast<size_t>(i * 2 + 1);  // val at odd index
-          if (ki < inst.operand_list.size()) {
-            auto* k = getSILValue(inst.operand_list[ki]);
-            if (k) {
-              auto* gep = builder.CreateGEP(
-                  builder.getPtrTy(), keys_alloca,
-                  llvm::ConstantInt::get(builder.getInt64Ty(), i));
-              builder.CreateStore(k, gep);
-            }
-          }
-          if (vi < inst.operand_list.size()) {
-            auto* v = getSILValue(inst.operand_list[vi]);
-            if (v) {
-              // Widen to i64 if needed.
-              if (v->getType()->isIntegerTy() &&
-                  !v->getType()->isIntegerTy(64)) {
-                v = builder.CreateSExt(v, builder.getInt64Ty());
-              }
-              auto* gep = builder.CreateGEP(
-                  builder.getInt64Ty(), vals_alloca,
-                  llvm::ConstantInt::get(builder.getInt64Ty(), i));
-              builder.CreateStore(v, gep);
-            }
-          }
+
+        // Determine key/val types from operands.
+        llvm::Type* key_llvm_type = builder.getPtrTy();  // default: String
+        llvm::Type* val_llvm_type = builder.getInt64Ty(); // default: Int
+        bool key_is_string = true;
+
+        if (count > 0 && inst.operand_list.size() >= 2) {
+          auto* k0 = getSILValue(inst.operand_list[0]);
+          auto* v0 = getSILValue(inst.operand_list[1]);
+          if (k0) key_llvm_type = k0->getType();
+          if (v0) val_llvm_type = v0->getType();
+          key_is_string = key_llvm_type->isPointerTy();
         }
-        auto* fn_type = llvm::FunctionType::get(
+
+        auto& layout = context.module().getDataLayout();
+        uint64_t key_size = layout.getTypeAllocSize(key_llvm_type);
+        uint64_t val_size = layout.getTypeAllocSize(val_llvm_type);
+
+        // Get eq function.
+        const char* eq_fn_name = key_is_string
+            ? "__tinyswift_eq_string" : "__tinyswift_eq_int";
+        auto* eq_fty = llvm::FunctionType::get(
+            builder.getInt64Ty(),
+            {builder.getPtrTy(), builder.getPtrTy()}, false);
+        auto eq_fn = context.module().getOrInsertFunction(eq_fn_name, eq_fty);
+
+        // Create hashmap.
+        auto* create_fty = llvm::FunctionType::get(
             builder.getPtrTy(),
-            {builder.getInt64Ty(), builder.getPtrTy(), builder.getPtrTy()},
+            {builder.getInt64Ty(), builder.getInt64Ty(), builder.getPtrTy()},
             false);
-        auto callee = context.module().getOrInsertFunction(
-            "__tinyswift_dict_create", fn_type);
-        setSILValue(inst.result,
-                    builder.CreateCall(callee, {count_val, keys_alloca,
-                                                vals_alloca}));
+        auto create_fn = context.module().getOrInsertFunction(
+            "__tinyswift_hashmap_create", create_fty);
+        auto* map_ptr = builder.CreateCall(create_fn, {
+            llvm::ConstantInt::get(builder.getInt64Ty(), key_size),
+            llvm::ConstantInt::get(builder.getInt64Ty(), val_size),
+            eq_fn.getCallee()});
+
+        // Insert each k/v pair.
+        auto* set_fty = llvm::FunctionType::get(
+            builder.getVoidTy(),
+            {builder.getPtrTy(), builder.getPtrTy(),
+             builder.getInt64Ty(), builder.getPtrTy()}, false);
+        auto set_fn = context.module().getOrInsertFunction(
+            "__tinyswift_hashmap_set", set_fty);
+
+        // Hash function name.
+        const char* hash_fn_name = key_is_string
+            ? "__tinyswift_string_hash" : "__tinyswift_int_hash";
+
+        for (int64_t i = 0; i < count; ++i) {
+          size_t ki = static_cast<size_t>(i * 2);
+          size_t vi = static_cast<size_t>(i * 2 + 1);
+          if (ki >= inst.operand_list.size() ||
+              vi >= inst.operand_list.size()) break;
+          auto* k = getSILValue(inst.operand_list[ki]);
+          auto* v = getSILValue(inst.operand_list[vi]);
+          if (!k || !v) continue;
+
+          auto* key_alloca = builder.CreateAlloca(key_llvm_type);
+          builder.CreateStore(k, key_alloca);
+          auto* val_alloca = builder.CreateAlloca(val_llvm_type);
+          if (v->getType() != val_llvm_type && v->getType()->isIntegerTy() &&
+              val_llvm_type->isIntegerTy()) {
+            v = builder.CreateSExtOrTrunc(v, val_llvm_type);
+          }
+          builder.CreateStore(v, val_alloca);
+
+          // Compute hash.
+          llvm::Value* hash_val = nullptr;
+          if (key_is_string) {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getPtrTy()}, false);
+            auto hfn = context.module().getOrInsertFunction(hash_fn_name, hfty);
+            hash_val = builder.CreateCall(hfn, {k});
+          } else {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getInt64Ty()}, false);
+            auto hfn = context.module().getOrInsertFunction(hash_fn_name, hfty);
+            auto* k_i64 = k;
+            if (!k->getType()->isIntegerTy(64)) {
+              k_i64 = builder.CreateSExt(k, builder.getInt64Ty());
+            }
+            hash_val = builder.CreateCall(hfn, {k_i64});
+          }
+
+          builder.CreateCall(set_fn, {map_ptr, key_alloca, hash_val, val_alloca});
+        }
+        setSILValue(inst.result, map_ptr);
+
       } else if (name == "dict_access") {
-        // Returns Optional<Int> = { i1, i64 } via __tinyswift_dict_get_str_int.
+        // M42 compat: dict_access still uses old runtime.
         auto* dict_ptr = getSILValue(inst.operands[0]);
         auto* key_ptr  = getSILValue(inst.operands[1]);
         if (dict_ptr && key_ptr) {
-          // Return type is {i1, i64} (Optional<Int>).
           llvm::SmallVector<llvm::Type*, 2> opt_fields = {builder.getInt1Ty(),
                                                            builder.getInt64Ty()};
           auto* opt_ty = llvm::StructType::get(context.llvm_context(),
@@ -886,6 +994,386 @@ auto LowerSILInst(
           auto callee = context.module().getOrInsertFunction(
               "__tinyswift_dict_get_str_int", fn_type);
           setSILValue(inst.result, builder.CreateCall(callee, {dict_ptr, key_ptr}));
+        }
+
+      // M91: Generic hash map operations.
+      } else if (name == "hashmap_create") {
+        // literal_value = (key_type_idx << 32) | (val_type_idx & 0xFFFFFFFF).
+        int32_t key_type_idx = static_cast<int32_t>(inst.literal_value >> 32);
+        int32_t val_type_idx = static_cast<int32_t>(inst.literal_value & 0xFFFFFFFF);
+        auto key_type_id = SemIR::TypeId(key_type_idx);
+        auto val_type_id = SemIR::TypeId(val_type_idx);
+        auto* key_llvm_type2 = context.GetType(key_type_id);
+        auto* val_llvm_type2 = context.GetType(val_type_id);
+        auto& layout2 = context.module().getDataLayout();
+        uint64_t key_sz = layout2.getTypeAllocSize(key_llvm_type2);
+        uint64_t val_sz = layout2.getTypeAllocSize(val_llvm_type2);
+
+        // Select eq function based on key type.
+        const char* eq_name = "__tinyswift_eq_int";
+        if (key_llvm_type2->isPointerTy()) eq_name = "__tinyswift_eq_string";
+        else if (key_llvm_type2->isDoubleTy()) eq_name = "__tinyswift_eq_double";
+        else if (key_llvm_type2->isIntegerTy(1)) eq_name = "__tinyswift_eq_bool";
+
+        auto* eq_fty2 = llvm::FunctionType::get(
+            builder.getInt64Ty(),
+            {builder.getPtrTy(), builder.getPtrTy()}, false);
+        auto eq_fn2 = context.module().getOrInsertFunction(eq_name, eq_fty2);
+
+        auto* create_fty2 = llvm::FunctionType::get(
+            builder.getPtrTy(),
+            {builder.getInt64Ty(), builder.getInt64Ty(), builder.getPtrTy()},
+            false);
+        auto create_fn2 = context.module().getOrInsertFunction(
+            "__tinyswift_hashmap_create", create_fty2);
+        setSILValue(inst.result, builder.CreateCall(create_fn2, {
+            llvm::ConstantInt::get(builder.getInt64Ty(), key_sz),
+            llvm::ConstantInt::get(builder.getInt64Ty(), val_sz),
+            eq_fn2.getCallee()}));
+
+      } else if (name == "hashmap_set") {
+        // operands: [0]=map, [1]=key (in operand_list), [2]=val (in operand_list)
+        auto* map_ptr = getSILValue(inst.operands[0]);
+        llvm::Value* key_val = nullptr;
+        llvm::Value* val_val = nullptr;
+        if (inst.operand_list.size() >= 1)
+          key_val = getSILValue(inst.operand_list[0]);
+        if (inst.operand_list.size() >= 2)
+          val_val = getSILValue(inst.operand_list[1]);
+        if (map_ptr && key_val && val_val) {
+          auto* key_alloca = builder.CreateAlloca(key_val->getType());
+          builder.CreateStore(key_val, key_alloca);
+          auto* val_alloca = builder.CreateAlloca(val_val->getType());
+          builder.CreateStore(val_val, val_alloca);
+
+          // Compute hash.
+          llvm::Value* hash_val = nullptr;
+          bool is_string_key = key_val->getType()->isPointerTy();
+          if (is_string_key) {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getPtrTy()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_string_hash", hfty);
+            hash_val = builder.CreateCall(hfn, {key_val});
+          } else if (key_val->getType()->isDoubleTy()) {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getDoubleTy()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_double_hash", hfty);
+            hash_val = builder.CreateCall(hfn, {key_val});
+          } else {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getInt64Ty()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_int_hash", hfty);
+            auto* k_i64 = key_val;
+            if (!key_val->getType()->isIntegerTy(64))
+              k_i64 = builder.CreateSExt(key_val, builder.getInt64Ty());
+            hash_val = builder.CreateCall(hfn, {k_i64});
+          }
+
+          auto* set_fty = llvm::FunctionType::get(
+              builder.getVoidTy(),
+              {builder.getPtrTy(), builder.getPtrTy(),
+               builder.getInt64Ty(), builder.getPtrTy()}, false);
+          auto set_fn = context.module().getOrInsertFunction(
+              "__tinyswift_hashmap_set", set_fty);
+          builder.CreateCall(set_fn, {map_ptr, key_alloca, hash_val, val_alloca});
+        }
+
+      } else if (name == "hashmap_get") {
+        // operands: [0]=map, [1]=key. literal_value = Optional<V> type_id.
+        auto* map_ptr = getSILValue(inst.operands[0]);
+        auto* key_val = getSILValue(inst.operands[1]);
+        if (map_ptr && key_val) {
+          // Determine val LLVM type from the Optional type.
+          // The result is Optional<V> = {i1, V_type}.
+          // For now, default to i64 (Int).
+          llvm::Type* val_llvm_type3 = builder.getInt64Ty();
+
+          auto* key_alloca = builder.CreateAlloca(key_val->getType());
+          builder.CreateStore(key_val, key_alloca);
+          auto* val_alloca = builder.CreateAlloca(val_llvm_type3);
+
+          // Compute hash.
+          llvm::Value* hash_val = nullptr;
+          bool is_string_key = key_val->getType()->isPointerTy();
+          if (is_string_key) {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getPtrTy()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_string_hash", hfty);
+            hash_val = builder.CreateCall(hfn, {key_val});
+          } else if (key_val->getType()->isDoubleTy()) {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getDoubleTy()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_double_hash", hfty);
+            hash_val = builder.CreateCall(hfn, {key_val});
+          } else {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getInt64Ty()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_int_hash", hfty);
+            auto* k_i64 = key_val;
+            if (!key_val->getType()->isIntegerTy(64))
+              k_i64 = builder.CreateSExt(key_val, builder.getInt64Ty());
+            hash_val = builder.CreateCall(hfn, {k_i64});
+          }
+
+          auto* get_fty = llvm::FunctionType::get(
+              builder.getInt64Ty(),
+              {builder.getPtrTy(), builder.getPtrTy(),
+               builder.getInt64Ty(), builder.getPtrTy()}, false);
+          auto get_fn = context.module().getOrInsertFunction(
+              "__tinyswift_hashmap_get", get_fty);
+          auto* found = builder.CreateCall(
+              get_fn, {map_ptr, key_alloca, hash_val, val_alloca});
+          auto* found_i1 = builder.CreateTrunc(found, builder.getInt1Ty());
+          auto* val_loaded = builder.CreateLoad(val_llvm_type3, val_alloca);
+
+          // Build Optional struct {i1, val_type}.
+          llvm::SmallVector<llvm::Type*, 2> opt_fields = {
+              builder.getInt1Ty(), val_llvm_type3};
+          auto* opt_ty = llvm::StructType::get(context.llvm_context(),
+                                               llvm::ArrayRef<llvm::Type*>(opt_fields));
+          llvm::Value* opt_val = llvm::UndefValue::get(opt_ty);
+          opt_val = builder.CreateInsertValue(opt_val, found_i1, {0});
+          opt_val = builder.CreateInsertValue(opt_val, val_loaded, {1});
+          setSILValue(inst.result, opt_val);
+        }
+
+      } else if (name == "hashmap_count") {
+        auto* map_ptr = getSILValue(inst.operands[0]);
+        if (map_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getInt64Ty(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_hashmap_count", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {map_ptr}));
+        }
+
+      } else if (name == "hashmap_contains") {
+        auto* map_ptr = getSILValue(inst.operands[0]);
+        auto* key_val = getSILValue(inst.operands[1]);
+        if (map_ptr && key_val) {
+          auto* key_alloca = builder.CreateAlloca(key_val->getType());
+          builder.CreateStore(key_val, key_alloca);
+
+          llvm::Value* hash_val = nullptr;
+          bool is_string_key = key_val->getType()->isPointerTy();
+          if (is_string_key) {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getPtrTy()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_string_hash", hfty);
+            hash_val = builder.CreateCall(hfn, {key_val});
+          } else {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getInt64Ty()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_int_hash", hfty);
+            auto* k_i64 = key_val;
+            if (!key_val->getType()->isIntegerTy(64))
+              k_i64 = builder.CreateSExt(key_val, builder.getInt64Ty());
+            hash_val = builder.CreateCall(hfn, {k_i64});
+          }
+
+          auto* fty = llvm::FunctionType::get(
+              builder.getInt64Ty(),
+              {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()},
+              false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_hashmap_contains", fty);
+          setSILValue(inst.result,
+                      builder.CreateCall(callee, {map_ptr, key_alloca, hash_val}));
+        }
+
+      } else if (name == "hashmap_remove") {
+        auto* map_ptr = getSILValue(inst.operands[0]);
+        auto* key_val = getSILValue(inst.operands[1]);
+        if (map_ptr && key_val) {
+          auto* key_alloca = builder.CreateAlloca(key_val->getType());
+          builder.CreateStore(key_val, key_alloca);
+
+          llvm::Value* hash_val = nullptr;
+          bool is_string_key = key_val->getType()->isPointerTy();
+          if (is_string_key) {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getPtrTy()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_string_hash", hfty);
+            hash_val = builder.CreateCall(hfn, {key_val});
+          } else {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getInt64Ty()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_int_hash", hfty);
+            auto* k_i64 = key_val;
+            if (!key_val->getType()->isIntegerTy(64))
+              k_i64 = builder.CreateSExt(key_val, builder.getInt64Ty());
+            hash_val = builder.CreateCall(hfn, {k_i64});
+          }
+
+          auto* fty = llvm::FunctionType::get(
+              builder.getVoidTy(),
+              {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()},
+              false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_hashmap_remove", fty);
+          builder.CreateCall(callee, {map_ptr, key_alloca, hash_val});
+        }
+
+      // M91: Generic hash set operations.
+      } else if (name == "hashset_create") {
+        // literal_value = elem TypeId index.
+        auto elem_type_id = SemIR::TypeId(static_cast<int32_t>(inst.literal_value));
+        auto* elem_llvm_type = context.GetType(elem_type_id);
+        auto& layout3 = context.module().getDataLayout();
+        uint64_t elem_sz = layout3.getTypeAllocSize(elem_llvm_type);
+
+        const char* eq_name3 = "__tinyswift_eq_int";
+        if (elem_llvm_type->isPointerTy()) eq_name3 = "__tinyswift_eq_string";
+        else if (elem_llvm_type->isDoubleTy()) eq_name3 = "__tinyswift_eq_double";
+        else if (elem_llvm_type->isIntegerTy(1)) eq_name3 = "__tinyswift_eq_bool";
+
+        auto* eq_fty3 = llvm::FunctionType::get(
+            builder.getInt64Ty(),
+            {builder.getPtrTy(), builder.getPtrTy()}, false);
+        auto eq_fn3 = context.module().getOrInsertFunction(eq_name3, eq_fty3);
+
+        auto* fty = llvm::FunctionType::get(
+            builder.getPtrTy(),
+            {builder.getInt64Ty(), builder.getPtrTy()}, false);
+        auto callee = context.module().getOrInsertFunction(
+            "__tinyswift_hashset_create", fty);
+        setSILValue(inst.result, builder.CreateCall(callee, {
+            llvm::ConstantInt::get(builder.getInt64Ty(), elem_sz),
+            eq_fn3.getCallee()}));
+
+      } else if (name == "hashset_insert") {
+        auto* set_ptr = getSILValue(inst.operands[0]);
+        auto* elem_val = getSILValue(inst.operands[1]);
+        if (set_ptr && elem_val) {
+          auto* elem_alloca = builder.CreateAlloca(elem_val->getType());
+          builder.CreateStore(elem_val, elem_alloca);
+
+          llvm::Value* hash_val = nullptr;
+          if (elem_val->getType()->isPointerTy()) {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getPtrTy()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_string_hash", hfty);
+            hash_val = builder.CreateCall(hfn, {elem_val});
+          } else if (elem_val->getType()->isDoubleTy()) {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getDoubleTy()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_double_hash", hfty);
+            hash_val = builder.CreateCall(hfn, {elem_val});
+          } else {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getInt64Ty()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_int_hash", hfty);
+            auto* e_i64 = elem_val;
+            if (!elem_val->getType()->isIntegerTy(64))
+              e_i64 = builder.CreateSExt(elem_val, builder.getInt64Ty());
+            hash_val = builder.CreateCall(hfn, {e_i64});
+          }
+
+          auto* fty = llvm::FunctionType::get(
+              builder.getVoidTy(),
+              {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()},
+              false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_hashset_insert", fty);
+          builder.CreateCall(callee, {set_ptr, elem_alloca, hash_val});
+        }
+
+      } else if (name == "hashset_contains") {
+        auto* set_ptr = getSILValue(inst.operands[0]);
+        auto* elem_val = getSILValue(inst.operands[1]);
+        if (set_ptr && elem_val) {
+          auto* elem_alloca = builder.CreateAlloca(elem_val->getType());
+          builder.CreateStore(elem_val, elem_alloca);
+
+          llvm::Value* hash_val = nullptr;
+          if (elem_val->getType()->isPointerTy()) {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getPtrTy()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_string_hash", hfty);
+            hash_val = builder.CreateCall(hfn, {elem_val});
+          } else if (elem_val->getType()->isDoubleTy()) {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getDoubleTy()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_double_hash", hfty);
+            hash_val = builder.CreateCall(hfn, {elem_val});
+          } else {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getInt64Ty()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_int_hash", hfty);
+            auto* e_i64 = elem_val;
+            if (!elem_val->getType()->isIntegerTy(64))
+              e_i64 = builder.CreateSExt(elem_val, builder.getInt64Ty());
+            hash_val = builder.CreateCall(hfn, {e_i64});
+          }
+
+          auto* fty = llvm::FunctionType::get(
+              builder.getInt64Ty(),
+              {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()},
+              false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_hashset_contains", fty);
+          setSILValue(inst.result,
+                      builder.CreateCall(callee, {set_ptr, elem_alloca, hash_val}));
+        }
+
+      } else if (name == "hashset_count") {
+        auto* set_ptr = getSILValue(inst.operands[0]);
+        if (set_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getInt64Ty(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_hashset_count", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {set_ptr}));
+        }
+
+      } else if (name == "hashset_remove") {
+        auto* set_ptr = getSILValue(inst.operands[0]);
+        auto* elem_val = getSILValue(inst.operands[1]);
+        if (set_ptr && elem_val) {
+          auto* elem_alloca = builder.CreateAlloca(elem_val->getType());
+          builder.CreateStore(elem_val, elem_alloca);
+
+          llvm::Value* hash_val = nullptr;
+          if (elem_val->getType()->isPointerTy()) {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getPtrTy()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_string_hash", hfty);
+            hash_val = builder.CreateCall(hfn, {elem_val});
+          } else {
+            auto* hfty = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getInt64Ty()}, false);
+            auto hfn = context.module().getOrInsertFunction(
+                "__tinyswift_int_hash", hfty);
+            auto* e_i64 = elem_val;
+            if (!elem_val->getType()->isIntegerTy(64))
+              e_i64 = builder.CreateSExt(elem_val, builder.getInt64Ty());
+            hash_val = builder.CreateCall(hfn, {e_i64});
+          }
+
+          auto* fty = llvm::FunctionType::get(
+              builder.getVoidTy(),
+              {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()},
+              false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_hashset_remove", fty);
+          builder.CreateCall(callee, {set_ptr, elem_alloca, hash_val});
         }
 
       // M61: String method calls.
@@ -953,28 +1441,35 @@ auto LowerSILInst(
           setSILValue(inst.result, builder.CreateZExt(cmp, builder.getInt64Ty()));
         }
 
-      // M65: Dynamic array operations.
+      // M65/M90: Dynamic array operations (type-erased generic).
       } else if (name == "dynarray_create") {
-        // __tinyswift_dynarray_create() -> ptr (opaque array handle).
-        auto* fty = llvm::FunctionType::get(builder.getPtrTy(), {}, false);
+        // __tinyswift_dynarray_create_generic(elem_size: i64) -> ptr.
+        // literal_value holds the element TypeId index.
+        auto elem_type_id = SemIR::TypeId(static_cast<int32_t>(inst.literal_value));
+        auto* elem_llvm_type = context.GetType(elem_type_id);
+        auto& layout = context.module().getDataLayout();
+        uint64_t elem_size = layout.getTypeAllocSize(elem_llvm_type);
+        auto* size_val = llvm::ConstantInt::get(builder.getInt64Ty(), elem_size);
+        auto* fty = llvm::FunctionType::get(
+            builder.getPtrTy(), {builder.getInt64Ty()}, false);
         auto callee = context.module().getOrInsertFunction(
-            "__tinyswift_dynarray_create", fty);
-        setSILValue(inst.result, builder.CreateCall(callee, {}));
+            "__tinyswift_dynarray_create_generic", fty);
+        setSILValue(inst.result, builder.CreateCall(callee, {size_val}));
       } else if (name == "dynarray_append") {
-        // __tinyswift_dynarray_append_int(arr: ptr, val: i64) -> void.
+        // __tinyswift_dynarray_append(arr: ptr, elem_ptr: ptr) -> void.
+        // Alloca a temporary, store the element value, pass its address.
         auto* arr_ptr = getSILValue(inst.operands[0]);
         auto* elem_val = getSILValue(inst.operands[1]);
         if (arr_ptr && elem_val) {
-          if (elem_val->getType()->isIntegerTy() &&
-              !elem_val->getType()->isIntegerTy(64)) {
-            elem_val = builder.CreateSExt(elem_val, builder.getInt64Ty());
-          }
+          auto* elem_type = elem_val->getType();
+          auto* alloca = builder.CreateAlloca(elem_type);
+          builder.CreateStore(elem_val, alloca);
           auto* fty = llvm::FunctionType::get(
               builder.getVoidTy(),
-              {builder.getPtrTy(), builder.getInt64Ty()}, false);
+              {builder.getPtrTy(), builder.getPtrTy()}, false);
           auto callee = context.module().getOrInsertFunction(
-              "__tinyswift_dynarray_append_int", fty);
-          builder.CreateCall(callee, {arr_ptr, elem_val});
+              "__tinyswift_dynarray_append", fty);
+          builder.CreateCall(callee, {arr_ptr, alloca});
         } else {
           llvm::errs()
               << "WARNING: dynarray_append: null operand (arr="
@@ -992,7 +1487,8 @@ auto LowerSILInst(
           setSILValue(inst.result, builder.CreateCall(callee, {arr_ptr}));
         }
       } else if (name == "dynarray_access") {
-        // __tinyswift_dynarray_get_int(arr: ptr, idx: i64) -> i64.
+        // __tinyswift_dynarray_get(arr: ptr, idx: i64) -> ptr (to element).
+        // Then load the typed element from the returned pointer.
         auto* arr_ptr = getSILValue(inst.operands[0]);
         auto* idx_val = getSILValue(inst.operands[1]);
         if (arr_ptr && idx_val) {
@@ -1000,12 +1496,17 @@ auto LowerSILInst(
               !idx_val->getType()->isIntegerTy(64)) {
             idx_val = builder.CreateSExt(idx_val, builder.getInt64Ty());
           }
+          // Call __tinyswift_dynarray_get → returns void*.
           auto* fty = llvm::FunctionType::get(
-              builder.getInt64Ty(),
+              builder.getPtrTy(),
               {builder.getPtrTy(), builder.getInt64Ty()}, false);
           auto callee = context.module().getOrInsertFunction(
-              "__tinyswift_dynarray_get_int", fty);
-          setSILValue(inst.result, builder.CreateCall(callee, {arr_ptr, idx_val}));
+              "__tinyswift_dynarray_get", fty);
+          auto* elem_ptr = builder.CreateCall(callee, {arr_ptr, idx_val});
+          // Load the typed element from the returned pointer.
+          auto elem_type_id = SemIR::TypeId(static_cast<int32_t>(inst.literal_value));
+          auto* elem_llvm_type = context.GetType(elem_type_id);
+          setSILValue(inst.result, builder.CreateLoad(elem_llvm_type, elem_ptr));
         }
       // M78: ARC operations.
       } else if (name == "alloc_class") {

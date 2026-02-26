@@ -795,6 +795,32 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     case SemIR::InstKind::DictAccess:
       break;
 
+    // M91: Generic Dictionary/Set operations — handled via SILGen path.
+    case SemIR::InstKind::DictCreate:
+    case SemIR::InstKind::DictSet:
+    case SemIR::InstKind::DictGet:
+    case SemIR::InstKind::DictCount:
+    case SemIR::InstKind::DictContains:
+    case SemIR::InstKind::DictRemove:
+    case SemIR::InstKind::DictMethodRef:
+    case SemIR::InstKind::SetCreate:
+    case SemIR::InstKind::SetInsert:
+    case SemIR::InstKind::SetContains:
+    case SemIR::InstKind::SetCount:
+    case SemIR::InstKind::SetRemove:
+    case SemIR::InstKind::SetMethodRef:
+      break;
+
+    // M92: File I/O — handled via SILGen path.
+    case SemIR::InstKind::ReadLine:
+    case SemIR::InstKind::FileReadAll:
+    case SemIR::InstKind::FileWriteAll:
+    case SemIR::InstKind::FileAppendAll:
+    case SemIR::InstKind::FileExists:
+    case SemIR::InstKind::FileRemove:
+    case SemIR::InstKind::FileGetCwd:
+      break;
+
     // M44: print() — handled via SILGen path.
     case SemIR::InstKind::PrintValue:
       break;

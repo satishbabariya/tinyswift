@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <optional>
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
@@ -526,6 +527,24 @@ class Context {
   // Map from VarStorage InstId index to DynamicArrayInit InstId (M65).
   llvm::DenseMap<int32_t, SemIR::InstId> dynamic_array_var_map_;
 
+  // M91: Dict var tracking: VarStorage InstId → DictCreate InstId.
+  llvm::DenseMap<int32_t, SemIR::InstId> dict_var_map_;
+  // M91: Dict key/val types: DictCreate InstId → {key_type_id, val_type_id}.
+  llvm::DenseMap<int32_t, std::pair<SemIR::TypeId, SemIR::TypeId>> dict_type_map_;
+  // M91: Set var tracking: VarStorage InstId → SetCreate InstId.
+  llvm::DenseMap<int32_t, SemIR::InstId> set_var_map_;
+  // M91: Set elem type: SetCreate InstId → elem_type_id.
+  llvm::DenseMap<int32_t, SemIR::TypeId> set_type_map_;
+
+  // M91: Pending dict key/val types from type annotation (consumed by HandleVariableDecl).
+  SemIR::TypeId pending_dict_key_type_ = SemIR::ErrorInst::TypeId;
+  SemIR::TypeId pending_dict_val_type_ = SemIR::ErrorInst::TypeId;
+  bool has_pending_dict_types_ = false;
+
+  // M91: Pending set element type from type annotation.
+  SemIR::TypeId pending_set_elem_type_ = SemIR::ErrorInst::TypeId;
+  bool has_pending_set_type_ = false;
+
   // M66-M72: Generics state.
 
   // Type parameter bindings during specialization: NameId.index -> TypeId.
@@ -624,6 +643,75 @@ class Context {
   // M65: Check if a VarStorage holds a DynamicArrayInit.
   auto IsDynamicArrayVar(SemIR::InstId var_id) -> bool {
     return dynamic_array_var_map_.count(var_id.index) > 0;
+  }
+
+  // M91: Pending dict key/val types from type annotation.
+  auto SetPendingDictKeyValTypes(SemIR::TypeId key, SemIR::TypeId val) -> void {
+    pending_dict_key_type_ = key;
+    pending_dict_val_type_ = val;
+    has_pending_dict_types_ = true;
+  }
+  auto TakePendingDictKeyValTypes()
+      -> std::optional<std::pair<SemIR::TypeId, SemIR::TypeId>> {
+    if (!has_pending_dict_types_) return std::nullopt;
+    has_pending_dict_types_ = false;
+    return std::make_pair(pending_dict_key_type_, pending_dict_val_type_);
+  }
+  auto HasPendingDictTypes() -> bool { return has_pending_dict_types_; }
+
+  // M91: Pending set element type from type annotation.
+  auto SetPendingSetElemType(SemIR::TypeId elem) -> void {
+    pending_set_elem_type_ = elem;
+    has_pending_set_type_ = true;
+  }
+  auto TakePendingSetElemType() -> std::optional<SemIR::TypeId> {
+    if (!has_pending_set_type_) return std::nullopt;
+    has_pending_set_type_ = false;
+    return pending_set_elem_type_;
+  }
+
+  // M91: Dict var tracking.
+  auto SetDictVar(SemIR::InstId var_id, SemIR::InstId dict_id) -> void {
+    dict_var_map_.insert({var_id.index, dict_id});
+  }
+  auto GetDictVar(SemIR::InstId var_id) -> SemIR::InstId {
+    auto it = dict_var_map_.find(var_id.index);
+    if (it != dict_var_map_.end()) return it->second;
+    return SemIR::InstId::None;
+  }
+  auto IsDictVar(SemIR::InstId var_id) -> bool {
+    return dict_var_map_.count(var_id.index) > 0;
+  }
+  auto SetDictTypes(SemIR::InstId dict_id, SemIR::TypeId key_type,
+                    SemIR::TypeId val_type) -> void {
+    dict_type_map_.insert_or_assign(dict_id.index,
+                                     std::make_pair(key_type, val_type));
+  }
+  auto GetDictTypes(SemIR::InstId dict_id) -> std::pair<SemIR::TypeId, SemIR::TypeId> {
+    auto it = dict_type_map_.find(dict_id.index);
+    if (it != dict_type_map_.end()) return it->second;
+    return {SemIR::ErrorInst::TypeId, SemIR::ErrorInst::TypeId};
+  }
+
+  // M91: Set var tracking.
+  auto SetSetVar(SemIR::InstId var_id, SemIR::InstId set_id) -> void {
+    set_var_map_.insert({var_id.index, set_id});
+  }
+  auto GetSetVar(SemIR::InstId var_id) -> SemIR::InstId {
+    auto it = set_var_map_.find(var_id.index);
+    if (it != set_var_map_.end()) return it->second;
+    return SemIR::InstId::None;
+  }
+  auto IsSetVar(SemIR::InstId var_id) -> bool {
+    return set_var_map_.count(var_id.index) > 0;
+  }
+  auto SetSetElemType(SemIR::InstId set_id, SemIR::TypeId elem_type) -> void {
+    set_type_map_.insert_or_assign(set_id.index, elem_type);
+  }
+  auto GetSetElemType(SemIR::InstId set_id) -> SemIR::TypeId {
+    auto it = set_type_map_.find(set_id.index);
+    if (it != set_type_map_.end()) return it->second;
+    return SemIR::ErrorInst::TypeId;
   }
 
   // M78: ARC cleanup tracking.

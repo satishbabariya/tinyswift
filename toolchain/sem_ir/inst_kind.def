@@ -171,9 +171,24 @@ TINYSWIFT_SEM_IR_INST_KIND(ThrowValue)
 TINYSWIFT_SEM_IR_INST_KIND(ErrorCheck)
 TINYSWIFT_SEM_IR_INST_KIND(ErrorClear)
 
-// Dictionary operations (M42)
+// Dictionary operations (M42 + M91)
 TINYSWIFT_SEM_IR_INST_KIND(DictInit)
 TINYSWIFT_SEM_IR_INST_KIND(DictAccess)
+TINYSWIFT_SEM_IR_INST_KIND(DictCreate)             // M91: var d: [K:V] = [:]
+TINYSWIFT_SEM_IR_INST_KIND(DictSet)                // M91: d["k"] = v
+TINYSWIFT_SEM_IR_INST_KIND(DictGet)                // M91: d["k"] -> Optional<V>
+TINYSWIFT_SEM_IR_INST_KIND(DictCount)              // M91: d.count
+TINYSWIFT_SEM_IR_INST_KIND(DictContains)           // M91: d.contains(key:)
+TINYSWIFT_SEM_IR_INST_KIND(DictRemove)             // M91: d.removeValue(forKey:)
+TINYSWIFT_SEM_IR_INST_KIND(DictMethodRef)          // M91: pending dict method
+
+// Set operations (M91)
+TINYSWIFT_SEM_IR_INST_KIND(SetCreate)              // M91: Set<T>()
+TINYSWIFT_SEM_IR_INST_KIND(SetInsert)              // M91: s.insert(x)
+TINYSWIFT_SEM_IR_INST_KIND(SetContains)            // M91: s.contains(x)
+TINYSWIFT_SEM_IR_INST_KIND(SetCount)               // M91: s.count
+TINYSWIFT_SEM_IR_INST_KIND(SetRemove)              // M91: s.remove(x)
+TINYSWIFT_SEM_IR_INST_KIND(SetMethodRef)           // M91: pending set method
 
 // Print built-in (M44)
 TINYSWIFT_SEM_IR_INST_KIND(PrintValue)
@@ -211,6 +226,15 @@ TINYSWIFT_SEM_IR_INST_KIND(UnsafePtrDeallocate)   // ptr.deallocate()
 TINYSWIFT_SEM_IR_INST_KIND(UnsafePtrSubscript)    // ptr[i] read
 TINYSWIFT_SEM_IR_INST_KIND(UnsafePtrSubscriptAddr) // ptr[i] write address
 TINYSWIFT_SEM_IR_INST_KIND(UnsafePtrMethodRef)    // pending marker for ptr.allocate/deallocate
+
+// File I/O (M92)
+TINYSWIFT_SEM_IR_INST_KIND(ReadLine)              // readLine() -> String
+TINYSWIFT_SEM_IR_INST_KIND(FileReadAll)           // readFile(path) -> String
+TINYSWIFT_SEM_IR_INST_KIND(FileWriteAll)          // writeFile(path, contents) -> Bool
+TINYSWIFT_SEM_IR_INST_KIND(FileAppendAll)         // appendFile(path, contents) -> Bool
+TINYSWIFT_SEM_IR_INST_KIND(FileExists)            // fileExists(path) -> Bool
+TINYSWIFT_SEM_IR_INST_KIND(FileRemove)            // removeFile(path) -> Bool
+TINYSWIFT_SEM_IR_INST_KIND(FileGetCwd)            // getCurrentDirectory() -> String
 
 // ARC operations (M78)
 TINYSWIFT_SEM_IR_INST_KIND(AllocClass)            // heap-allocate class + init fields

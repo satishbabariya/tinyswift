@@ -1147,6 +1147,164 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     return;
   }
 
+  // M91: DictCreate — emit hashmap_create builtin.
+  if (auto dc = inst.TryAs<SemIR::DictCreate>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(SemIR::ErrorInst::TypeId)
+                                      .getAddressType());
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "hashmap_create";
+    // Pack key_type_id and val_type_id into literal_value.
+    int64_t key_type_idx = static_cast<int64_t>(dc->type_id.index);
+    int64_t val_type_idx = 0;
+    if (dc->entries_id.has_value() &&
+        dc->entries_id != SemIR::InstBlockId::Empty) {
+      auto block = sem_ir.inst_blocks().Get(dc->entries_id);
+      if (!block.empty()) {
+        val_type_idx = static_cast<int64_t>(block[0].index);
+      }
+    }
+    sil_inst->literal_value = (key_type_idx << 32) | (val_type_idx & 0xFFFFFFFF);
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M91: DictSet — emit hashmap_set builtin.
+  if (auto ds = inst.TryAs<SemIR::DictSet>()) {
+    auto sil_inst = MakeVoidInst(TinySIL::SILInstKind::BuiltinInst);
+    sil_inst->builtin_name = "hashmap_set";
+    sil_inst->setOperand(0, ctx.GetValue(ds->dict_id));
+    // args_id holds [key_id, val_id].
+    if (ds->args_id.has_value() &&
+        ds->args_id != SemIR::InstBlockId::Empty) {
+      auto args = sem_ir.inst_blocks().Get(ds->args_id);
+      if (args.size() >= 1) {
+        auto kv = ctx.GetValue(args[0]);
+        if (kv.is_valid()) sil_inst->operand_list.push_back(kv);
+      }
+      if (args.size() >= 2) {
+        auto vv = ctx.GetValue(args[1]);
+        if (vv.is_valid()) sil_inst->operand_list.push_back(vv);
+      }
+    }
+    // Store key type id in literal_value for hash dispatch in lower.cpp.
+    sil_inst->literal_value = 0;
+    ctx.emit(std::move(sil_inst));
+    return;
+  }
+
+  // M91: DictGet — emit hashmap_get builtin.
+  if (auto dg = inst.TryAs<SemIR::DictGet>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(dg->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "hashmap_get";
+    sil_inst->setOperand(0, ctx.GetValue(dg->dict_id));
+    sil_inst->setOperand(1, ctx.GetValue(dg->key_id));
+    // Store val type id in literal_value.
+    sil_inst->literal_value = static_cast<int64_t>(dg->type_id.index);
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M91: DictCount — emit hashmap_count builtin.
+  if (auto dc = inst.TryAs<SemIR::DictCount>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(dc->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "hashmap_count";
+    sil_inst->setOperand(0, ctx.GetValue(dc->dict_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M91: DictContains — emit hashmap_contains builtin.
+  if (auto dc = inst.TryAs<SemIR::DictContains>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(dc->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "hashmap_contains";
+    sil_inst->setOperand(0, ctx.GetValue(dc->dict_id));
+    sil_inst->setOperand(1, ctx.GetValue(dc->key_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M91: DictRemove — emit hashmap_remove builtin.
+  if (auto dr = inst.TryAs<SemIR::DictRemove>()) {
+    auto sil_inst = MakeVoidInst(TinySIL::SILInstKind::BuiltinInst);
+    sil_inst->builtin_name = "hashmap_remove";
+    sil_inst->setOperand(0, ctx.GetValue(dr->dict_id));
+    sil_inst->setOperand(1, ctx.GetValue(dr->key_id));
+    ctx.emit(std::move(sil_inst));
+    return;
+  }
+
+  // M91: DictMethodRef — should be resolved by HandleCallExpr; skip silently.
+  if (inst.Is<SemIR::DictMethodRef>()) {
+    return;
+  }
+
+  // M91: SetCreate — emit hashset_create builtin.
+  if (auto sc = inst.TryAs<SemIR::SetCreate>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(SemIR::ErrorInst::TypeId)
+                                      .getAddressType());
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "hashset_create";
+    sil_inst->literal_value = static_cast<int64_t>(sc->type_id.index);
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M91: SetInsert — emit hashset_insert builtin.
+  if (auto si = inst.TryAs<SemIR::SetInsert>()) {
+    auto sil_inst = MakeVoidInst(TinySIL::SILInstKind::BuiltinInst);
+    sil_inst->builtin_name = "hashset_insert";
+    sil_inst->setOperand(0, ctx.GetValue(si->set_id));
+    sil_inst->setOperand(1, ctx.GetValue(si->elem_id));
+    ctx.emit(std::move(sil_inst));
+    return;
+  }
+
+  // M91: SetContains — emit hashset_contains builtin.
+  if (auto sc = inst.TryAs<SemIR::SetContains>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(sc->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "hashset_contains";
+    sil_inst->setOperand(0, ctx.GetValue(sc->set_id));
+    sil_inst->setOperand(1, ctx.GetValue(sc->elem_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M91: SetCount — emit hashset_count builtin.
+  if (auto sc = inst.TryAs<SemIR::SetCount>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(sc->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "hashset_count";
+    sil_inst->setOperand(0, ctx.GetValue(sc->set_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M91: SetRemove — emit hashset_remove builtin.
+  if (auto sr = inst.TryAs<SemIR::SetRemove>()) {
+    auto sil_inst = MakeVoidInst(TinySIL::SILInstKind::BuiltinInst);
+    sil_inst->builtin_name = "hashset_remove";
+    sil_inst->setOperand(0, ctx.GetValue(sr->set_id));
+    sil_inst->setOperand(1, ctx.GetValue(sr->elem_id));
+    ctx.emit(std::move(sil_inst));
+    return;
+  }
+
+  // M91: SetMethodRef — should be resolved by HandleCallExpr; skip silently.
+  if (inst.Is<SemIR::SetMethodRef>()) {
+    return;
+  }
+
   // M44: PrintValue — emit BuiltinInst("print_int" or "print_string").
   // Use MakeVoidInst so DCE doesn't eliminate the side-effecting call.
   if (auto pv = inst.TryAs<SemIR::PrintValue>()) {
@@ -1172,6 +1330,83 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     }
     ctx.emit(std::move(sil_inst));
     // No value binding needed (void result).
+    return;
+  }
+
+  // M92: ReadLine — emit readline builtin.
+  if (auto rl = inst.TryAs<SemIR::ReadLine>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(rl->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "readline";
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M92: FileGetCwd — emit file_getcwd builtin.
+  if (auto gc = inst.TryAs<SemIR::FileGetCwd>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(gc->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "file_getcwd";
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M92: FileReadAll — emit file_read_all builtin.
+  if (auto fr = inst.TryAs<SemIR::FileReadAll>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(fr->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "file_read_all";
+    sil_inst->setOperand(0, ctx.GetValue(fr->path_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M92: FileExists — emit file_exists builtin.
+  if (auto fe = inst.TryAs<SemIR::FileExists>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(fe->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "file_exists";
+    sil_inst->setOperand(0, ctx.GetValue(fe->path_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M92: FileRemove — emit file_remove builtin.
+  if (auto fr = inst.TryAs<SemIR::FileRemove>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(fr->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "file_remove";
+    sil_inst->setOperand(0, ctx.GetValue(fr->path_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M92: FileWriteAll — emit file_write_all builtin.
+  if (auto fw = inst.TryAs<SemIR::FileWriteAll>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(fw->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "file_write_all";
+    sil_inst->setOperand(0, ctx.GetValue(fw->path_id));
+    sil_inst->setOperand(1, ctx.GetValue(fw->contents_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M92: FileAppendAll — emit file_append_all builtin.
+  if (auto fa = inst.TryAs<SemIR::FileAppendAll>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(fa->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "file_append_all";
+    sil_inst->setOperand(0, ctx.GetValue(fa->path_id));
+    sil_inst->setOperand(1, ctx.GetValue(fa->contents_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
     return;
   }
 
@@ -1282,19 +1517,21 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
   // M61: StringMethodRef — pending marker, should be resolved before sil_gen.
   if (inst.Is<SemIR::StringMethodRef>()) { return; }
 
-  // M65: DynamicArrayInit — call __tinyswift_dynarray_create() -> ptr.
+  // M65/M90: DynamicArrayInit — call __tinyswift_dynarray_create_generic(elem_size).
   // Use address-type result (same opaque-pointer pattern as DictInit).
-  if (inst.Is<SemIR::DynamicArrayInit>()) {
+  // Store element TypeId in literal_value for lower.cpp to compute elem_size.
+  if (auto dai = inst.TryAs<SemIR::DynamicArrayInit>()) {
     auto result = AllocValue(ctx, ctx.GetSILType(SemIR::ErrorInst::TypeId)
                                       .getAddressType());
     auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
     sil_inst->builtin_name = "dynarray_create";
+    sil_inst->literal_value = static_cast<int64_t>(dai->type_id.index);
     ctx.emit(std::move(sil_inst));
     ctx.SetValue(inst_id, result);
     return;
   }
 
-  // M65: DynamicArrayAppend — call __tinyswift_dynarray_append_int(arr, val).
+  // M65/M90: DynamicArrayAppend — call __tinyswift_dynarray_append(arr, &val).
   if (auto daa = inst.TryAs<SemIR::DynamicArrayAppend>()) {
     auto result = AllocValue(ctx, ctx.GetSILType(daa->type_id));
     auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
@@ -1306,7 +1543,7 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     return;
   }
 
-  // M65: DynamicArrayCount — call __tinyswift_dynarray_count(arr) -> Int.
+  // M65/M90: DynamicArrayCount — call __tinyswift_dynarray_count(arr) -> Int.
   if (auto dac = inst.TryAs<SemIR::DynamicArrayCount>()) {
     auto result = AllocValue(ctx, ctx.GetSILType(dac->type_id));
     auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
@@ -1317,13 +1554,16 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     return;
   }
 
-  // M65: DynamicArrayAccess — call __tinyswift_dynarray_get_int(arr, idx) -> elem.
+  // M65/M90: DynamicArrayAccess — call __tinyswift_dynarray_get(arr, idx) -> elem.
+  // Result type carries the element type for lower.cpp to load correctly.
   if (auto dax = inst.TryAs<SemIR::DynamicArrayAccess>()) {
     auto result = AllocValue(ctx, ctx.GetSILType(dax->type_id));
     auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
     sil_inst->builtin_name = "dynarray_access";
     sil_inst->setOperand(0, ctx.GetValue(dax->array_id));
     sil_inst->setOperand(1, ctx.GetValue(dax->index_id));
+    // Store element type_id in literal_value so lower.cpp can determine load type.
+    sil_inst->literal_value = static_cast<int64_t>(dax->type_id.index);
     ctx.emit(std::move(sil_inst));
     ctx.SetValue(inst_id, result);
     return;

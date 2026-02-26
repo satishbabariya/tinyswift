@@ -137,6 +137,25 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
     return SemIR::ErrorInst::TypeId;
   }
 
+  // M91: Dictionary type `[Key: Value]` — returns opaque ptr type.
+  // Store pending key/val types for use by HandleVariableDecl.
+  if (kind == Parse::NodeKind::DictionaryType) {
+    auto children = context.children_source_order(node_id);
+    llvm::SmallVector<SemIR::TypeId> type_children;
+    for (auto child : children) {
+      if (context.node_kind(child).category().HasAnyOf(
+              Parse::NodeCategory::Type)) {
+        type_children.push_back(HandleTypeExpr(context, child));
+      }
+    }
+    // Store key/val types as pending for the next variable declaration.
+    if (type_children.size() >= 2) {
+      context.SetPendingDictKeyValTypes(type_children[0], type_children[1]);
+    }
+    // Dict is an opaque pointer at runtime — use Int type as carrier.
+    return context.GetBuiltinType("Int");
+  }
+
   if (kind == Parse::NodeKind::FunctionType) {
     // Function types are represented as opaque pointers at runtime (in LLVM 20,
     // all pointers are ptr).  Create a PointerType to Int as a stand-in — it

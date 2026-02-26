@@ -328,6 +328,16 @@ static auto ParsePrimaryExpr(Context& context) -> void {
     bool is_dict = (context.Peek() != Lex::TokenKind::CloseSquareBracket) &&
                    (context.PeekNext() == Lex::TokenKind::Colon);
 
+    // M91: Empty dictionary literal `[:]`.
+    if (context.Peek() == Lex::TokenKind::Colon &&
+        context.PeekNext() == Lex::TokenKind::CloseSquareBracket) {
+      context.AddLeafNode(NodeKind::DictionaryExprStart, open);
+      context.Consume();  // ':'
+      auto close = context.ConsumeChecked(Lex::TokenKind::CloseSquareBracket);
+      context.AddNode(NodeKind::DictionaryExpr, close);
+      return;
+    }
+
     if (is_dict) {
       // Dictionary literal: `[key: value, ...]`
       context.AddLeafNode(NodeKind::DictionaryExprStart, open);
