@@ -132,11 +132,11 @@ TINYSWIFT_FILE_TEST_FACTORY(ToolchainFileTest)
 
 // Returns the toolchain subdirectory being tested.
 static auto GetComponent(llvm::StringRef test_name) -> llvm::StringRef {
-  // This handles cases where the toolchain directory may be copied into a
-  // repository that doesn't put it at the root.
-  auto pos = test_name.find("toolchain/");
+  // Testdata lives under toolchain/testing/testdata/{component}/.
+  static constexpr llvm::StringLiteral Prefix("toolchain/testing/testdata/");
+  auto pos = test_name.find(Prefix);
   TINYSWIFT_CHECK(pos != llvm::StringRef::npos, "{0}", test_name);
-  test_name = test_name.drop_front(pos + strlen("toolchain/"));
+  test_name = test_name.drop_front(pos + Prefix.size());
   test_name = test_name.take_front(test_name.find("/"));
   return test_name;
 }

@@ -7,11 +7,6 @@ load("//bazel/cc_rules:defs.bzl", "cc_library")
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
-    name = "testdata",
-    srcs = glob(["testdata/**/*.swift"], allow_empty = True),
-)
-
-filegroup(
     name = "prebuilt_runtimes",
     srcs = glob(["prebuilt_runtimes_tree/**"], allow_empty = True),
 )

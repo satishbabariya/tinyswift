@@ -6,11 +6,6 @@ load("//bazel/cc_rules:defs.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
 
-filegroup(
-    name = "testdata",
-    srcs = glob(["testdata/**/*.swift"]),
-)
-
 cc_library(
     name = "codegen",
     srcs = ["codegen.cpp"],

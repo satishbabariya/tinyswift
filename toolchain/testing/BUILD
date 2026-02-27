@@ -9,16 +9,10 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "all_testdata",
-    srcs = [
-        "//toolchain/check:testdata",
-        "//toolchain/codegen:testdata",
-        "//toolchain/driver:testdata",
-        "//toolchain/format:testdata",
-        "//toolchain/language_server:testdata",
-        "//toolchain/lex:testdata",
-        "//toolchain/lower:testdata",
-        "//toolchain/parse:testdata",
-    ],
+    srcs = glob(
+        ["testdata/**/*.swift"],
+        exclude = ["testdata/min_prelude/**"],
+    ),
 )
 
 filegroup(
