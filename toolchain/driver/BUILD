@@ -12,21 +12,6 @@ filegroup(
 )
 
 cc_library(
-    name = "codegen_options",
-    srcs = [
-        "codegen_options.cpp",
-    ],
-    hdrs = [
-        "codegen_options.h",
-    ],
-    deps = [
-        "//common:command_line",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:TargetParser",
-    ],
-)
-
-cc_library(
     name = "driver",
     srcs = [
         "build_subcommand.cpp",
@@ -40,8 +25,6 @@ cc_library(
         "format_subcommand.h",
         "language_server_subcommand.cpp",
         "language_server_subcommand.h",
-        "link.cpp",
-        "link.h",
         "manifest.cpp",
         "manifest.h",
         "run_subcommand.cpp",
@@ -55,7 +38,6 @@ cc_library(
     ],
     textual_hdrs = ["flags.def"],
     deps = [
-        ":codegen_options",
         "//common:check",
         "//common:command_line",
         "//common:error",
@@ -70,12 +52,16 @@ cc_library(
         "//toolchain/base:timings",
         "//toolchain/check",
         "//toolchain/codegen",
+        "//toolchain/codegen:codegen_options",
+        "//toolchain/codegen:optimize",
+        "//toolchain/codegen:target_machine",
         "//toolchain/diagnostics:emitter",
         "//toolchain/diagnostics:file_diagnostics",
         "//toolchain/diagnostics:sorting_consumer",
         "//toolchain/format",
         "//toolchain/language_server",
         "//toolchain/lex",
+        "//toolchain/linker",
         "//toolchain/lower",
         "//toolchain/lower:options",
         "//toolchain/parse",
@@ -90,7 +76,6 @@ cc_library(
         "@llvm-project//clang:frontend",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:MC",
-        "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
     ],

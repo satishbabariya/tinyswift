@@ -2,7 +2,7 @@
 // Exceptions. See /LICENSE for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "toolchain/driver/link.h"
+#include "toolchain/linker/link.h"
 
 #include <string>
 

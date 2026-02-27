@@ -2,8 +2,8 @@
 // Exceptions. See /LICENSE for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#ifndef TINYSWIFT_TOOLCHAIN_DRIVER_LINK_H_
-#define TINYSWIFT_TOOLCHAIN_DRIVER_LINK_H_
+#ifndef TINYSWIFT_TOOLCHAIN_LINKER_LINK_H_
+#define TINYSWIFT_TOOLCHAIN_LINKER_LINK_H_
 
 #include <string>
 
@@ -65,4 +65,4 @@ auto InvokeArchiver(const LinkOptions& opts,
 
 }  // namespace TinySwift
 
-#endif  // TINYSWIFT_TOOLCHAIN_DRIVER_LINK_H_
+#endif  // TINYSWIFT_TOOLCHAIN_LINKER_LINK_H_

@@ -14,7 +14,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/TargetParser/Host.h"
-#include "toolchain/driver/link.h"
+#include "toolchain/linker/link.h"
 #include "toolchain/driver/manifest.h"
 
 namespace TinySwift {

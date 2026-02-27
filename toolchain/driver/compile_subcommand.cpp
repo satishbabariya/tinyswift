@@ -19,14 +19,13 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/MC/TargetRegistry.h"
-#include "llvm/Passes/OptimizationLevel.h"
-#include "llvm/Passes/PassBuilder.h"
-#include "llvm/Passes/StandardInstrumentations.h"
+#include "toolchain/codegen/optimize.h"
+#include "toolchain/codegen/target_machine.h"
 #include "toolchain/base/clang_invocation.h"
 #include "toolchain/base/timings.h"
 #include "toolchain/check/check.h"
 #include "toolchain/codegen/codegen.h"
-#include "toolchain/driver/link.h"
+#include "toolchain/linker/link.h"
 #include "toolchain/diagnostics/emitter.h"
 #include "toolchain/diagnostics/sorting_consumer.h"
 #include "toolchain/lex/lex.h"
@@ -639,32 +638,8 @@ auto CompilationUnit::MakeTargetMachine() -> void {
   TINYSWIFT_CHECK(module_, "Must call RunLower first");
   TINYSWIFT_CHECK(!target_machine_, "Should not call this multiple times");
 
-  llvm::Triple target_triple(options_->codegen_options.target);
-  module_->setTargetTriple(target_triple);
-
-  constexpr llvm::StringLiteral CPU = "generic";
-  constexpr llvm::StringLiteral Features = "";
-
-  llvm::TargetOptions target_opts;
-  // M115: Enable per-function/per-data sections for dead code stripping.
-  target_opts.FunctionSections = true;
-  target_opts.DataSections = true;
-  target_machine_.reset(target_->createTargetMachine(
-      target_triple, CPU, Features, target_opts, llvm::Reloc::PIC_));
-}
-
-static auto GetLLVMOptimizationLevel(Lower::OptimizationLevel opt_level)
-    -> llvm::OptimizationLevel {
-  switch (opt_level) {
-    case Lower::OptimizationLevel::None:
-      return llvm::OptimizationLevel::O0;
-    case Lower::OptimizationLevel::Debug:
-      return llvm::OptimizationLevel::O1;
-    case Lower::OptimizationLevel::Size:
-      return llvm::OptimizationLevel::Oz;
-    case Lower::OptimizationLevel::Speed:
-      return llvm::OptimizationLevel::O3;
-  }
+  target_machine_ = TinySwift::MakeTargetMachine(
+      target_, options_->codegen_options.target, *module_);
 }
 
 auto CompilationUnit::RunOptimize() -> void {
@@ -672,61 +647,10 @@ auto CompilationUnit::RunOptimize() -> void {
 
   MakeTargetMachine();
 
-  llvm::PipelineTuningOptions pto;
-  bool opt_for_speed = options_->opt_level == Lower::OptimizationLevel::Speed;
-  bool opt_for_size_or_speed =
-      opt_for_speed || options_->opt_level == Lower::OptimizationLevel::Size;
-  pto.LoopUnrolling = opt_for_size_or_speed;
-  pto.LoopInterleaving = opt_for_size_or_speed;
-  pto.LoopVectorization = opt_for_speed;
-  pto.SLPVectorization = opt_for_size_or_speed;
-
-  llvm::LoopAnalysisManager lam;
-  llvm::FunctionAnalysisManager fam;
-  llvm::CGSCCAnalysisManager cgam;
-  llvm::ModuleAnalysisManager mam;
-
-  llvm::PassInstrumentationCallbacks pic;
-
-  llvm::StandardInstrumentations si(module_->getContext(),
-                                    /*DebugLogging=*/false);
-  si.registerCallbacks(pic);
-
-  llvm::PassBuilder builder(target_machine_.get(), pto,
-                            /*PGOOpt=*/std::nullopt, &pic);
-
-  std::unique_ptr<llvm::TargetLibraryInfoImpl> tlii(llvm::driver::createTLII(
-      module_->getTargetTriple(), llvm::driver::VectorLibrary::NoLibrary));
-  fam.registerPass([&] { return llvm::TargetLibraryAnalysis(*tlii); });
-
-  builder.registerModuleAnalyses(mam);
-  builder.registerCGSCCAnalyses(cgam);
-  builder.registerFunctionAnalyses(fam);
-  builder.registerLoopAnalyses(lam);
-  builder.crossRegisterProxies(lam, fam, cgam, mam);
-
-  llvm::ModulePassManager pass_manager = builder.buildPerModuleDefaultPipeline(
-      GetLLVMOptimizationLevel(options_->opt_level));
-
-  if (vlog_stream_) {
-    TINYSWIFT_VLOG("*** Running pass pipeline: ");
-    pass_manager.printPipeline(
-        *vlog_stream_, [&pic](llvm::StringRef class_name) {
-          auto pass_name = pic.getPassNameForClassName(class_name);
-          return pass_name.empty() ? class_name : pass_name;
-        });
-    TINYSWIFT_VLOG(" ***\n");
-  }
-
-  LogCall("ModulePassManager::run", "optimize",
-          [&] { pass_manager.run(*module_, mam); });
-
-  if (vlog_stream_) {
-    TINYSWIFT_VLOG("*** Optimized llvm::Module ***\n");
-    module_->print(*vlog_stream_, /*AAW=*/nullptr,
-                   /*ShouldPreserveUseListOrder=*/false,
-                   /*IsForDebug=*/true);
-  }
+  LogCall("ModulePassManager::run", "optimize", [&] {
+    RunLLVMOptimizePipeline(*module_, *target_machine_,
+                            options_->opt_level, vlog_stream_);
+  });
 }
 
 auto CompilationUnit::PostLower() -> void {

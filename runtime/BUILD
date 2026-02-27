@@ -12,4 +12,5 @@ cc_library(
         "-ffunction-sections",
         "-fdata-sections",
     ],
+    linkopts = ["-lm"],
 )

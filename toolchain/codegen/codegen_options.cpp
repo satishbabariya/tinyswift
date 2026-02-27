@@ -2,7 +2,7 @@
 // Exceptions. See /LICENSE for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "toolchain/driver/codegen_options.h"
+#include "toolchain/codegen/codegen_options.h"
 
 namespace TinySwift {
 

@@ -47,6 +47,16 @@ char*   __tinyswift_string_trimmed(const char* str);
 int64_t __tinyswift_string_has_prefix(const char* str, const char* prefix);
 int64_t __tinyswift_string_has_suffix(const char* str, const char* suffix);
 int64_t __tinyswift_string_contains(const char* str, const char* substr);
+int64_t __tinyswift_string_index_of(const char* s, const char* sub);
+char*   __tinyswift_string_replace(const char* s, const char* target,
+                                    const char* replacement);
+char*   __tinyswift_string_substring(const char* s, int64_t from, int64_t to);
+void*   __tinyswift_string_split(const char* s, const char* sep,
+                                  int64_t* out_count);
+char*   __tinyswift_double_to_string(double d);
+int64_t __tinyswift_string_to_int(const char* s, int64_t* out_success);
+double  __tinyswift_string_to_double(const char* s, int64_t* out_success);
+char*   __tinyswift_string_repeated(const char* s, int64_t count);
 
 // ── Dynamic array (M65 base, M90 generic) ─────────────────────────────────
 void*   __tinyswift_dynarray_create_generic(int64_t elem_size);
@@ -60,6 +70,51 @@ void    __tinyswift_dynarray_destroy(void* arr);
 void*   __tinyswift_dynarray_create(void);
 void    __tinyswift_dynarray_append_int(void* arr, int64_t value);
 int64_t __tinyswift_dynarray_get_int(void* arr, int64_t index);
+
+void    __tinyswift_dynarray_insert(void* arr, int64_t index, const void* elem);
+void    __tinyswift_dynarray_remove_at(void* arr, int64_t index);
+void    __tinyswift_dynarray_clear(void* arr);
+int64_t __tinyswift_dynarray_capacity(void* arr);
+void    __tinyswift_dynarray_sort(void* arr,
+                                   int (*compare_fn)(const void*, const void*));
+
+// ── I/O extensions ──────────────────────────────────────────────────────────
+void __tinyswift_print_double(double d);
+void __tinyswift_print_bool(int64_t b);
+void __tinyswift_print_newline(void);
+
+// ── Math (libm wrappers) ────────────────────────────────────────────────────
+double __tinyswift_sqrt(double x);
+double __tinyswift_pow(double base, double exp);
+double __tinyswift_log(double x);
+double __tinyswift_log2(double x);
+double __tinyswift_log10(double x);
+double __tinyswift_floor(double x);
+double __tinyswift_ceil(double x);
+double __tinyswift_round(double x);
+double __tinyswift_sin(double x);
+double __tinyswift_cos(double x);
+double __tinyswift_tan(double x);
+double __tinyswift_atan2(double y, double x);
+double __tinyswift_fabs(double x);
+double __tinyswift_fmod(double x, double y);
+
+// ── Time ────────────────────────────────────────────────────────────────────
+int64_t __tinyswift_clock_now(void);
+int64_t __tinyswift_clock_monotonic(void);
+
+// ── Filesystem/Process additions ────────────────────────────────────────────
+int64_t __tinyswift_fs_is_file(const char* path);
+int64_t __tinyswift_fs_rename(const char* from, const char* to);
+int64_t __tinyswift_getpid(void);
+void    __tinyswift_env_unset(const char* key);
+
+// ── Memory utilities ────────────────────────────────────────────────────────
+void*   __tinyswift_raw_alloc(int64_t size, int64_t alignment);
+void    __tinyswift_raw_dealloc(void* ptr);
+void    __tinyswift_memcpy(void* dst, const void* src, int64_t size);
+void    __tinyswift_memset(void* dst, int64_t value, int64_t size);
+int64_t __tinyswift_memcmp(const void* a, const void* b, int64_t size);
 
 // ── Dictionary (M42 — legacy compatibility) ──────────────────────────────
 typedef struct {

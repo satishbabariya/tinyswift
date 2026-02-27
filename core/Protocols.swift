@@ -8,3 +8,15 @@ protocol Hashable {
 protocol CustomStringConvertible {
   func description() -> String
 }
+
+protocol Equatable {
+  func equals(_ other: Self) -> Bool
+}
+
+protocol Comparable {
+  func lessThan(_ other: Self) -> Bool
+}
+
+protocol DefaultInitializable {
+  init()
+}

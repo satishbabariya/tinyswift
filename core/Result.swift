@@ -36,4 +36,32 @@ enum Result<Success, Failure> {
     case .failure(let e): return e
     }
   }
+
+  func get() -> Success {
+    switch self {
+    case .success(let v): return v
+    case .failure: fatalError("Result.get() called on failure")
+    }
+  }
+
+  func map<NewSuccess>(_ transform: (Success) -> NewSuccess) -> Result<NewSuccess, Failure> {
+    switch self {
+    case .success(let v): return .success(transform(v))
+    case .failure(let e): return .failure(e)
+    }
+  }
+
+  func flatMap<NewSuccess>(_ transform: (Success) -> Result<NewSuccess, Failure>) -> Result<NewSuccess, Failure> {
+    switch self {
+    case .success(let v): return transform(v)
+    case .failure(let e): return .failure(e)
+    }
+  }
+
+  func mapFailure<NewFailure>(_ transform: (Failure) -> NewFailure) -> Result<Success, NewFailure> {
+    switch self {
+    case .success(let v): return .success(v)
+    case .failure(let e): return .failure(transform(e))
+    }
+  }
 }

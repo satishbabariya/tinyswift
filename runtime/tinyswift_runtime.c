@@ -12,10 +12,12 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 // Networking headers (M94)
@@ -583,6 +585,179 @@ int64_t __tinyswift_string_contains(const char* str, const char* substr) {
   return strstr(str, substr) != NULL ? 1 : 0;
 }
 
+int64_t __tinyswift_string_index_of(const char* s, const char* sub) {
+  if (!s || !sub) return -1;
+  const char* p = strstr(s, sub);
+  if (!p) return -1;
+  return (int64_t)(p - s);
+}
+
+char* __tinyswift_string_replace(const char* s, const char* target,
+                                  const char* replacement) {
+  if (!s) return NULL;
+  if (!target || !replacement || target[0] == '\0') return strdup(s);
+  size_t slen = strlen(s);
+  size_t tlen = strlen(target);
+  size_t rlen = strlen(replacement);
+  // Count occurrences.
+  size_t count = 0;
+  const char* p = s;
+  while ((p = strstr(p, target)) != NULL) {
+    count++;
+    p += tlen;
+  }
+  if (count == 0) return strdup(s);
+  size_t result_len = slen + count * (rlen - tlen);
+  char* result = (char*)malloc(result_len + 1);
+  if (!result) return NULL;
+  char* dst = result;
+  p = s;
+  while (*p) {
+    if (strncmp(p, target, tlen) == 0) {
+      memcpy(dst, replacement, rlen);
+      dst += rlen;
+      p += tlen;
+    } else {
+      *dst++ = *p++;
+    }
+  }
+  *dst = '\0';
+  return result;
+}
+
+char* __tinyswift_string_substring(const char* s, int64_t from, int64_t to) {
+  if (!s) return NULL;
+  int64_t slen = (int64_t)strlen(s);
+  if (from < 0) from = 0;
+  if (to > slen) to = slen;
+  if (from >= to) {
+    char* empty = (char*)malloc(1);
+    if (empty) empty[0] = '\0';
+    return empty;
+  }
+  size_t len = (size_t)(to - from);
+  char* result = (char*)malloc(len + 1);
+  if (!result) return NULL;
+  memcpy(result, s + from, len);
+  result[len] = '\0';
+  return result;
+}
+
+void* __tinyswift_string_split(const char* s, const char* sep,
+                                int64_t* out_count) {
+  void* arr = __tinyswift_dynarray_create_generic((int64_t)sizeof(char*));
+  if (out_count) *out_count = 0;
+  if (!s || !sep || sep[0] == '\0') {
+    if (s) {
+      char* dup = strdup(s);
+      __tinyswift_dynarray_append(arr, &dup);
+      if (out_count) *out_count = 1;
+    }
+    return arr;
+  }
+  size_t seplen = strlen(sep);
+  const char* p = s;
+  int64_t count = 0;
+  while (*p) {
+    const char* found = strstr(p, sep);
+    if (!found) {
+      char* part = strdup(p);
+      __tinyswift_dynarray_append(arr, &part);
+      count++;
+      break;
+    }
+    size_t partlen = (size_t)(found - p);
+    char* part = (char*)malloc(partlen + 1);
+    if (part) {
+      memcpy(part, p, partlen);
+      part[partlen] = '\0';
+    }
+    __tinyswift_dynarray_append(arr, &part);
+    count++;
+    p = found + seplen;
+    if (*p == '\0') {
+      char* empty = (char*)malloc(1);
+      if (empty) empty[0] = '\0';
+      __tinyswift_dynarray_append(arr, &empty);
+      count++;
+    }
+  }
+  if (out_count) *out_count = count;
+  return arr;
+}
+
+char* __tinyswift_double_to_string(double d) {
+  char buf[64];
+  int len = snprintf(buf, sizeof(buf), "%.17g", d);
+  char* result = (char*)malloc((size_t)len + 1);
+  if (!result) return NULL;
+  memcpy(result, buf, (size_t)len + 1);
+  return result;
+}
+
+int64_t __tinyswift_string_to_int(const char* s, int64_t* out_success) {
+  if (!s || !*s) {
+    if (out_success) *out_success = 0;
+    return 0;
+  }
+  char* end;
+  long long val = strtoll(s, &end, 10);
+  if (end == s || *end != '\0') {
+    if (out_success) *out_success = 0;
+    return 0;
+  }
+  if (out_success) *out_success = 1;
+  return (int64_t)val;
+}
+
+double __tinyswift_string_to_double(const char* s, int64_t* out_success) {
+  if (!s || !*s) {
+    if (out_success) *out_success = 0;
+    return 0.0;
+  }
+  char* end;
+  double val = strtod(s, &end);
+  if (end == s || *end != '\0') {
+    if (out_success) *out_success = 0;
+    return 0.0;
+  }
+  if (out_success) *out_success = 1;
+  return val;
+}
+
+char* __tinyswift_string_repeated(const char* s, int64_t count) {
+  if (!s || count <= 0) {
+    char* empty = (char*)malloc(1);
+    if (empty) empty[0] = '\0';
+    return empty;
+  }
+  size_t slen = strlen(s);
+  size_t total = slen * (size_t)count;
+  char* result = (char*)malloc(total + 1);
+  if (!result) return NULL;
+  for (int64_t i = 0; i < count; ++i) {
+    memcpy(result + i * slen, s, slen);
+  }
+  result[total] = '\0';
+  return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// I/O extensions
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void __tinyswift_print_double(double d) {
+  printf("%.17g\n", d);
+}
+
+void __tinyswift_print_bool(int64_t b) {
+  printf("%s\n", b ? "true" : "false");
+}
+
+void __tinyswift_print_newline(void) {
+  putchar('\n');
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Dynamic array (M65 base, M90 generic type-erased)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -667,6 +842,151 @@ int64_t __tinyswift_dynarray_get_int(void* handle, int64_t index) {
   int64_t result;
   memcpy(&result, ptr, sizeof(int64_t));
   return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Dynamic array extensions
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void __tinyswift_dynarray_insert(void* handle, int64_t index, const void* elem) {
+  if (!handle || !elem) return;
+  TinySwiftDynArray* arr = (TinySwiftDynArray*)handle;
+  if (index < 0 || index > arr->count) return;
+  // Ensure capacity.
+  if (arr->count >= arr->capacity) {
+    int64_t new_cap = arr->capacity == 0 ? 8 : arr->capacity * 2;
+    void* new_data = realloc(arr->data, (size_t)new_cap * (size_t)arr->elem_size);
+    if (!new_data) return;
+    arr->data = new_data;
+    arr->capacity = new_cap;
+  }
+  // Shift elements right.
+  if (index < arr->count) {
+    memmove((char*)arr->data + (index + 1) * arr->elem_size,
+            (char*)arr->data + index * arr->elem_size,
+            (size_t)(arr->count - index) * (size_t)arr->elem_size);
+  }
+  memcpy((char*)arr->data + index * arr->elem_size, elem,
+         (size_t)arr->elem_size);
+  arr->count++;
+}
+
+void __tinyswift_dynarray_remove_at(void* handle, int64_t index) {
+  if (!handle) return;
+  TinySwiftDynArray* arr = (TinySwiftDynArray*)handle;
+  if (index < 0 || index >= arr->count) return;
+  if (index < arr->count - 1) {
+    memmove((char*)arr->data + index * arr->elem_size,
+            (char*)arr->data + (index + 1) * arr->elem_size,
+            (size_t)(arr->count - index - 1) * (size_t)arr->elem_size);
+  }
+  arr->count--;
+}
+
+void __tinyswift_dynarray_clear(void* handle) {
+  if (!handle) return;
+  ((TinySwiftDynArray*)handle)->count = 0;
+}
+
+int64_t __tinyswift_dynarray_capacity(void* handle) {
+  if (!handle) return 0;
+  return ((TinySwiftDynArray*)handle)->capacity;
+}
+
+void __tinyswift_dynarray_sort(void* handle,
+                                int (*compare_fn)(const void*, const void*)) {
+  if (!handle || !compare_fn) return;
+  TinySwiftDynArray* arr = (TinySwiftDynArray*)handle;
+  if (arr->count <= 1) return;
+  qsort(arr->data, (size_t)arr->count, (size_t)arr->elem_size, compare_fn);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Math (libm wrappers)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+double __tinyswift_sqrt(double x) { return sqrt(x); }
+double __tinyswift_pow(double base, double exp) { return pow(base, exp); }
+double __tinyswift_log(double x) { return log(x); }
+double __tinyswift_log2(double x) { return log2(x); }
+double __tinyswift_log10(double x) { return log10(x); }
+double __tinyswift_floor(double x) { return floor(x); }
+double __tinyswift_ceil(double x) { return ceil(x); }
+double __tinyswift_round(double x) { return round(x); }
+double __tinyswift_sin(double x) { return sin(x); }
+double __tinyswift_cos(double x) { return cos(x); }
+double __tinyswift_tan(double x) { return tan(x); }
+double __tinyswift_atan2(double y, double x) { return atan2(y, x); }
+double __tinyswift_fabs(double x) { return fabs(x); }
+double __tinyswift_fmod(double x, double y) { return fmod(x, y); }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Time
+// ═══════════════════════════════════════════════════════════════════════════════
+
+int64_t __tinyswift_clock_now(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;
+}
+
+int64_t __tinyswift_clock_monotonic(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Filesystem/Process additions
+// ═══════════════════════════════════════════════════════════════════════════════
+
+int64_t __tinyswift_fs_is_file(const char* path) {
+  if (!path) return 0;
+  struct stat st;
+  if (stat(path, &st) != 0) return 0;
+  return S_ISREG(st.st_mode) ? 1 : 0;
+}
+
+int64_t __tinyswift_fs_rename(const char* from, const char* to) {
+  if (!from || !to) return 0;
+  return rename(from, to) == 0 ? 1 : 0;
+}
+
+int64_t __tinyswift_getpid(void) {
+  return (int64_t)getpid();
+}
+
+void __tinyswift_env_unset(const char* key) {
+  if (key) unsetenv(key);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Memory utilities
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void* __tinyswift_raw_alloc(int64_t size, int64_t alignment) {
+  if (size <= 0) return NULL;
+  if (alignment <= 0) alignment = 8;
+  void* ptr = NULL;
+  posix_memalign(&ptr, (size_t)alignment, (size_t)size);
+  return ptr;
+}
+
+void __tinyswift_raw_dealloc(void* ptr) {
+  free(ptr);
+}
+
+void __tinyswift_memcpy(void* dst, const void* src, int64_t size) {
+  if (dst && src && size > 0) memcpy(dst, src, (size_t)size);
+}
+
+void __tinyswift_memset(void* dst, int64_t value, int64_t size) {
+  if (dst && size > 0) memset(dst, (int)value, (size_t)size);
+}
+
+int64_t __tinyswift_memcmp(const void* a, const void* b, int64_t size) {
+  if (!a || !b || size <= 0) return 0;
+  return (int64_t)memcmp(a, b, (size_t)size);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
