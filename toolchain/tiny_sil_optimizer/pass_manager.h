@@ -26,6 +26,7 @@ auto RunReturnAnalysis(TinySIL::SILModule& module,
 
 // Individual performance passes.
 auto RunMem2Reg(TinySIL::SILFunction& function) -> void;
+auto RunARCElimination(TinySIL::SILFunction& function) -> void;
 auto RunDeadCodeElimination(TinySIL::SILFunction& function) -> void;
 
 }  // namespace TinySwift::TinySILOptimizer

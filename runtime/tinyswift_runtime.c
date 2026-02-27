@@ -10,11 +10,24 @@
 #include "tinyswift_runtime.h"
 
 #include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+// Networking headers (M94)
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
+// macOS: _NSGetArgc/_NSGetArgv (M93)
+#ifdef __APPLE__
+#include <crt_externs.h>
+#endif
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ARC (M78/M79)
@@ -59,6 +72,112 @@ int64_t __tinyswift_is_unique(void* obj) {
   TinySwiftHeapHeader* header =
       (TinySwiftHeapHeader*)((char*)obj - sizeof(TinySwiftHeapHeader));
   return header->refcount == 1 ? 1 : 0;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Cycle Collection (M97)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Candidate list — objects whose refcount was decremented to non-zero.
+// These might be part of a reference cycle.
+#define CYCLE_CANDIDATES_MAX 1024
+
+typedef struct {
+  void* obj;
+  void (*deinit_fn)(void*);
+} CycleCandidate;
+
+static _Thread_local CycleCandidate cycle_candidates[CYCLE_CANDIDATES_MAX];
+static _Thread_local int64_t cycle_candidate_count = 0;
+static int cycle_atexit_registered = 0;
+
+void __tinyswift_release_cycle_candidate(void* obj, void (*deinit_fn)(void*)) {
+  if (!obj) return;
+  // Register atexit handler on first use to collect remaining cycles.
+  if (!cycle_atexit_registered) {
+    cycle_atexit_registered = 1;
+    atexit(__tinyswift_collect_cycles);
+  }
+  TinySwiftHeapHeader* header =
+      (TinySwiftHeapHeader*)((char*)obj - sizeof(TinySwiftHeapHeader));
+  header->refcount--;
+  if (header->refcount <= 0) {
+    // Refcount hit zero — deallocate normally (no cycle).
+    if (deinit_fn) {
+      deinit_fn(obj);
+    }
+    free(header);
+  } else {
+    // Refcount > 0 — might be part of a cycle. Register as candidate.
+    if (cycle_candidate_count < CYCLE_CANDIDATES_MAX) {
+      cycle_candidates[cycle_candidate_count].obj = obj;
+      cycle_candidates[cycle_candidate_count].deinit_fn = deinit_fn;
+      cycle_candidate_count++;
+    }
+    // If the candidate list is full, we just skip — the cycle will leak.
+    // A production implementation would grow the list or collect immediately.
+  }
+}
+
+void __tinyswift_collect_cycles(void) {
+  // Trial deletion cycle collector:
+  // 1. For each candidate, check if refcount is still > 0.
+  // 2. If refcount is 1 and the object is a candidate, it's likely
+  //    only held alive by the cycle. We do a simple heuristic: if the
+  //    refcount equals the number of times this object appears as a
+  //    candidate, it's unreachable.
+  //
+  // This is a simplified collector that handles the common case of
+  // simple two-object cycles. A full implementation would trace object
+  // graphs.
+
+  if (cycle_candidate_count == 0) return;
+
+  // Deduplicate candidates and count references.
+  // Simple O(n^2) for small candidate lists.
+  for (int64_t i = 0; i < cycle_candidate_count; ++i) {
+    void* obj = cycle_candidates[i].obj;
+    if (!obj) continue;
+
+    TinySwiftHeapHeader* header =
+        (TinySwiftHeapHeader*)((char*)obj - sizeof(TinySwiftHeapHeader));
+
+    // Skip already-freed objects (refcount <= 0).
+    if (header->refcount <= 0) {
+      cycle_candidates[i].obj = NULL;
+      continue;
+    }
+
+    // Count how many candidates point to this same object.
+    int64_t candidate_refs = 0;
+    for (int64_t j = 0; j < cycle_candidate_count; ++j) {
+      if (cycle_candidates[j].obj == obj) {
+        candidate_refs++;
+      }
+    }
+
+    // If the refcount equals the number of candidate references,
+    // the object is only kept alive by other candidates (cycle).
+    if (header->refcount <= (int32_t)candidate_refs) {
+      // Force-free this object.
+      void (*deinit_fn)(void*) = cycle_candidates[i].deinit_fn;
+      header->refcount = 0;
+      if (deinit_fn) {
+        deinit_fn(obj);
+      }
+      free(header);
+
+      // Null out all candidate entries for this object.
+      for (int64_t j = 0; j < cycle_candidate_count; ++j) {
+        if (cycle_candidates[j].obj == obj) {
+          cycle_candidates[j].obj = NULL;
+        }
+      }
+    }
+  }
+
+  // Clear the candidate list.
+  cycle_candidate_count = 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -161,6 +280,212 @@ char* __tinyswift_file_getcwd(void) {
   char* empty = (char*)malloc(1);
   if (empty) empty[0] = '\0';
   return empty;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OS: Process & Environment (M93)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void __tinyswift_exit(int64_t code) {
+  exit((int)code);
+}
+
+void* __tinyswift_get_args(void) {
+  // Create a dynarray of strings (char* elements, elem_size = sizeof(char*)).
+  void* arr = __tinyswift_dynarray_create_generic((int64_t)sizeof(char*));
+  if (!arr) return arr;
+#ifdef __APPLE__
+  int argc = *_NSGetArgc();
+  char** argv = *_NSGetArgv();
+  for (int i = 0; i < argc; ++i) {
+    char* dup = strdup(argv[i]);
+    __tinyswift_dynarray_append(arr, &dup);
+  }
+#else
+  // Linux: read /proc/self/cmdline.
+  FILE* f = fopen("/proc/self/cmdline", "rb");
+  if (f) {
+    char buf[65536];
+    size_t nread = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[nread] = '\0';
+    size_t pos = 0;
+    while (pos < nread) {
+      char* dup = strdup(buf + pos);
+      __tinyswift_dynarray_append(arr, &dup);
+      pos += strlen(buf + pos) + 1;
+    }
+  }
+#endif
+  return arr;
+}
+
+char* __tinyswift_env_get(const char* key) {
+  if (!key) {
+    char* empty = (char*)malloc(1);
+    if (empty) empty[0] = '\0';
+    return empty;
+  }
+  const char* val = getenv(key);
+  if (val) {
+    return strdup(val);
+  }
+  char* empty = (char*)malloc(1);
+  if (empty) empty[0] = '\0';
+  return empty;
+}
+
+int64_t __tinyswift_env_set(const char* key, const char* val) {
+  if (!key || !val) return 0;
+  return setenv(key, val, 1) == 0 ? 1 : 0;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OS: FileSystem extensions (M93)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+int64_t __tinyswift_fs_mkdir(const char* path) {
+  if (!path) return 0;
+  return mkdir(path, 0755) == 0 ? 1 : 0;
+}
+
+void* __tinyswift_fs_listdir(const char* path) {
+  void* arr = __tinyswift_dynarray_create_generic((int64_t)sizeof(char*));
+  if (!arr) return arr;
+  if (!path) return arr;
+  DIR* dir = opendir(path);
+  if (!dir) return arr;
+  struct dirent* entry;
+  while ((entry = readdir(dir)) != NULL) {
+    // Skip . and ..
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+      continue;
+    }
+    char* dup = strdup(entry->d_name);
+    __tinyswift_dynarray_append(arr, &dup);
+  }
+  closedir(dir);
+  return arr;
+}
+
+int64_t __tinyswift_fs_is_dir(const char* path) {
+  if (!path) return 0;
+  struct stat st;
+  if (stat(path, &st) != 0) return 0;
+  return S_ISDIR(st.st_mode) ? 1 : 0;
+}
+
+int64_t __tinyswift_fs_copy(const char* src, const char* dst) {
+  if (!src || !dst) return 0;
+  FILE* fin = fopen(src, "rb");
+  if (!fin) return 0;
+  FILE* fout = fopen(dst, "wb");
+  if (!fout) {
+    fclose(fin);
+    return 0;
+  }
+  char buf[8192];
+  size_t n;
+  while ((n = fread(buf, 1, sizeof(buf), fin)) > 0) {
+    if (fwrite(buf, 1, n, fout) != n) {
+      fclose(fin);
+      fclose(fout);
+      return 0;
+    }
+  }
+  fclose(fin);
+  fclose(fout);
+  return 1;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Networking: TCP Sockets (M94)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+int64_t __tinyswift_tcp_connect(const char* host, int64_t port) {
+  if (!host) return -1;
+  struct addrinfo hints, *res;
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_STREAM;
+  char port_str[16];
+  snprintf(port_str, sizeof(port_str), "%lld", (long long)port);
+  if (getaddrinfo(host, port_str, &hints, &res) != 0) return -1;
+  int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+  if (fd < 0) {
+    freeaddrinfo(res);
+    return -1;
+  }
+  if (connect(fd, res->ai_addr, res->ai_addrlen) != 0) {
+    close(fd);
+    freeaddrinfo(res);
+    return -1;
+  }
+  freeaddrinfo(res);
+  return (int64_t)fd;
+}
+
+int64_t __tinyswift_tcp_listen(int64_t port) {
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) return -1;
+  int opt = 1;
+  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = INADDR_ANY;
+  addr.sin_port = htons((uint16_t)port);
+  if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+    close(fd);
+    return -1;
+  }
+  if (listen(fd, 128) != 0) {
+    close(fd);
+    return -1;
+  }
+  return (int64_t)fd;
+}
+
+int64_t __tinyswift_tcp_accept(int64_t fd) {
+  struct sockaddr_in client_addr;
+  socklen_t addrlen = sizeof(client_addr);
+  int client_fd = accept((int)fd, (struct sockaddr*)&client_addr, &addrlen);
+  return (int64_t)client_fd;
+}
+
+char* __tinyswift_tcp_read(int64_t fd, int64_t maxlen) {
+  if (maxlen <= 0) maxlen = 4096;
+  char* buf = (char*)malloc((size_t)maxlen + 1);
+  if (!buf) {
+    char* empty = (char*)malloc(1);
+    if (empty) empty[0] = '\0';
+    return empty;
+  }
+  ssize_t n = recv((int)fd, buf, (size_t)maxlen, 0);
+  if (n <= 0) {
+    free(buf);
+    char* empty = (char*)malloc(1);
+    if (empty) empty[0] = '\0';
+    return empty;
+  }
+  buf[n] = '\0';
+  return buf;
+}
+
+int64_t __tinyswift_tcp_write(int64_t fd, const char* data) {
+  if (!data) return -1;
+  size_t len = strlen(data);
+#ifdef __APPLE__
+  // macOS: SO_NOSIGPIPE is set per-socket; use send without special flags.
+  ssize_t n = send((int)fd, data, len, 0);
+#else
+  ssize_t n = send((int)fd, data, len, MSG_NOSIGNAL);
+#endif
+  return (int64_t)n;
+}
+
+int64_t __tinyswift_tcp_close(int64_t fd) {
+  return close((int)fd) == 0 ? 1 : 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

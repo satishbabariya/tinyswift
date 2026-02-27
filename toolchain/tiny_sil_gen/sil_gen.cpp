@@ -1410,6 +1410,164 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     return;
   }
 
+  // M93: ProcessGetArgs — emit process_get_args builtin.
+  if (auto ga = inst.TryAs<SemIR::ProcessGetArgs>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(ga->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "process_get_args";
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M93: ProcessExit — emit process_exit builtin.
+  if (auto pe = inst.TryAs<SemIR::ProcessExit>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(pe->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "process_exit";
+    sil_inst->setOperand(0, ctx.GetValue(pe->code_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M93: EnvGet — emit env_get builtin.
+  if (auto eg = inst.TryAs<SemIR::EnvGet>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(eg->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "env_get";
+    sil_inst->setOperand(0, ctx.GetValue(eg->key_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M93: EnvSet — emit env_set builtin.
+  if (auto es = inst.TryAs<SemIR::EnvSet>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(es->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "env_set";
+    sil_inst->setOperand(0, ctx.GetValue(es->key_id));
+    sil_inst->setOperand(1, ctx.GetValue(es->value_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M93: FsMkdir — emit fs_mkdir builtin.
+  if (auto fm = inst.TryAs<SemIR::FsMkdir>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(fm->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "fs_mkdir";
+    sil_inst->setOperand(0, ctx.GetValue(fm->path_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M93: FsListDir — emit fs_listdir builtin.
+  if (auto fl = inst.TryAs<SemIR::FsListDir>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(fl->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "fs_listdir";
+    sil_inst->setOperand(0, ctx.GetValue(fl->path_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M93: FsIsDir — emit fs_is_dir builtin.
+  if (auto fi = inst.TryAs<SemIR::FsIsDir>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(fi->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "fs_is_dir";
+    sil_inst->setOperand(0, ctx.GetValue(fi->path_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M93: FsCopy — emit fs_copy builtin.
+  if (auto fc = inst.TryAs<SemIR::FsCopy>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(fc->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "fs_copy";
+    sil_inst->setOperand(0, ctx.GetValue(fc->src_id));
+    sil_inst->setOperand(1, ctx.GetValue(fc->dst_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M94: TcpConnect — emit tcp_connect builtin.
+  if (auto tc = inst.TryAs<SemIR::TcpConnect>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(tc->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "tcp_connect";
+    sil_inst->setOperand(0, ctx.GetValue(tc->host_id));
+    sil_inst->setOperand(1, ctx.GetValue(tc->port_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M94: TcpListen — emit tcp_listen builtin.
+  if (auto tl = inst.TryAs<SemIR::TcpListen>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(tl->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "tcp_listen";
+    sil_inst->setOperand(0, ctx.GetValue(tl->port_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M94: TcpAccept — emit tcp_accept builtin.
+  if (auto ta = inst.TryAs<SemIR::TcpAccept>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(ta->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "tcp_accept";
+    sil_inst->setOperand(0, ctx.GetValue(ta->fd_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M94: TcpRead — emit tcp_read builtin.
+  if (auto tr = inst.TryAs<SemIR::TcpRead>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(tr->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "tcp_read";
+    sil_inst->setOperand(0, ctx.GetValue(tr->fd_id));
+    sil_inst->setOperand(1, ctx.GetValue(tr->maxlen_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M94: TcpWrite — emit tcp_write builtin.
+  if (auto tw = inst.TryAs<SemIR::TcpWrite>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(tw->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "tcp_write";
+    sil_inst->setOperand(0, ctx.GetValue(tw->fd_id));
+    sil_inst->setOperand(1, ctx.GetValue(tw->data_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
+  // M94: TcpClose — emit tcp_close builtin.
+  if (auto tcl = inst.TryAs<SemIR::TcpClose>()) {
+    auto result = AllocValue(ctx, ctx.GetSILType(tcl->type_id));
+    auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
+    sil_inst->builtin_name = "tcp_close";
+    sil_inst->setOperand(0, ctx.GetValue(tcl->fd_id));
+    ctx.emit(std::move(sil_inst));
+    ctx.SetValue(inst_id, result);
+    return;
+  }
+
   // M45: StringEq — call __tinyswift_string_eq at runtime.
   if (auto seq = inst.TryAs<SemIR::StringEq>()) {
     auto result = AllocValue(ctx, ctx.GetSILType(seq->type_id));
@@ -1657,10 +1815,18 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
   }
 
   // M78: Release — call __tinyswift_release(obj, deinit_fn_ptr_or_null).
+  // M97: Use "release_cycle" for cycle-capable types.
   if (auto rel = inst.TryAs<SemIR::Release>()) {
     auto result = AllocValue(ctx, ctx.GetSILType(rel->type_id));
     auto sil_inst = MakeInst(TinySIL::SILInstKind::BuiltinInst, result);
-    sil_inst->builtin_name = "release";
+    // Check if the released value's type is cycle-capable.
+    auto val_inst = sem_ir.insts().Get(rel->value_id);
+    auto val_type_id = val_inst.type_id();
+    if (val_type_id.has_value() && sem_ir.IsCycleCapableType(val_type_id)) {
+      sil_inst->builtin_name = "release_cycle";
+    } else {
+      sil_inst->builtin_name = "release";
+    }
     sil_inst->setOperand(0, ctx.GetValue(rel->value_id));
     // deinit_id: if set, emit a function_ref and pass as operand 1.
     if (rel->deinit_id.has_value()) {

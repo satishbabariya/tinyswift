@@ -855,6 +855,144 @@ auto LowerSILInst(
           setSILValue(inst.result, builder.CreateCall(callee, {path_ptr, data_ptr}));
         }
 
+      // M93: OS — Process & Environment.
+      } else if (name == "process_get_args") {
+        auto* fty = llvm::FunctionType::get(builder.getPtrTy(), {}, false);
+        auto callee = context.module().getOrInsertFunction(
+            "__tinyswift_get_args", fty);
+        setSILValue(inst.result, builder.CreateCall(callee, {}));
+      } else if (name == "process_exit") {
+        auto* code_val = getSILValue(inst.operands[0]);
+        if (code_val) {
+          auto* fty = llvm::FunctionType::get(
+              builder.getVoidTy(), {builder.getInt64Ty()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_exit", fty);
+          builder.CreateCall(callee, {code_val});
+        }
+      } else if (name == "env_get") {
+        auto* key_ptr = getSILValue(inst.operands[0]);
+        if (key_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getPtrTy(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_env_get", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {key_ptr}));
+        }
+      } else if (name == "env_set") {
+        auto* key_ptr = getSILValue(inst.operands[0]);
+        auto* val_ptr = getSILValue(inst.operands[1]);
+        if (key_ptr && val_ptr) {
+          auto* fty = llvm::FunctionType::get(
+              builder.getInt64Ty(),
+              {builder.getPtrTy(), builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_env_set", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {key_ptr, val_ptr}));
+        }
+
+      // M93: OS — FileSystem extensions.
+      } else if (name == "fs_mkdir") {
+        auto* path_ptr = getSILValue(inst.operands[0]);
+        if (path_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getInt64Ty(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_fs_mkdir", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {path_ptr}));
+        }
+      } else if (name == "fs_listdir") {
+        auto* path_ptr = getSILValue(inst.operands[0]);
+        if (path_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getPtrTy(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_fs_listdir", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {path_ptr}));
+        }
+      } else if (name == "fs_is_dir") {
+        auto* path_ptr = getSILValue(inst.operands[0]);
+        if (path_ptr) {
+          auto* fty = llvm::FunctionType::get(builder.getInt64Ty(),
+                                              {builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_fs_is_dir", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {path_ptr}));
+        }
+      } else if (name == "fs_copy") {
+        auto* src_ptr = getSILValue(inst.operands[0]);
+        auto* dst_ptr = getSILValue(inst.operands[1]);
+        if (src_ptr && dst_ptr) {
+          auto* fty = llvm::FunctionType::get(
+              builder.getInt64Ty(),
+              {builder.getPtrTy(), builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_fs_copy", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {src_ptr, dst_ptr}));
+        }
+
+      // M94: Networking — TCP Sockets.
+      } else if (name == "tcp_connect") {
+        auto* host_ptr = getSILValue(inst.operands[0]);
+        auto* port_val = getSILValue(inst.operands[1]);
+        if (host_ptr && port_val) {
+          auto* fty = llvm::FunctionType::get(
+              builder.getInt64Ty(),
+              {builder.getPtrTy(), builder.getInt64Ty()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_tcp_connect", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {host_ptr, port_val}));
+        }
+      } else if (name == "tcp_listen") {
+        auto* port_val = getSILValue(inst.operands[0]);
+        if (port_val) {
+          auto* fty = llvm::FunctionType::get(builder.getInt64Ty(),
+                                              {builder.getInt64Ty()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_tcp_listen", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {port_val}));
+        }
+      } else if (name == "tcp_accept") {
+        auto* fd_val = getSILValue(inst.operands[0]);
+        if (fd_val) {
+          auto* fty = llvm::FunctionType::get(builder.getInt64Ty(),
+                                              {builder.getInt64Ty()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_tcp_accept", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {fd_val}));
+        }
+      } else if (name == "tcp_read") {
+        auto* fd_val = getSILValue(inst.operands[0]);
+        auto* maxlen_val = getSILValue(inst.operands[1]);
+        if (fd_val && maxlen_val) {
+          auto* fty = llvm::FunctionType::get(
+              builder.getPtrTy(),
+              {builder.getInt64Ty(), builder.getInt64Ty()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_tcp_read", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {fd_val, maxlen_val}));
+        }
+      } else if (name == "tcp_write") {
+        auto* fd_val = getSILValue(inst.operands[0]);
+        auto* data_ptr = getSILValue(inst.operands[1]);
+        if (fd_val && data_ptr) {
+          auto* fty = llvm::FunctionType::get(
+              builder.getInt64Ty(),
+              {builder.getInt64Ty(), builder.getPtrTy()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_tcp_write", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {fd_val, data_ptr}));
+        }
+      } else if (name == "tcp_close") {
+        auto* fd_val = getSILValue(inst.operands[0]);
+        if (fd_val) {
+          auto* fty = llvm::FunctionType::get(builder.getInt64Ty(),
+                                              {builder.getInt64Ty()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_tcp_close", fty);
+          setSILValue(inst.result, builder.CreateCall(callee, {fd_val}));
+        }
+
       // M45: String equality.
       } else if (name == "string_eq") {
         auto* lhs = getSILValue(inst.operands[0]);
@@ -1542,8 +1680,9 @@ auto LowerSILInst(
               "__tinyswift_retain", fty);
           builder.CreateCall(callee, {obj});
         }
-      } else if (name == "release") {
-        // __tinyswift_release(obj, deinit_fn_ptr_or_null).
+      } else if (name == "release" || name == "release_cycle") {
+        // __tinyswift_release(obj, deinit_fn_ptr_or_null) or
+        // __tinyswift_release_cycle_candidate(obj, deinit_fn_ptr_or_null) (M97).
         auto* obj = getSILValue(inst.operands[0]);
         if (obj) {
           llvm::Value* deinit_ptr = llvm::ConstantPointerNull::get(builder.getPtrTy());
@@ -1553,8 +1692,10 @@ auto LowerSILInst(
           }
           auto* fty = llvm::FunctionType::get(
               builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()}, false);
-          auto callee = context.module().getOrInsertFunction(
-              "__tinyswift_release", fty);
+          const char* runtime_fn = (name == "release_cycle")
+              ? "__tinyswift_release_cycle_candidate"
+              : "__tinyswift_release";
+          auto callee = context.module().getOrInsertFunction(runtime_fn, fty);
           builder.CreateCall(callee, {obj, deinit_ptr});
         }
 

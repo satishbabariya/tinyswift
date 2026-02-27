@@ -415,6 +415,10 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
   bool is_set_constructor = false;  // M91: Set<T>()
   bool is_file_io_call = false;    // M92: File I/O
   llvm::StringRef file_io_func_name;
+  bool is_os_call = false;         // M93: OS builtins
+  llvm::StringRef os_func_name;
+  bool is_net_call = false;        // M94: Networking builtins
+  llvm::StringRef net_func_name;
 
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
@@ -426,7 +430,7 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
       // is a SIBLING of CallExprStart (not its child) because GenericArgumentClause
       // shifts the subtree boundary. Check if callee was already found as sibling.
       if (!callee_id.has_value() && !coercion_target.empty() == false &&
-          !is_print_call && !is_file_io_call) {
+          !is_print_call && !is_file_io_call && !is_os_call && !is_net_call) {
         auto start_children = context.children_source_order(child);
         for (auto start_child : start_children) {
           if (context.node_kind(start_child)
@@ -457,6 +461,23 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
                   text == "getCurrentDirectory") {
                 is_file_io_call = true;
                 file_io_func_name = text;
+                break;
+              }
+              // M93: Intercept OS builtins.
+              if (text == "getArgs" || text == "exit" ||
+                  text == "getEnv" || text == "setEnv" ||
+                  text == "createDirectory" || text == "listDirectory" ||
+                  text == "isDirectory" || text == "copyFile") {
+                is_os_call = true;
+                os_func_name = text;
+                break;
+              }
+              // M94: Intercept networking builtins.
+              if (text == "tcpConnect" || text == "tcpListen" ||
+                  text == "tcpAccept" || text == "tcpRead" ||
+                  text == "tcpWrite" || text == "tcpClose") {
+                is_net_call = true;
+                net_func_name = text;
                 break;
               }
             }
@@ -499,6 +520,23 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
             file_io_func_name = text;
             continue;
           }
+          // M93: Intercept OS builtins.
+          if (text == "getArgs" || text == "exit" ||
+              text == "getEnv" || text == "setEnv" ||
+              text == "createDirectory" || text == "listDirectory" ||
+              text == "isDirectory" || text == "copyFile") {
+            is_os_call = true;
+            os_func_name = text;
+            continue;
+          }
+          // M94: Intercept networking builtins.
+          if (text == "tcpConnect" || text == "tcpListen" ||
+              text == "tcpAccept" || text == "tcpRead" ||
+              text == "tcpWrite" || text == "tcpClose") {
+            is_net_call = true;
+            net_func_name = text;
+            continue;
+          }
         }
         callee_id = HandleExpr(context, child);
       } else {
@@ -513,7 +551,7 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
   // the IdentifierNameExpr outside), pick up the pending callee set by the
   // parent context (HandleReturnStatement or HandleCodeBlock).
   if (!callee_id.has_value() && coercion_target.empty() && !is_print_call &&
-      !is_file_io_call) {
+      !is_file_io_call && !is_os_call && !is_net_call) {
     callee_id = context.TakePendingCalleeId();
   }
 
@@ -577,6 +615,110 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
                                .contents_id = labeled_args[1].value_id}));
     }
     // Fallthrough: unknown file I/O function or wrong arg count — return error.
+    return SemIR::InstId::None;
+  }
+
+  // M93: Handle OS builtins.
+  if (is_os_call) {
+    auto string_type = context.GetBuiltinType("String");
+    auto int_type = context.GetBuiltinType("Int");
+
+    if (os_func_name == "getArgs") {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::ProcessGetArgs{.type_id = int_type}));
+    }
+    if (os_func_name == "exit" && labeled_args.size() >= 1) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::ProcessExit{.type_id = int_type,
+                             .code_id = labeled_args[0].value_id}));
+    }
+    if (os_func_name == "getEnv" && labeled_args.size() >= 1) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::EnvGet{.type_id = string_type,
+                        .key_id = labeled_args[0].value_id}));
+    }
+    if (os_func_name == "setEnv" && labeled_args.size() >= 2) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::EnvSet{.type_id = int_type,
+                        .key_id = labeled_args[0].value_id,
+                        .value_id = labeled_args[1].value_id}));
+    }
+    if (os_func_name == "createDirectory" && labeled_args.size() >= 1) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::FsMkdir{.type_id = int_type,
+                         .path_id = labeled_args[0].value_id}));
+    }
+    if (os_func_name == "listDirectory" && labeled_args.size() >= 1) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::FsListDir{.type_id = int_type,
+                           .path_id = labeled_args[0].value_id}));
+    }
+    if (os_func_name == "isDirectory" && labeled_args.size() >= 1) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::FsIsDir{.type_id = int_type,
+                         .path_id = labeled_args[0].value_id}));
+    }
+    if (os_func_name == "copyFile" && labeled_args.size() >= 2) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::FsCopy{.type_id = int_type,
+                        .src_id = labeled_args[0].value_id,
+                        .dst_id = labeled_args[1].value_id}));
+    }
+    return SemIR::InstId::None;
+  }
+
+  // M94: Handle networking builtins.
+  if (is_net_call) {
+    auto string_type = context.GetBuiltinType("String");
+    auto int_type = context.GetBuiltinType("Int");
+
+    if (net_func_name == "tcpConnect" && labeled_args.size() >= 2) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::TcpConnect{.type_id = int_type,
+                            .host_id = labeled_args[0].value_id,
+                            .port_id = labeled_args[1].value_id}));
+    }
+    if (net_func_name == "tcpListen" && labeled_args.size() >= 1) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::TcpListen{.type_id = int_type,
+                           .port_id = labeled_args[0].value_id}));
+    }
+    if (net_func_name == "tcpAccept" && labeled_args.size() >= 1) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::TcpAccept{.type_id = int_type,
+                           .fd_id = labeled_args[0].value_id}));
+    }
+    if (net_func_name == "tcpRead" && labeled_args.size() >= 2) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::TcpRead{.type_id = string_type,
+                         .fd_id = labeled_args[0].value_id,
+                         .maxlen_id = labeled_args[1].value_id}));
+    }
+    if (net_func_name == "tcpWrite" && labeled_args.size() >= 2) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::TcpWrite{.type_id = int_type,
+                          .fd_id = labeled_args[0].value_id,
+                          .data_id = labeled_args[1].value_id}));
+    }
+    if (net_func_name == "tcpClose" && labeled_args.size() >= 1) {
+      return context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::TcpClose{.type_id = int_type,
+                          .fd_id = labeled_args[0].value_id}));
+    }
     return SemIR::InstId::None;
   }
 

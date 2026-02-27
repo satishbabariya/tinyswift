@@ -9,6 +9,7 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "tiny_sil_optimizer",
     srcs = [
+        "arc_elim.cpp",
         "dce.cpp",
         "definite_init.cpp",
         "mem2reg.cpp",

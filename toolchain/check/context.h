@@ -749,6 +749,11 @@ class Context {
 
   // Look up __deinit in a class's NameScope.
   auto GetClassDeinitId(SemIR::TypeId type_id) -> SemIR::InstId;
+
+  // M97: Analyze a class type for cycle capability and mark in SemIR if needed.
+  // A class is cycle-capable if it has a stored field whose type is a class type.
+  auto AnalyzeCycleCapability(SemIR::InstId class_type_id,
+                              SemIR::NameScopeId scope_id) -> void;
 };
 
 }  // namespace TinySwift::Check

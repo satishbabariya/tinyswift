@@ -30,7 +30,10 @@ auto RunPerformancePasses(TinySIL::SILModule& module) -> void {
       // Pass 1: Mem2Reg — promote alloc_stack to SSA values.
       RunMem2Reg(*fn);
 
-      // Pass 2: Dead code elimination — remove unused values.
+      // Pass 2: ARC elimination — remove redundant retain/release pairs (M95/M96).
+      RunARCElimination(*fn);
+
+      // Pass 3: Dead code elimination — remove unused values.
       RunDeadCodeElimination(*fn);
     }
   }

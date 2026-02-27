@@ -1357,6 +1357,9 @@ auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void {
     ++field_index;
   }
 
+  // M97: Analyze cycle capability after all fields are registered.
+  context.AnalyzeCycleCapability(class_type_id, type_scope_id);
+
   context.SetCurrentType(class_type_id);
   HandleTypeMembers(context, children);
   context.ClearCurrentType();

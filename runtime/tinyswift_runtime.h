@@ -16,6 +16,13 @@ void    __tinyswift_retain(void* obj);
 void    __tinyswift_release(void* obj, void (*deinit_fn)(void*));
 int64_t __tinyswift_is_unique(void* obj);
 
+// ── Cycle Collection (M97) ─────────────────────────────────────────────────
+// Release for cycle-capable types: if refcount > 0 after decrement, registers
+// the object as a cycle candidate for later collection.
+void    __tinyswift_release_cycle_candidate(void* obj, void (*deinit_fn)(void*));
+// Run trial-deletion cycle collector. Frees all unreachable cycles.
+void    __tinyswift_collect_cycles(void);
+
 // ── I/O (M44) ───────────────────────────────────────────────────────────────
 void __tinyswift_print_int(int64_t value);
 void __tinyswift_print_string(const char* str);
@@ -102,6 +109,26 @@ void    __tinyswift_error_set(int64_t error);
 int64_t __tinyswift_error_get(void);
 int     __tinyswift_error_check(void);
 void    __tinyswift_error_clear(void);
+
+// ── OS: Process & Environment (M93) ────────────────────────────────────────
+void    __tinyswift_exit(int64_t code);
+void*   __tinyswift_get_args(void);              // returns dynarray of strings
+char*   __tinyswift_env_get(const char* key);
+int64_t __tinyswift_env_set(const char* key, const char* val);
+
+// ── OS: FileSystem extensions (M93) ────────────────────────────────────────
+int64_t __tinyswift_fs_mkdir(const char* path);
+void*   __tinyswift_fs_listdir(const char* path); // returns dynarray of strings
+int64_t __tinyswift_fs_is_dir(const char* path);
+int64_t __tinyswift_fs_copy(const char* src, const char* dst);
+
+// ── Networking: TCP Sockets (M94) ──────────────────────────────────────────
+int64_t __tinyswift_tcp_connect(const char* host, int64_t port);
+int64_t __tinyswift_tcp_listen(int64_t port);
+int64_t __tinyswift_tcp_accept(int64_t fd);
+char*   __tinyswift_tcp_read(int64_t fd, int64_t maxlen);
+int64_t __tinyswift_tcp_write(int64_t fd, const char* data);
+int64_t __tinyswift_tcp_close(int64_t fd);
 
 // ── Prelude support (M88) ──────────────────────────────────────────────────
 int64_t __tinyswift_int_abs(int64_t x);

@@ -1299,6 +1299,140 @@ struct FileAppendAll {
   InstId contents_id;
 };
 
+// M93: OS — Process & Environment.
+
+// getArgs() -> [String]
+struct ProcessGetArgs {
+  static constexpr auto Kind = InstKind::ProcessGetArgs.Define<Parse::NodeId>(
+      {.ir_name = "process_get_args",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // dynarray (ptr)
+};
+
+// exit(code)
+struct ProcessExit {
+  static constexpr auto Kind = InstKind::ProcessExit.Define<Parse::NodeId>(
+      {.ir_name = "process_exit",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Void (Int)
+  InstId code_id;
+};
+
+// getEnv(key) -> String
+struct EnvGet {
+  static constexpr auto Kind = InstKind::EnvGet.Define<Parse::NodeId>(
+      {.ir_name = "env_get",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // String
+  InstId key_id;
+};
+
+// setEnv(key, value) -> Bool
+struct EnvSet {
+  static constexpr auto Kind = InstKind::EnvSet.Define<Parse::NodeId>(
+      {.ir_name = "env_set",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Bool (Int)
+  InstId key_id;
+  InstId value_id;
+};
+
+// createDirectory(path) -> Bool
+struct FsMkdir {
+  static constexpr auto Kind = InstKind::FsMkdir.Define<Parse::NodeId>(
+      {.ir_name = "fs_mkdir",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Bool (Int)
+  InstId path_id;
+};
+
+// listDirectory(path) -> [String]
+struct FsListDir {
+  static constexpr auto Kind = InstKind::FsListDir.Define<Parse::NodeId>(
+      {.ir_name = "fs_listdir",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // dynarray (ptr)
+  InstId path_id;
+};
+
+// isDirectory(path) -> Bool
+struct FsIsDir {
+  static constexpr auto Kind = InstKind::FsIsDir.Define<Parse::NodeId>(
+      {.ir_name = "fs_is_dir",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Bool (Int)
+  InstId path_id;
+};
+
+// copyFile(src, dst) -> Bool
+struct FsCopy {
+  static constexpr auto Kind = InstKind::FsCopy.Define<Parse::NodeId>(
+      {.ir_name = "fs_copy",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Bool (Int)
+  InstId src_id;
+  InstId dst_id;
+};
+
+// M94: Networking — TCP Sockets.
+
+// tcpConnect(host, port) -> Int
+struct TcpConnect {
+  static constexpr auto Kind = InstKind::TcpConnect.Define<Parse::NodeId>(
+      {.ir_name = "tcp_connect",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Int
+  InstId host_id;
+  InstId port_id;
+};
+
+// tcpListen(port) -> Int
+struct TcpListen {
+  static constexpr auto Kind = InstKind::TcpListen.Define<Parse::NodeId>(
+      {.ir_name = "tcp_listen",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Int
+  InstId port_id;
+};
+
+// tcpAccept(fd) -> Int
+struct TcpAccept {
+  static constexpr auto Kind = InstKind::TcpAccept.Define<Parse::NodeId>(
+      {.ir_name = "tcp_accept",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Int
+  InstId fd_id;
+};
+
+// tcpRead(fd, maxlen) -> String
+struct TcpRead {
+  static constexpr auto Kind = InstKind::TcpRead.Define<Parse::NodeId>(
+      {.ir_name = "tcp_read",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // String
+  InstId fd_id;
+  InstId maxlen_id;
+};
+
+// tcpWrite(fd, data) -> Int
+struct TcpWrite {
+  static constexpr auto Kind = InstKind::TcpWrite.Define<Parse::NodeId>(
+      {.ir_name = "tcp_write",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Int
+  InstId fd_id;
+  InstId data_id;
+};
+
+// tcpClose(fd) -> Bool
+struct TcpClose {
+  static constexpr auto Kind = InstKind::TcpClose.Define<Parse::NodeId>(
+      {.ir_name = "tcp_close",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;    // Bool (Int)
+  InstId fd_id;
+};
+
 // M65: Dynamic array creation (var arr: [T] = []).
 // type_id is the pointer to the opaque array (ErrorInst::TypeId used as ptr marker).
 struct DynamicArrayInit {

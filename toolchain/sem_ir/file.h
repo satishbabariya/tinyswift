@@ -7,6 +7,7 @@
 
 #include "common/error.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -290,6 +291,14 @@ class File : public Printable<File> {
 
   auto parse_tree() const -> const Parse::Tree& { return *parse_tree_; }
 
+  // M97: Cycle-capable type tracking.
+  auto MarkCycleCapableType(TypeId type_id) -> void {
+    cycle_capable_types_.insert(type_id.index);
+  }
+  auto IsCycleCapableType(TypeId type_id) const -> bool {
+    return cycle_capable_types_.count(type_id.index) > 0;
+  }
+
  private:
   const Parse::Tree* parse_tree_;
 
@@ -340,6 +349,9 @@ class File : public Printable<File> {
 
   // Descriptions of types used in this file.
   TypeStore types_ = TypeStore(this);
+
+  // M97: Set of TypeId indices for class types that can form reference cycles.
+  llvm::DenseSet<int32_t> cycle_capable_types_;
 };
 
 }  // namespace TinySwift::SemIR

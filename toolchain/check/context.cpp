@@ -355,4 +355,52 @@ auto Context::GetClassDeinitId(SemIR::TypeId type_id) -> SemIR::InstId {
   return SemIR::InstId::None;
 }
 
+auto Context::AnalyzeCycleCapability(SemIR::InstId class_type_id,
+                                     SemIR::NameScopeId scope_id) -> void {
+  // M97: Check if any stored field in this class has a class type.
+  // If so, the class is cycle-capable (it could form reference cycles).
+  if (!scope_id.has_value()) return;
+
+  auto& scope = name_scopes().Get(scope_id);
+  for (auto& [name_idx, inst_id] : scope.names) {
+    auto inst = insts().Get(inst_id);
+    if (auto sf = inst.TryAs<SemIR::StructField>()) {
+      // Check if the field's type is a class type.
+      auto field_type_id = sf->type_id;
+      if (IsReferenceType(field_type_id)) {
+        // This class has a class-typed field — mark as cycle-capable.
+        auto class_type_id_as_type =
+            types().GetTypeIdForTypeInstId(class_type_id);
+        if (class_type_id_as_type.has_value()) {
+          sem_ir().MarkCycleCapableType(class_type_id_as_type);
+        }
+        return;
+      }
+      // Also check Optional<ClassType> — optional class references can cycle.
+      if (field_type_id.has_value() && field_type_id.is_concrete()) {
+        auto ft_inst_id = types().GetTypeInstId(field_type_id);
+        if (ft_inst_id.has_value()) {
+          auto ft_inst = insts().Get(ft_inst_id);
+          if (auto opt_type = ft_inst.TryAs<SemIR::OptionalType>()) {
+            // inner_type_id is a TypeInstId (subclass of InstId).
+            // Get the inst at that ID and check if it's a ClassType.
+            auto inner_inst_id = SemIR::InstId(opt_type->inner_type_id.index);
+            if (inner_inst_id.has_value()) {
+              auto inner_inst = insts().Get(inner_inst_id);
+              if (inner_inst.Is<SemIR::ClassType>()) {
+                auto class_type_id_as_type =
+                    types().GetTypeIdForTypeInstId(class_type_id);
+                if (class_type_id_as_type.has_value()) {
+                  sem_ir().MarkCycleCapableType(class_type_id_as_type);
+                }
+                return;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 }  // namespace TinySwift::Check

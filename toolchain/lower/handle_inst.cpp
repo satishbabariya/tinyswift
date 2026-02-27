@@ -821,6 +821,26 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     case SemIR::InstKind::FileGetCwd:
       break;
 
+    // M93: OS builtins — handled via SILGen path.
+    case SemIR::InstKind::ProcessGetArgs:
+    case SemIR::InstKind::ProcessExit:
+    case SemIR::InstKind::EnvGet:
+    case SemIR::InstKind::EnvSet:
+    case SemIR::InstKind::FsMkdir:
+    case SemIR::InstKind::FsListDir:
+    case SemIR::InstKind::FsIsDir:
+    case SemIR::InstKind::FsCopy:
+      break;
+
+    // M94: Networking builtins — handled via SILGen path.
+    case SemIR::InstKind::TcpConnect:
+    case SemIR::InstKind::TcpListen:
+    case SemIR::InstKind::TcpAccept:
+    case SemIR::InstKind::TcpRead:
+    case SemIR::InstKind::TcpWrite:
+    case SemIR::InstKind::TcpClose:
+      break;
+
     // M44: print() — handled via SILGen path.
     case SemIR::InstKind::PrintValue:
       break;
