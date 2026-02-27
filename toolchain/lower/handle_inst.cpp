@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DIBuilder.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "toolchain/lower/context.h"
@@ -106,6 +108,39 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
       // Alloca at the current insert point.
       auto* alloca = context.builder().CreateAlloca(var_type, nullptr);
       context.SetLocal(inst_id, alloca);
+
+      // M120: Emit DILocalVariable + insertDeclare for debug variable inspection.
+      if (context.debug_enabled() && context.current_scope()) {
+        unsigned line = 0, col = 0;
+        auto loc_id = sem_ir.insts().GetCanonicalLocId(inst_id);
+        context.ResolveLocToLineCol(loc_id, line, col);
+        auto* di_type = context.GetOrCreateDIType(var.type_id);
+        if (di_type) {
+          // Try to resolve variable name from the binding pattern.
+          std::string var_name = "var";
+          if (var.pattern_id.has_value()) {
+            auto pattern_inst = sem_ir.insts().Get(var.pattern_id);
+            if (auto vbp = pattern_inst.TryAs<SemIR::ValueBindingPattern>()) {
+              if (vbp->entity_name_id.has_value()) {
+                auto entity = sem_ir.entity_names().Get(vbp->entity_name_id);
+                if (entity.name_id.AsIdentifierId().has_value()) {
+                  var_name = std::string(sem_ir.identifiers().Get(
+                      entity.name_id.AsIdentifierId()));
+                }
+              }
+            }
+          }
+          auto* di_var = context.di_builder()->createAutoVariable(
+              context.current_scope(), var_name, context.di_file(),
+              line, di_type);
+          context.di_builder()->insertDeclare(
+              alloca, di_var,
+              context.di_builder()->createExpression(),
+              llvm::DILocation::get(context.llvm_context(), line, col,
+                                    context.current_scope()),
+              context.builder().GetInsertBlock());
+        }
+      }
       break;
     }
 

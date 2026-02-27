@@ -4,6 +4,7 @@
 
 #include "toolchain/check/handle_expr.h"
 
+#include "toolchain/check/comptime_eval.h"
 #include "toolchain/check/handle_generic.h"
 #include "toolchain/check/handle_stmt.h"
 #include "toolchain/check/handle_type.h"
@@ -4498,6 +4499,11 @@ auto HandleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
   // M46: Implicit closure parameters $0, $1, etc.
   if (kind == Parse::NodeKind::DollarIdentExpr) {
     return HandleDollarIdentExpr(context, node_id);
+  }
+
+  // M112: `comptime <expr>` — evaluate at compile time.
+  if (kind == Parse::NodeKind::ComptimeExpr) {
+    return context.comptime_evaluator().EvaluateComptimeExpr(node_id);
   }
 
   // M100: `await <expr>` — for now, just evaluate the inner expression.

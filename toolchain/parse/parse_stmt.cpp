@@ -369,7 +369,10 @@ static auto IsAtDeclStart(Context& context) -> bool {
          kind == Lex::TokenKind::At ||
          // M56: `mutating` is a contextual keyword (Identifier with text "mutating").
          (kind == Lex::TokenKind::Identifier &&
-          context.GetTokenText() == "mutating");
+          context.GetTokenText() == "mutating") ||
+         // M112: `comptime func` is a declaration.
+         (kind == Lex::TokenKind::ComptimeKeyword &&
+          context.PeekNext() == Lex::TokenKind::FuncKeyword);
 }
 
 // Parses a single statement or declaration.

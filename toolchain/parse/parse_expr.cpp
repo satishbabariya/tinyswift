@@ -150,6 +150,16 @@ static auto ParseExprImpl(Context& context, int min_precedence) -> void {
     return;
   }
 
+  // M112: `comptime <expr>` prefix expression.
+  // Uses Prec_Ternary so that binary operators (arithmetic, comparison,
+  // logical) are included in the comptime operand.
+  if (kind == Lex::TokenKind::ComptimeKeyword) {
+    auto comptime_token = context.Consume();
+    ParseExprImpl(context, Prec_Ternary);
+    context.AddNode(NodeKind::ComptimeExpr, comptime_token);
+    return;
+  }
+
   // M40: Address-of expression `&varName` (prefix `&`, not binary bitwise-AND).
   if (kind == Lex::TokenKind::Amp) {
     auto amp_token = context.Consume();

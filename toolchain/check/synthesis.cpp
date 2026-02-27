@@ -210,7 +210,7 @@ static auto EmitFieldGreater(Context& context, SemIR::InstId lhs_param,
 void SynthesizeEquatable(Context& context, SemIR::InstId type_inst_id,
                          SemIR::NameScopeId scope_id,
                          llvm::ArrayRef<FieldInfo> fields,
-                         bool is_enum, int enum_case_count) {
+                         bool is_enum, int /*enum_case_count*/) {
   // Skip if user already defined == operator.
   if (IsNameInScope(context, scope_id, "__eq__")) return;
 
@@ -536,7 +536,7 @@ void SynthesizeComparable(Context& context, SemIR::InstId type_inst_id,
 void SynthesizeHashable(Context& context, SemIR::InstId type_inst_id,
                         SemIR::NameScopeId scope_id,
                         llvm::ArrayRef<FieldInfo> fields,
-                        bool is_enum, int enum_case_count) {
+                        bool /*is_enum*/, int /*enum_case_count*/) {
   if (IsNameInScope(context, scope_id, "hash")) return;
 
   auto self_type_id = TypeIdFor(type_inst_id);

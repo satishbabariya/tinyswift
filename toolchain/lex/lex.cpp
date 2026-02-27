@@ -414,6 +414,9 @@ class Lexer {
         .Case("true", TokenKind::TrueKeyword)
         .Case("try", TokenKind::TryKeyword)
         .Case("throws", TokenKind::ThrowsKeyword)
+        .Case("async", TokenKind::AsyncKeyword)
+        .Case("await", TokenKind::AwaitKeyword)
+        .Case("comptime", TokenKind::ComptimeKeyword)
         // Pattern keyword
         .Case("_", TokenKind::UnderscoreKeyword)
         // Default: not a keyword.

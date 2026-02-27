@@ -11,6 +11,7 @@
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "toolchain/sem_ir/ids.h"
 #include "toolchain/tiny_sil/sil_value.h"
 
 namespace TinySwift::TinySIL {
@@ -100,6 +101,9 @@ struct SILInstruction {
 
   // Ownership annotation.
   Ownership ownership = Ownership::None;
+
+  // M119: Source location for debug info (DWARF line-level stepping).
+  SemIR::LocId loc_id = SemIR::LocId::None;
 
   auto getOperand(int index) const -> SILValue { return operands[index]; }
   auto setOperand(int index, SILValue val) -> void {

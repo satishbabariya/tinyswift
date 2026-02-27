@@ -15,6 +15,7 @@ cc_library(
     name = "check",
     srcs = [
         "check.cpp",
+        "comptime_eval.cpp",
         "context.cpp",
         "coroutine_transform.cpp",
         "handle_decl.cpp",
@@ -28,6 +29,7 @@ cc_library(
     ],
     hdrs = [
         "check.h",
+        "comptime_eval.h",
         "context.h",
         "coroutine_transform.h",
         "handle_decl.h",

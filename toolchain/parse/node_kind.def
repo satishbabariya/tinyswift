@@ -368,6 +368,12 @@ TINYSWIFT_PARSE_NODE_KIND(AsyncModifier)
 // M100: Await expression `await <expr>`
 TINYSWIFT_PARSE_NODE_KIND(AwaitExpr)
 
+// M112: Comptime modifier on function declarations
+TINYSWIFT_PARSE_NODE_KIND(ComptimeModifier)
+
+// M112: Comptime expression `comptime <expr>`
+TINYSWIFT_PARSE_NODE_KIND(ComptimeExpr)
+
 // ============================================================================
 // Conditional compilation
 // ============================================================================

@@ -130,6 +130,9 @@ class InstallPaths {
   // The path to the LLVM `libc` runtime.
   auto libc_path() const -> std::filesystem::path;
 
+  // The path to the LLDB formatters Python script (M122).
+  auto lldb_formatters_path() const -> std::filesystem::path;
+
   // The installation digest path.
   //
   // This file contains a digest of the installation.

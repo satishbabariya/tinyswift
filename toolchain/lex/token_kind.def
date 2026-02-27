@@ -217,6 +217,7 @@ TINYSWIFT_EXPR_KEYWORD_TOKEN(TryKeyword,          "try")
 TINYSWIFT_EXPR_KEYWORD_TOKEN(ThrowsKeyword,       "throws")
 TINYSWIFT_EXPR_KEYWORD_TOKEN(AsyncKeyword,        "async")
 TINYSWIFT_EXPR_KEYWORD_TOKEN(AwaitKeyword,        "await")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(ComptimeKeyword,     "comptime")
 
 // clang-format on
 #undef TINYSWIFT_EXPR_KEYWORD_TOKEN

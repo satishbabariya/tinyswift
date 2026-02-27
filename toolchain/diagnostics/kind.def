@@ -150,6 +150,13 @@ TINYSWIFT_DIAGNOSTIC_KIND(PoundWarningMessage)
 TINYSWIFT_DIAGNOSTIC_KIND(PoundErrorMessage)
 TINYSWIFT_DIAGNOSTIC_KIND(PoundAssertFailed)
 
+// M112-M114: Comptime evaluation diagnostics.
+TINYSWIFT_DIAGNOSTIC_KIND(ComptimeNonComptimeCall)
+TINYSWIFT_DIAGNOSTIC_KIND(ComptimeIterationLimit)
+TINYSWIFT_DIAGNOSTIC_KIND(ComptimeDivisionByZero)
+TINYSWIFT_DIAGNOSTIC_KIND(ComptimeUnsupportedOperation)
+TINYSWIFT_DIAGNOSTIC_KIND(ComptimeTypeMismatch)
+
 // ============================================================================
 // CodeGen diagnostics
 // ============================================================================

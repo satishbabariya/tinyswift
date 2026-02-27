@@ -23,6 +23,7 @@ cc_library(
         "verifier.h",
     ],
     deps = [
+        "//toolchain/sem_ir:typed_insts",
         "@llvm-project//llvm:Support",
     ],
 )

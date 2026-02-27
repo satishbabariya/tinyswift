@@ -509,8 +509,9 @@ auto TransformAsyncFunction(Context& context,
 auto TransformCoroutines(Context& context) -> void {
   // Iterate all functions and transform generators and async functions.
   auto& functions = context.functions();
+  auto fn_tag = functions.GetIdTag();
   for (int i = 0; i < static_cast<int>(functions.size()); ++i) {
-    auto fn_id = SemIR::FunctionId(i);
+    auto fn_id = fn_tag.Apply(i);
     auto& fn = functions.Get(fn_id);
 
     if (fn.is_generator) {

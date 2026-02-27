@@ -7,6 +7,9 @@
 #include <memory>
 
 #include "common/vlog.h"
+#include "llvm/BinaryFormat/Dwarf.h"
+#include "llvm/IR/DIBuilder.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Verifier.h"
 #include "toolchain/lower/context.h"
@@ -104,6 +107,26 @@ static auto DeclareFunctions(Context& context) -> void {
       llvm_fn->setVisibility(llvm::GlobalValue::DefaultVisibility);
     }
 
+    // M119: Create DISubprogram for debug info.
+    if (context.debug_enabled()) {
+      unsigned line = 0, col = 0;
+      // Try to get source location from the first body block instruction.
+      if (!function.body_block_ids.empty()) {
+        auto first_block = sem_ir.inst_blocks().Get(function.body_block_ids[0]);
+        if (!first_block.empty()) {
+          auto loc_id = sem_ir.insts().GetCanonicalLocId(first_block[0]);
+          context.ResolveLocToLineCol(loc_id, line, col);
+        }
+      }
+      auto* sp = context.di_builder()->createFunction(
+          context.di_file(), effective_name, effective_name,
+          context.di_file(), line,
+          context.CreateFunctionDIType(), line,
+          llvm::DINode::FlagPrototyped,
+          llvm::DISubprogram::SPFlagDefinition);
+      llvm_fn->setSubprogram(sp);
+    }
+
     context.SetFunction(func_id, llvm_fn);
   }
 }
@@ -116,6 +139,11 @@ static auto LowerFunctionBody(Context& context, SemIR::FunctionId func_id,
 
   if (function.body_block_ids.empty()) {
     return;
+  }
+
+  // M119: Set debug scope to the function's DISubprogram.
+  if (context.debug_enabled() && llvm_fn->getSubprogram()) {
+    context.SetCurrentScope(llvm_fn->getSubprogram());
   }
 
   // Create basic blocks for all body blocks upfront.
@@ -137,6 +165,27 @@ static auto LowerFunctionBody(Context& context, SemIR::FunctionId func_id,
       if (auto value_param = param_inst.TryAs<SemIR::ValueParam>()) {
         if (arg_index < llvm_fn->arg_size()) {
           context.SetLocal(param_id, llvm_fn->getArg(arg_index));
+
+          // M120: Emit DIParameterVariable for function parameters.
+          if (context.debug_enabled() && llvm_fn->getSubprogram()) {
+            unsigned line = 0, col = 0;
+            auto loc_id = sem_ir.insts().GetCanonicalLocId(param_id);
+            context.ResolveLocToLineCol(loc_id, line, col);
+            auto* di_type = context.GetOrCreateDIType(value_param->type_id);
+            if (di_type) {
+              auto* di_param = context.di_builder()->createParameterVariable(
+                  llvm_fn->getSubprogram(),
+                  llvm_fn->getArg(arg_index)->getName(), arg_index + 1,
+                  context.di_file(), line, di_type);
+              context.di_builder()->insertDeclare(
+                  llvm_fn->getArg(arg_index), di_param,
+                  context.di_builder()->createExpression(),
+                  llvm::DILocation::get(context.llvm_context(), line, col,
+                                        llvm_fn->getSubprogram()),
+                  entry_block);
+            }
+          }
+
           ++arg_index;
         }
       } else if (param_inst.Is<SemIR::InoutParam>()) {
@@ -156,6 +205,11 @@ static auto LowerFunctionBody(Context& context, SemIR::FunctionId func_id,
 
     auto block_insts = sem_ir.inst_blocks().Get(block_id);
     for (auto inst_id : block_insts) {
+      // M119: Set debug location before each instruction.
+      if (context.debug_enabled()) {
+        auto loc_id = sem_ir.insts().GetCanonicalLocId(inst_id);
+        context.SetDebugLoc(loc_id);
+      }
       LowerInst(context, inst_id);
     }
 
@@ -267,14 +321,16 @@ static auto LowerTopLevelInsts(Context& context) -> void {
 auto LowerToLLVM(llvm::LLVMContext& llvm_context,
                  llvm::StringRef module_name,
                  const SemIR::File& sem_ir,
-                 const LowerToLLVMOptions& options)
+                 const LowerToLLVMOptions& options,
+                 const Lex::TokenizedBuffer* tokens)
     -> std::unique_ptr<llvm::Module> {
   auto module = std::make_unique<llvm::Module>(module_name, llvm_context);
 
   TINYSWIFT_VLOG_TO(options.vlog_stream, "*** Lowering: {0} ***\n",
                  sem_ir.filename());
 
-  Context context(*module, llvm_context, sem_ir);
+  Context context(*module, llvm_context, sem_ir, tokens,
+                  options.want_debug_info);
 
   // Step 1: Forward-declare all functions.
   DeclareFunctions(context);
@@ -284,6 +340,11 @@ auto LowerToLLVM(llvm::LLVMContext& llvm_context,
 
   // Step 3: Lower top-level instructions (global init).
   LowerTopLevelInsts(context);
+
+  // M119: Finalize debug info before verification.
+  if (context.debug_enabled()) {
+    context.di_builder()->finalize();
+  }
 
   if (options.vlog_stream) {
     TINYSWIFT_VLOG_TO(options.vlog_stream, "*** llvm::Module ***\n");
@@ -402,6 +463,27 @@ auto LowerSILInst(
       if (alloc_ty->isVoidTy()) alloc_ty = builder.getInt64Ty();
       auto* alloca_val = builder.CreateAlloca(alloc_ty, nullptr);
       setSILValue(inst.result, alloca_val);
+
+      // M120: Emit debug variable info for SIL stack allocations.
+      if (context.debug_enabled() && context.current_scope() &&
+          inst.loc_id.has_value()) {
+        unsigned line = 0, col = 0;
+        if (context.ResolveLocToLineCol(inst.loc_id, line, col)) {
+          auto sil_type_id = SemIR::TypeId(inst.alloc_type.type_index);
+          auto* di_type = context.GetOrCreateDIType(sil_type_id);
+          if (di_type) {
+            auto* di_var = context.di_builder()->createAutoVariable(
+                context.current_scope(), "var", context.di_file(),
+                line, di_type);
+            context.di_builder()->insertDeclare(
+                alloca_val, di_var,
+                context.di_builder()->createExpression(),
+                llvm::DILocation::get(context.llvm_context(), line, col,
+                                      context.current_scope()),
+                builder.GetInsertBlock());
+          }
+        }
+      }
       break;
     }
 
@@ -1951,6 +2033,11 @@ auto LowerSILFunctionBody(Context& context,
     return;
   }
 
+  // M119: Set debug scope to the function's DISubprogram.
+  if (context.debug_enabled() && llvm_fn->getSubprogram()) {
+    context.SetCurrentScope(llvm_fn->getSubprogram());
+  }
+
   llvm::DenseMap<int32_t, llvm::Value*> sil_values;
   llvm::DenseMap<int32_t, llvm::BasicBlock*> sil_blocks;
   // M53: Maps partial_apply result SIL value IDs to their captured LLVM values.
@@ -1981,6 +2068,10 @@ auto LowerSILFunctionBody(Context& context,
     context.builder().SetInsertPoint(llvm_bb);
 
     for (const auto& inst : bb->insts) {
+      // M119: Set debug location from SIL instruction's loc_id.
+      if (context.debug_enabled() && inst->loc_id.has_value()) {
+        context.SetDebugLoc(inst->loc_id);
+      }
       LowerSILInst(context, *inst, sil_values, sil_blocks, llvm_fn,
                    closure_captures);
     }
@@ -2002,11 +2093,13 @@ auto LowerSILToLLVM(llvm::LLVMContext& llvm_context,
                     llvm::StringRef module_name,
                     const TinySIL::SILModule& sil_module,
                     const SemIR::File& sem_ir,
-                    const LowerToLLVMOptions& options)
+                    const LowerToLLVMOptions& options,
+                    const Lex::TokenizedBuffer* tokens)
     -> std::unique_ptr<llvm::Module> {
   auto module = std::make_unique<llvm::Module>(module_name, llvm_context);
 
-  Context context(*module, llvm_context, sem_ir);
+  Context context(*module, llvm_context, sem_ir, tokens,
+                  options.want_debug_info);
 
   // Forward-declare all SIL functions.
   llvm::DenseMap<llvm::StringRef, llvm::Function*> fn_map;
@@ -2015,6 +2108,33 @@ auto LowerSILToLLVM(llvm::LLVMContext& llvm_context,
     auto* llvm_fn = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, sil_fn->name,
         &context.module());
+
+    // M119: Create DISubprogram for each SIL function.
+    if (context.debug_enabled()) {
+      unsigned line = 0;
+      // Use the SemIR function decl location if available.
+      if (sil_fn->sem_ir_function_id >= 0) {
+        auto func_id = SemIR::FunctionId(sil_fn->sem_ir_function_id);
+        auto& function = sem_ir.functions().Get(func_id);
+        if (!function.body_block_ids.empty()) {
+          auto first_block =
+              sem_ir.inst_blocks().Get(function.body_block_ids[0]);
+          if (!first_block.empty()) {
+            unsigned col = 0;
+            auto loc_id = sem_ir.insts().GetCanonicalLocId(first_block[0]);
+            context.ResolveLocToLineCol(loc_id, line, col);
+          }
+        }
+      }
+      auto* sp = context.di_builder()->createFunction(
+          context.di_file(), sil_fn->name, sil_fn->name,
+          context.di_file(), line,
+          context.CreateFunctionDIType(), line,
+          llvm::DINode::FlagPrototyped,
+          llvm::DISubprogram::SPFlagDefinition);
+      llvm_fn->setSubprogram(sp);
+    }
+
     fn_map[sil_fn->name] = llvm_fn;
   }
 
@@ -2024,6 +2144,11 @@ auto LowerSILToLLVM(llvm::LLVMContext& llvm_context,
     if (it != fn_map.end()) {
       LowerSILFunctionBody(context, *sil_fn, it->second);
     }
+  }
+
+  // M119: Finalize debug info.
+  if (context.debug_enabled()) {
+    context.di_builder()->finalize();
   }
 
   if (options.vlog_stream) {

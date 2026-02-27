@@ -44,7 +44,7 @@ struct LinkOptions {
   bool pie = true;
 
   // Target triple for cross-compilation.
-  llvm::StringRef target_triple;
+  std::string target_triple;
 
   // Whether to produce a static library (.a) instead of an executable.
   bool static_lib = false;

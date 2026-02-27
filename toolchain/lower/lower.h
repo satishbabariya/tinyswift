@@ -8,6 +8,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "toolchain/lex/tokenized_buffer.h"
 #include "toolchain/lower/options.h"
 #include "toolchain/sem_ir/file.h"
 #include "toolchain/tiny_sil/module.h"
@@ -18,7 +19,8 @@ namespace TinySwift::Lower {
 auto LowerToLLVM(llvm::LLVMContext& llvm_context,
                  llvm::StringRef module_name,
                  const SemIR::File& sem_ir,
-                 const LowerToLLVMOptions& options)
+                 const LowerToLLVMOptions& options,
+                 const Lex::TokenizedBuffer* tokens = nullptr)
     -> std::unique_ptr<llvm::Module>;
 
 // Lowers TinySIL to LLVM IR (new SIL-based path).
@@ -26,7 +28,8 @@ auto LowerSILToLLVM(llvm::LLVMContext& llvm_context,
                     llvm::StringRef module_name,
                     const TinySIL::SILModule& sil_module,
                     const SemIR::File& sem_ir,
-                    const LowerToLLVMOptions& options)
+                    const LowerToLLVMOptions& options,
+                    const Lex::TokenizedBuffer* tokens = nullptr)
     -> std::unique_ptr<llvm::Module>;
 
 }  // namespace TinySwift::Lower

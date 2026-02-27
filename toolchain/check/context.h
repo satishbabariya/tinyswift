@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <memory>
 #include <optional>
 
 #include "llvm/ADT/DenseMap.h"
@@ -15,6 +16,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
 #include "toolchain/check/check.h"
+#include "toolchain/check/comptime_eval.h"
 #include "toolchain/diagnostics/diagnostic.h"
 #include "toolchain/diagnostics/emitter.h"
 #include "toolchain/lex/tokenized_buffer.h"
@@ -185,6 +187,22 @@ class Context {
 
   // Returns the innermost loop context, or nullptr if not in a loop.
   auto CurrentLoop() const -> const LoopContext*;
+
+  // --- M112: Comptime evaluator (lazy) ---
+  auto comptime_evaluator() -> ComptimeEvaluator& {
+    if (!comptime_evaluator_) {
+      comptime_evaluator_ = std::make_unique<ComptimeEvaluator>(*this);
+    }
+    return *comptime_evaluator_;
+  }
+
+  // --- M113: Pending comptime hint for function declarations ---
+  auto SetPendingComptimeHint(bool v) -> void { pending_comptime_ = v; }
+  auto TakePendingComptimeHint() -> bool {
+    auto v = pending_comptime_;
+    pending_comptime_ = false;
+    return v;
+  }
 
   // --- Pending access level (M74) ---
   // When an AccessModifier node is encountered as a sibling before a
@@ -502,6 +520,12 @@ class Context {
 
   // Current enclosing struct/class type (set during HandleTypeMembers).
   SemIR::InstId current_type_id_ = SemIR::InstId::None;
+
+  // M112: Lazy comptime evaluator.
+  std::unique_ptr<ComptimeEvaluator> comptime_evaluator_;
+
+  // M113: Pending comptime hint for next function.
+  bool pending_comptime_ = false;
 
   // M74: Pending access level from AccessModifier sibling.
   SemIR::AccessLevel pending_access_level_ = SemIR::AccessLevel::Internal;

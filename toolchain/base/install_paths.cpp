@@ -235,6 +235,11 @@ auto InstallPaths::libc_path() const -> std::filesystem::path {
   return runtimes_root() / "libc";
 }
 
+auto InstallPaths::lldb_formatters_path() const -> std::filesystem::path {
+  // M122: LLDB formatters for TinySwift type visualization.
+  return root_ / "share" / "tinyswift" / "lldb_formatters.py";
+}
+
 auto InstallPaths::digest_path() const -> std::filesystem::path {
   // TODO: Adjust this to work equally well on Windows.
   return root_ / "install_digest.txt";

@@ -75,6 +75,9 @@ struct Function : public Printable<Function> {
   // M100: Whether this function is async.
   bool is_async = false;
 
+  // M112: Whether this function is comptime-only.
+  bool is_comptime = false;
+
   // M66-M68: Generics support.
   // Whether this function is a generic template (body not yet specialized).
   bool is_generic_template = false;

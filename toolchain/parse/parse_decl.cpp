@@ -62,6 +62,16 @@ static auto ParseModifiers(Context& context) -> void {
       context.AddLeafNode(NodeKind::StaticModifier, token);
       continue;
     }
+    // M112: `comptime` modifier before `func`.
+    if (kind == Lex::TokenKind::ComptimeKeyword) {
+      // Only treat as modifier if followed by `func`; otherwise it's an expression.
+      if (context.PeekNext() == Lex::TokenKind::FuncKeyword) {
+        auto token = context.Consume();
+        context.AddLeafNode(NodeKind::ComptimeModifier, token);
+        continue;
+      }
+      break;
+    }
     // M56: `mutating` is a contextual keyword (plain Identifier token).
     if (kind == Lex::TokenKind::Identifier &&
         context.GetTokenText() == "mutating") {

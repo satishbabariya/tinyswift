@@ -567,6 +567,9 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
   auto attr_node = context.TakePendingAttribute();
   auto attr_info = ExtractAttributeInfo(context, attr_node);
 
+  // M112: Consume pending comptime hint.
+  bool is_comptime = context.TakePendingComptimeHint();
+
   // Create a new function in the function store.
   SemIR::Function fn;
   fn.name_id = sig.name_id;  // mangled name if inside a type/nested, else original
@@ -577,6 +580,7 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
   fn.is_generator = is_generator;
   fn.generator_element_type_id = generator_element_type_id;
   fn.is_async = is_async;
+  fn.is_comptime = is_comptime;
   fn.param_default_nodes = sig.param_defaults;
   fn.access_level = access_level;
   fn.is_extern_c = attr_info.is_extern_c;
@@ -689,6 +693,11 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
 
   // M74: Record access level for the declaration.
   context.SetAccessLevel(fn_decl_id, access_level, context.CurrentScopeId());
+
+  // M112: Register comptime function for interpreter use.
+  if (is_comptime) {
+    context.comptime_evaluator().RegisterComptimeFunction(function_id, node_id);
+  }
 
   // Track the current function for body block registration.
   context.SetCurrentFunction(function_id);

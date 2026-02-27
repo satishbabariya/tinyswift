@@ -618,14 +618,19 @@ auto CompilationUnit::RunLower() -> void {
     options.vlog_stream = vlog_stream_;
     options.opt_level = options_->opt_level;
 
+    // M119: Pass tokenized buffer for DWARF debug info source locations.
+    const Lex::TokenizedBuffer* tokens_ptr =
+        tokens_.has_value() ? &*tokens_ : nullptr;
+
     if (sil_module_) {
       // Use the SIL-based lowering path.
       module_ = Lower::LowerSILToLLVM(*llvm_context_, input_filename_,
-                                       *sil_module_, *sem_ir_, options);
+                                       *sil_module_, *sem_ir_, options,
+                                       tokens_ptr);
     } else {
       // Fallback: direct SemIR → LLVM path.
       module_ = Lower::LowerToLLVM(*llvm_context_, input_filename_,
-                                   *sem_ir_, options);
+                                   *sem_ir_, options, tokens_ptr);
     }
   });
 }

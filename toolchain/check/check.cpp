@@ -129,6 +129,11 @@ auto CheckParseTrees(
       ctx.SetPendingAttribute(root);
       return true;
     }
+    // M112: ComptimeModifier before `func` declarations.
+    if (kind == Parse::NodeKind::ComptimeModifier) {
+      ctx.SetPendingComptimeHint(true);
+      return true;
+    }
     return false;
   };
 

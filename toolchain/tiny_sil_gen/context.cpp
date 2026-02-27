@@ -74,6 +74,8 @@ auto Context::GetSILType(SemIR::TypeId type_id) const -> TinySIL::SILType {
 
 auto Context::emit(std::unique_ptr<TinySIL::SILInstruction> inst)
     -> TinySIL::SILValue {
+  // M119: Stamp current source location onto the instruction for debug info.
+  inst->loc_id = current_loc_id_;
   auto result = inst->result;
   current_block_->addInst(std::move(inst));
   return result;
@@ -85,6 +87,7 @@ auto Context::clearFunctionState() -> void {
   value_map_.clear();
   block_map_.clear();
   array_var_ids_.clear();
+  current_loc_id_ = SemIR::LocId::None;
 }
 
 }  // namespace TinySwift::TinySILGen

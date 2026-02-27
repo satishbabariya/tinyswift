@@ -63,6 +63,12 @@ class Context {
   auto emit(std::unique_ptr<TinySIL::SILInstruction> inst)
       -> TinySIL::SILValue;
 
+  // M119: Track current source location for debug info threading.
+  auto set_current_loc_id(SemIR::LocId loc_id) -> void {
+    current_loc_id_ = loc_id;
+  }
+  auto current_loc_id() const -> SemIR::LocId { return current_loc_id_; }
+
   // Clear per-function state for the next function.
   auto clearFunctionState() -> void;
 
@@ -87,6 +93,8 @@ class Context {
   llvm::DenseMap<int32_t, int32_t> block_map_;
   // VarStorage InstIds backed by an ArrayLiteralInit (no Store needed).
   llvm::DenseSet<int32_t> array_var_ids_;
+  // M119: Current source location for debug info.
+  SemIR::LocId current_loc_id_ = SemIR::LocId::None;
 };
 
 }  // namespace TinySwift::TinySILGen

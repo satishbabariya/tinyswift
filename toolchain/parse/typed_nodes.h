@@ -884,6 +884,23 @@ struct AwaitExpr {
   Lex::AwaitKeywordTokenIndex token;
 };
 
+// M112: `comptime` modifier on function declarations.
+struct ComptimeModifier {
+  static constexpr auto Kind = NodeKind::ComptimeModifier.Define(
+      {.category = NodeCategory::Modifier, .child_count = 0});
+
+  Lex::ComptimeKeywordTokenIndex token;
+};
+
+// M112: `comptime <expr>` — evaluates expression at compile time.
+struct ComptimeExpr {
+  static constexpr auto Kind = NodeKind::ComptimeExpr.Define(
+      {.category = NodeCategory::Expr, .child_count = 1});
+
+  AnyExprId expr;
+  Lex::ComptimeKeywordTokenIndex token;
+};
+
 // ============================================================================
 // Condition lists
 // ============================================================================
