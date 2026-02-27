@@ -450,15 +450,17 @@ auto ComptimeEvaluator::EvalCallExpr(Parse::NodeId node_id)
     -> std::optional<ComptimeValue> {
   auto children = context_.children_source_order(node_id);
 
-  // Extract callee name and arguments.
+  // Extract callee name, optional object name (for method calls), and arguments.
   std::string callee_name;
+  std::string object_name;   // Set for method calls like obj.method(...)
+  std::string method_name;
   llvm::SmallVector<ComptimeValue> args;
 
   for (auto child : children) {
     auto ck = context_.node_kind(child);
     if (ck == Parse::NodeKind::PatternListComma) continue;
 
-    // CallExprStart contains the callee expression (e.g. IdentifierNameExpr).
+    // CallExprStart contains the callee expression.
     if (ck == Parse::NodeKind::CallExprStart) {
       auto start_children = context_.children_source_order(child);
       for (auto sc : start_children) {
@@ -466,6 +468,22 @@ auto ComptimeEvaluator::EvalCallExpr(Parse::NodeId node_id)
         if (sk == Parse::NodeKind::IdentifierNameExpr) {
           auto token = context_.node_token(sc);
           callee_name = context_.token_text(token).str();
+        }
+        // Method call: obj.method(...)
+        if (sk == Parse::NodeKind::MemberAccessExpr) {
+          auto ma_children = context_.children_source_order(sc);
+          for (auto mc : ma_children) {
+            auto mk = context_.node_kind(mc);
+            if (mk == Parse::NodeKind::IdentifierNameExpr) {
+              auto token = context_.node_token(mc);
+              auto text = context_.token_text(token).str();
+              if (object_name.empty()) {
+                object_name = text;
+              } else {
+                method_name = text;
+              }
+            }
+          }
         }
       }
       continue;
@@ -497,6 +515,31 @@ auto ComptimeEvaluator::EvalCallExpr(Parse::NodeId node_id)
       if (!val.has_value()) return std::nullopt;
       args.push_back(std::move(*val));
     }
+  }
+
+  // M114: Handle method calls on arrays/strings.
+  if (!object_name.empty() && !method_name.empty()) {
+    auto obj = GetVar(object_name);
+    if (!obj.has_value()) {
+      context_.EmitError(node_id, ComptimeUnsupportedOperation,
+                         "undefined variable '" + object_name + "'");
+      return std::nullopt;
+    }
+    if (obj->kind == ComptimeValue::Array && method_name == "append") {
+      if (!args.empty()) {
+        obj->array_vals.push_back(args[0]);
+        SetVarMutable(object_name, std::move(*obj));
+      }
+      return ComptimeValue::MakeNone();
+    }
+    if (obj->kind == ComptimeValue::Array && method_name == "count") {
+      return ComptimeValue::MakeInt(
+          static_cast<int64_t>(obj->array_vals.size()));
+    }
+    context_.EmitError(node_id, ComptimeUnsupportedOperation,
+                       "unsupported method '" + method_name + "' on '" +
+                           object_name + "'");
+    return std::nullopt;
   }
 
   if (callee_name.empty()) {
@@ -666,13 +709,19 @@ auto ComptimeEvaluator::EvalSubscriptExpr(Parse::NodeId node_id)
 
   for (auto child : children) {
     auto ck = context_.node_kind(child);
-    if (ck == Parse::NodeKind::SubscriptExprStart) continue;
-    if (ck.category().HasAnyOf(Parse::NodeCategory::Expr)) {
-      if (!base_node.has_value()) {
-        base_node = child;
-      } else {
-        index_node = child;
+    // Base expression is inside SubscriptExprStart.
+    if (ck == Parse::NodeKind::SubscriptExprStart) {
+      auto start_children = context_.children_source_order(child);
+      for (auto sc : start_children) {
+        if (context_.node_kind(sc).category().HasAnyOf(
+                Parse::NodeCategory::Expr)) {
+          base_node = sc;
+        }
       }
+      continue;
+    }
+    if (ck.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+      index_node = child;
     }
   }
 
@@ -786,19 +835,33 @@ auto ComptimeEvaluator::EvalCodeBlockBody(Parse::NodeId code_block_node)
   llvm::SmallVector<Parse::NodeId> child_vec(children.begin(), children.end());
 
   for (size_t i = 0; i < child_vec.size(); ++i) {
+    if (has_returned_) return false;
     auto child = child_vec[i];
     auto ck = context_.node_kind(child);
     if (ck == Parse::NodeKind::CodeBlockStart) continue;
+    // ExprStatement is a marker node (child_count=0); the expression
+    // is the preceding sibling which we already evaluated.
+    if (ck == Parse::NodeKind::ExprStatement) continue;
 
     // Condition-as-sibling pattern: an expression node that immediately
     // precedes IfStatement or WhileStatement is the condition for that
     // statement, not a standalone expression.
-    if (ck.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+    // AssignmentExpr has the Expr category but is handled by EvalStmt,
+    // so we exclude it from expression patterns here.
+    if (ck.category().HasAnyOf(Parse::NodeCategory::Expr) &&
+        ck != Parse::NodeKind::AssignmentExpr) {
       if (i + 1 < child_vec.size()) {
         auto next_kind = context_.node_kind(child_vec[i + 1]);
         if (next_kind == Parse::NodeKind::IfStatement ||
             next_kind == Parse::NodeKind::WhileStatement) {
           pending_condition_ = child;
+          continue;
+        }
+        // Expression followed by ExprStatement marker: evaluate for
+        // side effects (e.g., result.append(x)).
+        if (next_kind == Parse::NodeKind::ExprStatement) {
+          EvalExpr(child);
+          if (has_returned_) return false;
           continue;
         }
       }
@@ -1144,12 +1207,19 @@ auto ComptimeEvaluator::EvalAssignment(Parse::NodeId node_id) -> bool {
     Parse::NodeId index_node = Parse::NodeId::None;
     for (auto sc : sub_children) {
       auto sk = context_.node_kind(sc);
-      if (sk == Parse::NodeKind::SubscriptExprStart) continue;
+      // Base expression is inside SubscriptExprStart.
+      if (sk == Parse::NodeKind::SubscriptExprStart) {
+        auto start_children = context_.children_source_order(sc);
+        for (auto ssc : start_children) {
+          if (context_.node_kind(ssc).category().HasAnyOf(
+                  Parse::NodeCategory::Expr)) {
+            base_node = ssc;
+          }
+        }
+        continue;
+      }
       if (sk.category().HasAnyOf(Parse::NodeCategory::Expr)) {
-        if (!base_node.has_value())
-          base_node = sc;
-        else
-          index_node = sc;
+        index_node = sc;
       }
     }
     if (base_node.has_value() && index_node.has_value()) {
