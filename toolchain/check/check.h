@@ -74,6 +74,9 @@ struct CheckParseTreesOptions {
   // If not empty, a raw SemIR dump should be written to this path in the event
   // of a crash.
   llvm::StringRef sem_ir_crash_dump;
+
+  // M107: Conditional compilation defines from --define flags.
+  llvm::SmallVector<llvm::StringRef> defines;
 };
 
 // Checks a group of parse trees. This will use imports to decide the order of

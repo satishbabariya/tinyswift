@@ -67,6 +67,9 @@ struct CompileOptions {
   bool run_llvm_verifier = true;
 
   llvm::SmallVector<llvm::StringRef> exclude_dump_file_prefixes;
+
+  // M107: Conditional compilation defines (from --define flags).
+  llvm::SmallVector<llvm::StringRef> defines;
 };
 
 // Implements the compile subcommand of the driver.

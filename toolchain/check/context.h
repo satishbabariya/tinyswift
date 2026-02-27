@@ -13,6 +13,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 #include "toolchain/check/check.h"
 #include "toolchain/diagnostics/diagnostic.h"
 #include "toolchain/diagnostics/emitter.h"
@@ -397,7 +398,59 @@ class Context {
   }
   auto has_errors() const -> bool { return sem_ir_->has_errors(); }
 
+  // --- M107: Conditional compilation defines ---
+
+  auto SetDefines(const llvm::SmallVector<llvm::StringRef>& defines) -> void {
+    for (auto d : defines) {
+      defines_.insert(d);
+    }
+  }
+  auto HasDefine(llvm::StringRef name) const -> bool {
+    return defines_.count(name) > 0;
+  }
+
+  // --- M109: Protocol conformance tracking ---
+
+  auto SetTypeConformances(SemIR::InstId type_inst_id,
+                           llvm::SmallVector<llvm::StringRef> protocols) -> void {
+    type_conformances_[type_inst_id.index] = std::move(protocols);
+  }
+  auto GetTypeConformances(SemIR::InstId type_inst_id)
+      -> const llvm::SmallVector<llvm::StringRef>* {
+    auto it = type_conformances_.find(type_inst_id.index);
+    if (it != type_conformances_.end()) return &it->second;
+    return nullptr;
+  }
+  auto HasConformance(SemIR::InstId type_inst_id, llvm::StringRef name) -> bool {
+    auto it = type_conformances_.find(type_inst_id.index);
+    if (it == type_conformances_.end()) return false;
+    for (auto& p : it->second) {
+      if (p == name) return true;
+    }
+    return false;
+  }
+
   // --- Diagnostics ---
+
+  // Diagnostic emitter for semantic analysis, locating by token index.
+  class TokenEmitter : public Diagnostics::Emitter<Lex::TokenIndex> {
+   public:
+    explicit TokenEmitter(Diagnostics::Consumer* consumer,
+                          const Lex::TokenizedBuffer* tokens)
+        : Emitter(consumer), tokens_(tokens) {}
+
+   protected:
+    auto ConvertLoc(Lex::TokenIndex token, ContextFnT /*context_fn*/) const
+        -> Diagnostics::ConvertedLoc override {
+      return tokens_->TokenToDiagnosticLoc(token);
+    }
+
+   private:
+    const Lex::TokenizedBuffer* tokens_;
+  };
+
+  // Returns the diagnostic emitter (for non-error diagnostics like warnings).
+  auto emitter() -> TokenEmitter& { return emitter_; }
 
   // Emits a diagnostic at the given parse node location and marks has_errors.
   template <typename... Args>
@@ -424,22 +477,6 @@ class Context {
   auto GetTypeName(SemIR::TypeId type_id) -> std::string;
 
  private:
-  // Diagnostic emitter for semantic analysis, locating by token index.
-  class TokenEmitter : public Diagnostics::Emitter<Lex::TokenIndex> {
-   public:
-    explicit TokenEmitter(Diagnostics::Consumer* consumer,
-                          const Lex::TokenizedBuffer* tokens)
-        : Emitter(consumer), tokens_(tokens) {}
-
-   protected:
-    auto ConvertLoc(Lex::TokenIndex token, ContextFnT /*context_fn*/) const
-        -> Diagnostics::ConvertedLoc override {
-      return tokens_->TokenToDiagnosticLoc(token);
-    }
-
-   private:
-    const Lex::TokenizedBuffer* tokens_;
-  };
 
   SemIR::File* sem_ir_;
   const Parse::TreeAndSubtrees* tree_and_subtrees_;
@@ -499,6 +536,12 @@ class Context {
   // Each `defer { ... }` pushes its CodeBlock here.
   // Each return statement emits these LIFO before emitting ReturnExpr/Return.
   llvm::SmallVector<Parse::NodeId> deferred_blocks_;
+
+  // M107: Conditional compilation defines from --define flags.
+  llvm::StringSet<> defines_;
+
+  // M109: Protocol conformances for types (keyed by type InstId.index).
+  llvm::DenseMap<int32_t, llvm::SmallVector<llvm::StringRef>> type_conformances_;
 
   // M78: ARC cleanup tracking — each scope level tracks class-typed locals.
   struct ClassCleanup {

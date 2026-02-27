@@ -24,6 +24,7 @@ cc_library(
         "handle_stmt.cpp",
         "handle_type.cpp",
         "handle_type_decl.cpp",
+        "synthesis.cpp",
     ],
     hdrs = [
         "check.h",
@@ -36,6 +37,7 @@ cc_library(
         "handle_stmt.h",
         "handle_type.h",
         "handle_type_decl.h",
+        "synthesis.h",
     ],
     deps = [
         "//common:ostream",

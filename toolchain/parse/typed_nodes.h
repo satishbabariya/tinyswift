@@ -1563,6 +1563,71 @@ struct PoundEndifDecl {
 };
 
 // ============================================================================
+// Source location directives (M107)
+// ============================================================================
+
+struct PoundFileExpr {
+  static constexpr auto Kind = NodeKind::PoundFileExpr.Define(
+      {.category = NodeCategory::Expr, .child_count = 0});
+
+  Lex::PoundFileTokenIndex token;
+};
+
+struct PoundLineExpr {
+  static constexpr auto Kind = NodeKind::PoundLineExpr.Define(
+      {.category = NodeCategory::Expr, .child_count = 0});
+
+  Lex::PoundLineTokenIndex token;
+};
+
+struct PoundColumnExpr {
+  static constexpr auto Kind = NodeKind::PoundColumnExpr.Define(
+      {.category = NodeCategory::Expr, .child_count = 0});
+
+  Lex::PoundColumnTokenIndex token;
+};
+
+struct PoundFunctionExpr {
+  static constexpr auto Kind = NodeKind::PoundFunctionExpr.Define(
+      {.category = NodeCategory::Expr, .child_count = 0});
+
+  Lex::PoundFunctionTokenIndex token;
+};
+
+// ============================================================================
+// Compile-time diagnostics (M108)
+// ============================================================================
+
+// #warning("message") — 1 child (the string literal)
+struct PoundWarningDecl {
+  static constexpr auto Kind = NodeKind::PoundWarningDecl.Define(
+      {.category = NodeCategory::Decl, .child_count = 1});
+
+  Lex::PoundWarningTokenIndex token;
+};
+
+// #error("message") — 1 child (the string literal)
+struct PoundErrorDecl {
+  static constexpr auto Kind = NodeKind::PoundErrorDecl.Define(
+      {.category = NodeCategory::Decl, .child_count = 1});
+
+  Lex::PoundErrorTokenIndex token;
+};
+
+// #assert(condition) or #assert(condition, "message")
+using PoundAssertStart =
+    LeafNode<NodeKind::PoundAssertStart, Lex::PoundAssertTokenIndex>;
+
+struct PoundAssertDecl {
+  static constexpr auto Kind = NodeKind::PoundAssertDecl.Define(
+      {.category = NodeCategory::Decl,
+       .bracketed_by = PoundAssertStart::Kind});
+
+  PoundAssertStartId start;
+  Lex::TokenIndex token;
+};
+
+// ============================================================================
 // Literals from node_kind.def x-macros
 // ============================================================================
 

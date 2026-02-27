@@ -1911,6 +1911,128 @@ auto HandleStatement(Context& context, Parse::NodeId node_id) -> void {
     return;
   }
 
+  // M107: Conditional compilation (#if/#else/#endif).
+  if (kind == Parse::NodeKind::PoundIfDecl) {
+    auto children = context.children_source_order(node_id);
+
+    // Separate children into: condition identifier, then-body, else-body.
+    // Structure: PoundIfStart, [IdentifierNameExpr(condition)],
+    //            [then-body stmts...], [PoundElseDecl], [else-body stmts...],
+    //            [PoundEndifDecl]
+    llvm::StringRef condition_name;
+    bool in_else = false;
+    bool condition_met = false;
+
+    for (auto child : children) {
+      auto ck = context.node_kind(child);
+      if (ck == Parse::NodeKind::PoundIfStart) {
+        continue;
+      }
+      // The condition identifier follows PoundIfStart.
+      if (!condition_met && ck == Parse::NodeKind::IdentifierNameExpr) {
+        auto token = context.node_token(child);
+        condition_name = context.token_text(token);
+        // Check if the flag is in the defines set.
+        condition_met = context.HasDefine(condition_name);
+        continue;
+      }
+      if (ck == Parse::NodeKind::PoundElseDecl ||
+          ck == Parse::NodeKind::PoundElseifDecl) {
+        in_else = true;
+        continue;
+      }
+      if (ck == Parse::NodeKind::PoundEndifDecl) {
+        break;
+      }
+      // Process body: execute if in the active branch.
+      if ((condition_met && !in_else) || (!condition_met && in_else)) {
+        if (ck.category().HasAnyOf(Parse::NodeCategory::Statement |
+                                   Parse::NodeCategory::Decl)) {
+          HandleStatement(context, child);
+        } else if (ck.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+          HandleExpr(context, child);
+        }
+      }
+    }
+    return;
+  }
+
+  // M108: #warning("message") — emit a compile-time warning.
+  if (kind == Parse::NodeKind::PoundWarningDecl) {
+    auto children = context.children_source_order(node_id);
+    for (auto child : children) {
+      if (context.node_kind(child) == Parse::NodeKind::StringLiteral) {
+        auto token = context.node_token(child);
+        auto text = context.token_text(token);
+        // Strip surrounding quotes.
+        llvm::StringRef content = text;
+        if (content.size() >= 2 && content.front() == '"' && content.back() == '"') {
+          content = content.drop_front(1).drop_back(1);
+        }
+        // Emit warning diagnostic (don't set has_errors).
+        auto warn_token = context.node_token(node_id);
+        TINYSWIFT_DIAGNOSTIC(PoundWarningMessage, Warning, "{0}", std::string);
+        context.emitter().Emit(warn_token, PoundWarningMessage, content.str());
+        break;
+      }
+    }
+    return;
+  }
+
+  // M108: #error("message") — emit a compile-time error.
+  if (kind == Parse::NodeKind::PoundErrorDecl) {
+    auto children = context.children_source_order(node_id);
+    for (auto child : children) {
+      if (context.node_kind(child) == Parse::NodeKind::StringLiteral) {
+        auto token = context.node_token(child);
+        auto text = context.token_text(token);
+        llvm::StringRef content = text;
+        if (content.size() >= 2 && content.front() == '"' && content.back() == '"') {
+          content = content.drop_front(1).drop_back(1);
+        }
+        TINYSWIFT_DIAGNOSTIC(PoundErrorMessage, Error, "{0}", std::string);
+        context.EmitError(node_id, PoundErrorMessage, content.str());
+        break;
+      }
+    }
+    return;
+  }
+
+  // M108: #assert(expr) or #assert(expr, "message") — compile-time assertion.
+  if (kind == Parse::NodeKind::PoundAssertDecl) {
+    auto children = context.children_source_order(node_id);
+    SemIR::InstId cond_id = SemIR::InstId::None;
+    llvm::StringRef message = "assertion failed";
+
+    for (auto child : children) {
+      auto ck = context.node_kind(child);
+      if (ck == Parse::NodeKind::PoundAssertStart) continue;
+      if (ck == Parse::NodeKind::StringLiteral) {
+        auto token = context.node_token(child);
+        auto text = context.token_text(token);
+        if (text.size() >= 2 && text.front() == '"' && text.back() == '"') {
+          message = text.drop_front(1).drop_back(1);
+        }
+      } else if (ck.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+        cond_id = HandleExpr(context, child);
+      }
+    }
+
+    // Evaluate condition: check if it's a boolean literal true.
+    if (cond_id.has_value()) {
+      auto inst = context.insts().Get(cond_id);
+      if (auto bl = inst.TryAs<SemIR::BoolLiteral>()) {
+        if (bl->value == SemIR::BoolValue::False) {
+          TINYSWIFT_DIAGNOSTIC(PoundAssertFailed, Error, "#assert failed: {0}", std::string);
+          context.EmitError(node_id, PoundAssertFailed, message.str());
+        }
+        // True — no-op.
+      }
+      // Non-constant expressions are ignored (not a compile-time error).
+    }
+    return;
+  }
+
   // Empty declarations and other unhandled nodes - skip.
   if (kind == Parse::NodeKind::EmptyDecl) {
     return;

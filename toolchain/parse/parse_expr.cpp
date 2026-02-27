@@ -416,6 +416,28 @@ static auto ParsePrimaryExpr(Context& context) -> void {
     return;
   }
 
+  // M107: Source location directives as expressions.
+  if (kind == Lex::TokenKind::PoundFile) {
+    auto token = context.Consume();
+    context.AddLeafNode(NodeKind::PoundFileExpr, token);
+    return;
+  }
+  if (kind == Lex::TokenKind::PoundLine) {
+    auto token = context.Consume();
+    context.AddLeafNode(NodeKind::PoundLineExpr, token);
+    return;
+  }
+  if (kind == Lex::TokenKind::PoundColumn) {
+    auto token = context.Consume();
+    context.AddLeafNode(NodeKind::PoundColumnExpr, token);
+    return;
+  }
+  if (kind == Lex::TokenKind::PoundFunction) {
+    auto token = context.Consume();
+    context.AddLeafNode(NodeKind::PoundFunctionExpr, token);
+    return;
+  }
+
   // If nothing matched, this is an error.
   context.EmitError(ExpectedExprParser);
   auto err_token = context.Consume();

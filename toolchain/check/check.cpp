@@ -54,6 +54,11 @@ auto CheckParseTrees(
   Context context(primary_unit, primary_tree_and_subtrees, *primary_unit.consumer);
   context.SetAllTrees(&tree_and_subtrees_getters);
 
+  // M107: Pass conditional compilation defines to context.
+  if (!options.defines.empty()) {
+    context.SetDefines(options.defines);
+  }
+
   // Create the package-level name scope and push it.
   auto package_scope_id = context.name_scopes().Add(
       SemIR::Namespace::PackageInstId, SemIR::NameId::None,

@@ -239,6 +239,13 @@ Selects the amount of optimization to perform.
           .help = "Excludes files with the given prefix from dumps.",
       },
       [&](auto& arg_b) { arg_b.Append(&exclude_dump_file_prefixes); });
+  b.AddStringOption(
+      {
+          .name = "define",
+          .value_name = "FLAG",
+          .help = "Define a conditional compilation flag (can be repeated).",
+      },
+      [&](auto& arg_b) { arg_b.Append(&defines); });
   b.AddFlag(
       {
           .name = "debug-info",
@@ -942,6 +949,7 @@ auto CompileSubcommand::Run(DriverEnv& driver_env) -> DriverResult {
   check_options.prelude_import = options_.prelude_import;
   check_options.vlog_stream = driver_env.vlog_stream;
   check_options.fuzzing = driver_env.fuzzing;
+  check_options.defines = options_.defines;  // M107
 
   // Set up tree_and_subtrees_getters for checking.
   auto tree_and_subtrees_getters =

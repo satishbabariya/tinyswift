@@ -466,6 +466,112 @@ auto ParseStatement(Context& context) -> void {
     return;
   }
 
+  // M107: Conditional compilation.
+  if (kind == Lex::TokenKind::PoundIf) {
+    auto pound_if = context.Consume();
+    context.AddLeafNode(NodeKind::PoundIfStart, pound_if);
+
+    // Parse the condition identifier (e.g. `DEBUG`).
+    if (context.Peek() == Lex::TokenKind::Identifier) {
+      auto cond_token = context.Consume();
+      context.AddLeafNode(NodeKind::IdentifierNameExpr, cond_token);
+    }
+
+    // Parse body until #else/#elseif/#endif.
+    while (context.Peek() != Lex::TokenKind::PoundElse &&
+           context.Peek() != Lex::TokenKind::PoundElseif &&
+           context.Peek() != Lex::TokenKind::PoundEndif &&
+           !context.AtEndOfFile()) {
+      ParseStatement(context);
+    }
+
+    // Handle #else block.
+    if (context.Peek() == Lex::TokenKind::PoundElse) {
+      auto else_token = context.Consume();
+      context.AddLeafNode(NodeKind::PoundElseDecl, else_token);
+      while (context.Peek() != Lex::TokenKind::PoundEndif &&
+             !context.AtEndOfFile()) {
+        ParseStatement(context);
+      }
+    }
+
+    // Handle #elseif (consume as else for now).
+    if (context.Peek() == Lex::TokenKind::PoundElseif) {
+      auto elseif_token = context.Consume();
+      context.AddLeafNode(NodeKind::PoundElseifDecl, elseif_token);
+      // Skip condition identifier.
+      if (context.Peek() == Lex::TokenKind::Identifier) {
+        context.Consume();
+      }
+      while (context.Peek() != Lex::TokenKind::PoundEndif &&
+             !context.AtEndOfFile()) {
+        ParseStatement(context);
+      }
+    }
+
+    if (context.Peek() == Lex::TokenKind::PoundEndif) {
+      auto endif_token = context.Consume();
+      context.AddNode(NodeKind::PoundIfDecl, endif_token);
+    }
+    return;
+  }
+
+  // M108: Compile-time warning/error/assert directives.
+  if (kind == Lex::TokenKind::PoundWarning) {
+    auto token = context.Consume();
+    // Expect `("message")`
+    if (context.Peek() == Lex::TokenKind::OpenParen) {
+      context.Consume();  // (
+      if (context.Peek() == Lex::TokenKind::StringLiteral) {
+        auto str_token = context.Consume();
+        context.AddLeafNode(NodeKind::StringLiteral, str_token);
+      }
+      if (context.Peek() == Lex::TokenKind::CloseParen) {
+        context.Consume();  // )
+      }
+    }
+    context.AddNode(NodeKind::PoundWarningDecl, token);
+    return;
+  }
+
+  if (kind == Lex::TokenKind::PoundError) {
+    auto token = context.Consume();
+    // Expect `("message")`
+    if (context.Peek() == Lex::TokenKind::OpenParen) {
+      context.Consume();  // (
+      if (context.Peek() == Lex::TokenKind::StringLiteral) {
+        auto str_token = context.Consume();
+        context.AddLeafNode(NodeKind::StringLiteral, str_token);
+      }
+      if (context.Peek() == Lex::TokenKind::CloseParen) {
+        context.Consume();  // )
+      }
+    }
+    context.AddNode(NodeKind::PoundErrorDecl, token);
+    return;
+  }
+
+  if (kind == Lex::TokenKind::PoundAssert) {
+    auto token = context.Consume();
+    context.AddLeafNode(NodeKind::PoundAssertStart, token);
+    // Expect `(expr)` or `(expr, "message")`
+    if (context.Peek() == Lex::TokenKind::OpenParen) {
+      context.Consume();  // (
+      ParseExpr(context);
+      // Optional message.
+      if (context.Peek() == Lex::TokenKind::Comma) {
+        context.Consume();  // ,
+        if (context.Peek() == Lex::TokenKind::StringLiteral) {
+          auto str_token = context.Consume();
+          context.AddLeafNode(NodeKind::StringLiteral, str_token);
+        }
+      }
+      auto close = context.ConsumeChecked(Lex::TokenKind::CloseParen);
+      context.AddNode(NodeKind::PoundAssertDecl, close);
+    }
+    return;
+  }
+
   // Expression statement (fallback).
   if (kind != Lex::TokenKind::FileEnd &&
       kind != Lex::TokenKind::CloseCurlyBrace) {

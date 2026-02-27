@@ -4518,6 +4518,55 @@ auto HandleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
     return SemIR::InstId::None;
   }
 
+  // M107: Source location directives.
+  if (kind == Parse::NodeKind::PoundFileExpr) {
+    auto filename = context.tokens().source().filename();
+    auto string_id = context.string_literal_values().Add(filename);
+    auto string_type_id = context.GetBuiltinType("String");
+    return context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::StringLiteral{.type_id = string_type_id,
+                             .string_id = string_id}));
+  }
+  if (kind == Parse::NodeKind::PoundLineExpr) {
+    auto token = context.node_token(node_id);
+    int64_t line = context.tokens().GetLineNumber(token);
+    auto int_id = context.ints().Add(line);
+    auto type_id = context.GetBuiltinType("Int");
+    return context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::IntValue{.type_id = type_id, .int_id = int_id}));
+  }
+  if (kind == Parse::NodeKind::PoundColumnExpr) {
+    auto token = context.node_token(node_id);
+    int64_t col = context.tokens().GetColumnNumber(token);
+    auto int_id = context.ints().Add(col);
+    auto type_id = context.GetBuiltinType("Int");
+    return context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::IntValue{.type_id = type_id, .int_id = int_id}));
+  }
+  if (kind == Parse::NodeKind::PoundFunctionExpr) {
+    // Get the current function name, or "<top-level>" if not in a function.
+    llvm::StringRef fn_name = "<top-level>";
+    auto fn_id = context.CurrentFunctionId();
+    if (fn_id.has_value()) {
+      auto& fn = context.functions().Get(fn_id);
+      if (fn.name_id.has_value()) {
+        auto ident_opt = fn.name_id.AsIdentifierId();
+        if (ident_opt.has_value()) {
+          fn_name = context.identifiers().Get(ident_opt);
+        }
+      }
+    }
+    auto string_id = context.string_literal_values().Add(fn_name);
+    auto string_type_id = context.GetBuiltinType("String");
+    return context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::StringLiteral{.type_id = string_type_id,
+                             .string_id = string_id}));
+  }
+
   // For expression statements, unwrap.
   if (kind == Parse::NodeKind::ExprStatement) {
     auto children = context.children_source_order(node_id);

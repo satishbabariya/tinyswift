@@ -8,6 +8,7 @@
 
 #include "toolchain/check/handle_expr.h"
 #include "toolchain/check/handle_function.h"
+#include "toolchain/check/synthesis.h"
 #include "toolchain/check/handle_generic.h"
 #include "toolchain/check/handle_stmt.h"
 #include "toolchain/check/handle_type.h"
@@ -81,11 +82,7 @@ auto ExtractTypeName(Context& context, Parse::NodeId start_node_id)
 
 // Collects field information from var declarations inside a struct/class body.
 // Returns a list of (name_id, type_id) pairs for field descriptors.
-struct FieldInfo {
-  SemIR::NameId name_id;
-  SemIR::TypeId type_id;
-  Parse::NodeId node_id;
-};
+// FieldInfo is defined in handle_type_decl.h.
 
 // Extracts field info from a single VariableDecl node.
 static auto ExtractFieldFromVarDecl(Context& context, Parse::NodeId child)
@@ -1238,6 +1235,49 @@ auto HandleStructDefinition(Context& context, Parse::NodeId node_id) -> void {
   // Set the current type so HandleFunctionDefinition can synthesize `self`.
   context.SetCurrentType(struct_type_id);
   HandleTypeMembers(context, children);
+
+  // M109-M111: Scan InheritanceClause for protocol conformances and synthesize.
+  if (start_node_id.has_value()) {
+    llvm::SmallVector<llvm::StringRef> protocols;
+    for (auto sc : context.children_source_order(start_node_id)) {
+      if (context.node_kind(sc) == Parse::NodeKind::InheritanceClause) {
+        for (auto ic : context.children_source_order(sc)) {
+          if (context.node_kind(ic) == Parse::NodeKind::IdentifierType) {
+            auto tok = context.node_token(ic);
+            protocols.push_back(context.token_text(tok));
+          }
+        }
+        break;
+      }
+    }
+    if (!protocols.empty()) {
+      context.SetTypeConformances(struct_type_id, protocols);
+      // Get type name for description synthesis.
+      llvm::StringRef type_name_str;
+      if (name_id.has_value()) {
+        auto ident_opt = name_id.AsIdentifierId();
+        if (ident_opt.has_value()) {
+          type_name_str = context.identifiers().Get(ident_opt);
+        }
+      }
+      for (auto proto : protocols) {
+        if (proto == "Equatable") {
+          SynthesizeEquatable(context, struct_type_id, type_scope_id,
+                              field_infos, /*is_enum=*/false, /*enum_case_count=*/0);
+        } else if (proto == "Comparable") {
+          SynthesizeComparable(context, struct_type_id, type_scope_id,
+                               field_infos);
+        } else if (proto == "Hashable") {
+          SynthesizeHashable(context, struct_type_id, type_scope_id,
+                             field_infos, /*is_enum=*/false, /*enum_case_count=*/0);
+        } else if (proto == "CustomStringConvertible") {
+          SynthesizeDescription(context, struct_type_id, type_scope_id,
+                                field_infos, type_name_str);
+        }
+      }
+    }
+  }
+
   context.ClearCurrentType();
   context.PopScope();
 }
@@ -1544,6 +1584,51 @@ auto HandleEnumDefinition(Context& context, Parse::NodeId node_id) -> void {
   // M89: Process methods, computed properties, init, subscripts inside enum body.
   context.SetCurrentType(enum_type_id);
   HandleTypeMembers(context, children);
+
+  // M109-M111: Scan InheritanceClause for protocol conformances and synthesize.
+  if (start_node_id.has_value()) {
+    llvm::SmallVector<llvm::StringRef> protocols;
+    for (auto sc : context.children_source_order(start_node_id)) {
+      if (context.node_kind(sc) == Parse::NodeKind::InheritanceClause) {
+        for (auto ic : context.children_source_order(sc)) {
+          if (context.node_kind(ic) == Parse::NodeKind::IdentifierType) {
+            auto tok = context.node_token(ic);
+            protocols.push_back(context.token_text(tok));
+          }
+        }
+        break;
+      }
+    }
+    if (!protocols.empty()) {
+      context.SetTypeConformances(enum_type_id, protocols);
+      llvm::StringRef type_name_str;
+      if (name_id.has_value()) {
+        auto ident_opt = name_id.AsIdentifierId();
+        if (ident_opt.has_value()) {
+          type_name_str = context.identifiers().Get(ident_opt);
+        }
+      }
+      // Enums have no stored fields for field-by-field synthesis; pass empty.
+      llvm::SmallVector<FieldInfo> empty_fields;
+      int enum_case_count = static_cast<int>(case_inst_ids.size());
+      for (auto proto : protocols) {
+        if (proto == "Equatable") {
+          SynthesizeEquatable(context, enum_type_id, type_scope_id,
+                              empty_fields, /*is_enum=*/true, enum_case_count);
+        } else if (proto == "Comparable") {
+          SynthesizeComparable(context, enum_type_id, type_scope_id,
+                               empty_fields);
+        } else if (proto == "Hashable") {
+          SynthesizeHashable(context, enum_type_id, type_scope_id,
+                             empty_fields, /*is_enum=*/true, enum_case_count);
+        } else if (proto == "CustomStringConvertible") {
+          SynthesizeDescription(context, enum_type_id, type_scope_id,
+                                empty_fields, type_name_str);
+        }
+      }
+    }
+  }
+
   context.ClearCurrentType();
 
   context.PopScope();

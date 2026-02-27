@@ -10,6 +10,13 @@
 
 namespace TinySwift::Check {
 
+// Field information collected from struct/class var declarations.
+struct FieldInfo {
+  SemIR::NameId name_id;
+  SemIR::TypeId type_id;
+  Parse::NodeId node_id;
+};
+
 auto HandleStructDefinition(Context& context, Parse::NodeId node_id) -> void;
 auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void;
 auto HandleEnumDefinition(Context& context, Parse::NodeId node_id) -> void;

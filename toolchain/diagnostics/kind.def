@@ -125,6 +125,11 @@ TINYSWIFT_DIAGNOSTIC_KIND(GenericArgCountMismatch)
 TINYSWIFT_DIAGNOSTIC_KIND(TypeDoesNotConformToProtocol)
 TINYSWIFT_DIAGNOSTIC_KIND(CannotInferGenericTypeArgs)
 
+// M108: Compile-time diagnostics.
+TINYSWIFT_DIAGNOSTIC_KIND(PoundWarningMessage)
+TINYSWIFT_DIAGNOSTIC_KIND(PoundErrorMessage)
+TINYSWIFT_DIAGNOSTIC_KIND(PoundAssertFailed)
+
 // ============================================================================
 // CodeGen diagnostics
 // ============================================================================

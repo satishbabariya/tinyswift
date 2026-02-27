@@ -379,6 +379,24 @@ TINYSWIFT_PARSE_NODE_KIND(PoundElseifDecl)
 TINYSWIFT_PARSE_NODE_KIND(PoundEndifDecl)
 
 // ============================================================================
+// Source location directives (M107)
+// ============================================================================
+
+TINYSWIFT_PARSE_NODE_KIND(PoundFileExpr)
+TINYSWIFT_PARSE_NODE_KIND(PoundLineExpr)
+TINYSWIFT_PARSE_NODE_KIND(PoundColumnExpr)
+TINYSWIFT_PARSE_NODE_KIND(PoundFunctionExpr)
+
+// ============================================================================
+// Compile-time diagnostics (M108)
+// ============================================================================
+
+TINYSWIFT_PARSE_NODE_KIND(PoundWarningDecl)
+TINYSWIFT_PARSE_NODE_KIND(PoundErrorDecl)
+TINYSWIFT_PARSE_NODE_KIND(PoundAssertStart)
+TINYSWIFT_PARSE_NODE_KIND(PoundAssertDecl)
+
+// ============================================================================
 // Literals
 // ============================================================================
 
