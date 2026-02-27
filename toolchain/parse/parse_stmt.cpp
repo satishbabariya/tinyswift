@@ -326,6 +326,14 @@ static auto ParseDoStatement(Context& context) -> void {
   context.AddNode(NodeKind::DoStatement, do_token);
 }
 
+// M98: Parses a `yield` statement: `yield expr`
+static auto ParseYieldStatement(Context& context) -> void {
+  auto yield_token = context.Consume();  // 'yield'
+  context.AddLeafNode(NodeKind::YieldStatementStart, yield_token);
+  ParseExpr(context);
+  context.AddNode(NodeKind::YieldStatement, yield_token);
+}
+
 // Parses a `defer` statement: `defer { ... }`
 static auto ParseDeferStatement(Context& context) -> void {
   auto defer_token = context.Consume();  // 'defer'
@@ -449,6 +457,12 @@ auto ParseStatement(Context& context) -> void {
   // Defer statement.
   if (kind == Lex::TokenKind::DeferKeyword) {
     ParseDeferStatement(context);
+    return;
+  }
+
+  // M98: Yield statement.
+  if (kind == Lex::TokenKind::YieldKeyword) {
+    ParseYieldStatement(context);
     return;
   }
 

@@ -148,6 +148,17 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
       return llvm::StructType::get(context.llvm_context(), elem_types);
     }
 
+    case SemIR::InstKind::GeneratorType: {
+      // Generator<T> is a two-pointer struct: {frame_ptr, resume_fn_ptr}.
+      auto* ptr_type = llvm::Type::getInt64Ty(context.llvm_context());
+      return llvm::StructType::get(context.llvm_context(), {ptr_type, ptr_type});
+    }
+
+    case SemIR::InstKind::AsyncFuncType: {
+      // AsyncFuncType is represented as an opaque pointer.
+      return llvm::PointerType::get(context.llvm_context(), 0);
+    }
+
     case SemIR::InstKind::TypeType:
     case SemIR::InstKind::NamespaceType:
       // Type and namespace are compile-time only, no runtime representation.

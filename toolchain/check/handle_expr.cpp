@@ -419,6 +419,7 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
   llvm::StringRef os_func_name;
   bool is_net_call = false;        // M94: Networking builtins
   llvm::StringRef net_func_name;
+  bool is_block_on_call = false;   // M100: blockOn(asyncExpr)
 
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
@@ -430,7 +431,8 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
       // is a SIBLING of CallExprStart (not its child) because GenericArgumentClause
       // shifts the subtree boundary. Check if callee was already found as sibling.
       if (!callee_id.has_value() && !coercion_target.empty() == false &&
-          !is_print_call && !is_file_io_call && !is_os_call && !is_net_call) {
+          !is_print_call && !is_file_io_call && !is_os_call && !is_net_call &&
+          !is_block_on_call) {
         auto start_children = context.children_source_order(child);
         for (auto start_child : start_children) {
           if (context.node_kind(start_child)
@@ -478,6 +480,11 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
                   text == "tcpWrite" || text == "tcpClose") {
                 is_net_call = true;
                 net_func_name = text;
+                break;
+              }
+              // M100: Intercept blockOn() built-in.
+              if (text == "blockOn") {
+                is_block_on_call = true;
                 break;
               }
             }
@@ -537,6 +544,11 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
             net_func_name = text;
             continue;
           }
+          // M100: Intercept blockOn() built-in.
+          if (text == "blockOn") {
+            is_block_on_call = true;
+            continue;
+          }
         }
         callee_id = HandleExpr(context, child);
       } else {
@@ -551,7 +563,8 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
   // the IdentifierNameExpr outside), pick up the pending callee set by the
   // parent context (HandleReturnStatement or HandleCodeBlock).
   if (!callee_id.has_value() && coercion_target.empty() && !is_print_call &&
-      !is_file_io_call && !is_os_call && !is_net_call) {
+      !is_file_io_call && !is_os_call && !is_net_call &&
+      !is_block_on_call) {
     callee_id = context.TakePendingCalleeId();
   }
 
@@ -718,6 +731,24 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
           SemIR::LocId(node_id),
           SemIR::TcpClose{.type_id = int_type,
                           .fd_id = labeled_args[0].value_id}));
+    }
+    return SemIR::InstId::None;
+  }
+
+  // M100: blockOn(asyncExpr) — synchronously evaluate an async call.
+  // In M100, async functions run synchronously, so blockOn just evaluates
+  // its argument and returns the result.
+  if (is_block_on_call) {
+    if (!labeled_args.empty()) {
+      auto arg_id = labeled_args[0].value_id;
+      // If the argument is an AwaitExpr, unwrap it.
+      if (arg_id.has_value()) {
+        auto arg_inst = context.insts().Get(arg_id);
+        if (auto await = arg_inst.TryAs<SemIR::AwaitExpr>()) {
+          return await->callee_id;  // Direct result of the async call.
+        }
+      }
+      return arg_id;  // Pass through the value.
     }
     return SemIR::InstId::None;
   }
@@ -2569,6 +2600,61 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
     }
   }
 
+  // M98: Generator<T>.next() → call resume function, return Optional<T>.
+  if (base_id.has_value() && member_name == "next") {
+    auto base_type = GetInstType(context, base_id);
+    if (base_type.has_value() && base_type.is_concrete()) {
+      auto base_ti = context.types().GetTypeInstId(base_type);
+      if (base_ti.has_value()) {
+        auto base_inst = context.insts().Get(base_ti);
+        if (base_inst.Is<SemIR::GeneratorType>()) {
+          // Generator<T>.next() desugars to:
+          //   let resume_fn = gen.1  (TupleAccess index=1)
+          //   let frame     = gen.0  (TupleAccess index=0)
+          //   return resume_fn(frame)
+          //
+          // The generator tuple is {frame_ptr: ptr, resume_fn: ptr}.
+          // At the SemIR level, both are Int (ptr carrier).
+          auto int_type = context.GetBuiltinType("Int");
+
+          // Extract frame_ptr (index 0) and resume_fn_ptr (index 1).
+          auto frame_id = context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::TupleAccess{.type_id = int_type,
+                                 .tuple_id = base_id,
+                                 .index = SemIR::ElementIndex(0)}));
+          auto resume_fn_id = context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::TupleAccess{.type_id = int_type,
+                                 .tuple_id = base_id,
+                                 .index = SemIR::ElementIndex(1)}));
+
+          // Call resume_fn(frame_ptr) → Optional<T>.
+          auto gen_type = base_inst.As<SemIR::GeneratorType>();
+
+          // Build Optional<T> return type.
+          auto opt_type_inst = context.AddInstInNoBlock(
+              SemIR::LocIdAndInst::NoLoc(
+                  SemIR::OptionalType{
+                      .type_id = SemIR::TypeType::TypeId,
+                      .inner_type_id = gen_type.element_type_id}));
+          auto opt_type = SemIR::TypeId::ForTypeConstant(
+              SemIR::ConstantId::ForConcreteConstant(opt_type_inst));
+
+          auto args_block = context.inst_blocks().AddPlaceholder();
+          context.inst_blocks().ReplacePlaceholder(
+              args_block, llvm::ArrayRef<SemIR::InstId>({frame_id}));
+
+          return context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::Call{.type_id = opt_type,
+                          .callee_id = resume_fn_id,
+                          .args_id = args_block}));
+        }
+      }
+    }
+  }
+
   // M65: Dynamic array methods (.count, .isEmpty, .append).
   if (base_id.has_value() && !member_name.empty()) {
     // Resolve base to DynamicArrayInit through NameRef → VarStorage.
@@ -4412,6 +4498,24 @@ auto HandleExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
   // M46: Implicit closure parameters $0, $1, etc.
   if (kind == Parse::NodeKind::DollarIdentExpr) {
     return HandleDollarIdentExpr(context, node_id);
+  }
+
+  // M100: `await <expr>` — for now, just evaluate the inner expression.
+  // In synchronous mode (M100), await is a pass-through to the async call.
+  if (kind == Parse::NodeKind::AwaitExpr) {
+    auto children = context.children_source_order(node_id);
+    for (auto child : children) {
+      if (context.node_kind(child).category().HasAnyOf(
+              Parse::NodeCategory::Expr)) {
+        auto callee_id = HandleExpr(context, child);
+        auto callee_type = GetInstType(context, callee_id);
+        // Emit an AwaitExpr instruction wrapping the call.
+        return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+            SemIR::AwaitExpr{.type_id = callee_type,
+                             .callee_id = callee_id}));
+      }
+    }
+    return SemIR::InstId::None;
   }
 
   // For expression statements, unwrap.

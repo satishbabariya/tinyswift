@@ -33,6 +33,8 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     case SemIR::InstKind::Namespace:
     case SemIR::InstKind::BoundMethod:
     case SemIR::InstKind::ComputedPropertyDecl:
+    case SemIR::InstKind::Yield:       // Eliminated by coroutine transform (M98)
+    case SemIR::InstKind::AwaitExpr:   // Pass-through in synchronous mode (M100)
       // These are compile-time only or pattern metadata; nothing to lower.
       break;
 
@@ -50,6 +52,8 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     case SemIR::InstKind::OptionalType:
     case SemIR::InstKind::StructType:
     case SemIR::InstKind::ClassType:
+    case SemIR::InstKind::GeneratorType:   // M98: Generator type
+    case SemIR::InstKind::AsyncFuncType:   // M100: Async function type
       break;
 
     // -----------------------------------------------------------------------

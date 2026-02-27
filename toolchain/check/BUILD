@@ -16,6 +16,7 @@ cc_library(
     srcs = [
         "check.cpp",
         "context.cpp",
+        "coroutine_transform.cpp",
         "handle_decl.cpp",
         "handle_expr.cpp",
         "handle_function.cpp",
@@ -27,6 +28,7 @@ cc_library(
     hdrs = [
         "check.h",
         "context.h",
+        "coroutine_transform.h",
         "handle_decl.h",
         "handle_expr.h",
         "handle_function.h",

@@ -844,6 +844,46 @@ struct DeferStatement {
   Lex::DeferKeywordTokenIndex token;
 };
 
+// M98: `yield <expr>` — yields a value from a generator function.
+using YieldStatementStart =
+    LeafNode<NodeKind::YieldStatementStart, Lex::YieldKeywordTokenIndex,
+             NodeCategory::Statement>;
+
+struct YieldStatement {
+  static constexpr auto Kind = NodeKind::YieldStatement.Define(
+      {.category = NodeCategory::Statement,
+       .bracketed_by = YieldStatementStart::Kind});
+
+  YieldStatementStartId introducer;
+  AnyExprId expr;
+  Lex::YieldKeywordTokenIndex token;
+};
+
+// M98: `Generator<T>` type annotation in function return types.
+struct GeneratorType {
+  static constexpr auto Kind = NodeKind::GeneratorType.Define(
+      {.category = NodeCategory::Type, .child_count = 0});
+
+  Lex::TokenIndex token;
+};
+
+// M100: `async` modifier on function declarations.
+struct AsyncModifier {
+  static constexpr auto Kind = NodeKind::AsyncModifier.Define(
+      {.category = NodeCategory::Modifier, .child_count = 0});
+
+  Lex::AsyncKeywordTokenIndex token;
+};
+
+// M100: `await <expr>` — awaits an async function result.
+struct AwaitExpr {
+  static constexpr auto Kind = NodeKind::AwaitExpr.Define(
+      {.category = NodeCategory::Expr, .child_count = 1});
+
+  AnyExprId expr;
+  Lex::AwaitKeywordTokenIndex token;
+};
+
 // ============================================================================
 // Condition lists
 // ============================================================================

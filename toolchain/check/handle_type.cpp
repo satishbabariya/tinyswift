@@ -156,6 +156,44 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
     return context.GetBuiltinType("Int");
   }
 
+  // M98: Generator<T> type — creates a two-pointer tuple type.
+  if (kind == Parse::NodeKind::GeneratorType) {
+    // GeneratorType has children from GenericArgumentClause containing the
+    // element type T. Find it.
+    auto children = context.children_source_order(node_id);
+    SemIR::TypeId elem_type_id = SemIR::ErrorInst::TypeId;
+    for (auto child : children) {
+      auto ck = context.node_kind(child);
+      if (ck == Parse::NodeKind::GenericArgumentClause) {
+        auto clause_children = context.children_source_order(child);
+        for (auto cc : clause_children) {
+          auto cck = context.node_kind(cc);
+          if (cck == Parse::NodeKind::GenericArgumentClauseStart ||
+              cck == Parse::NodeKind::PatternListComma) {
+            continue;
+          }
+          if (cck.category().HasAnyOf(Parse::NodeCategory::Type)) {
+            elem_type_id = HandleTypeExpr(context, cc);
+            break;
+          }
+        }
+        break;
+      }
+      // Element type might appear as a direct sibling IdentifierType.
+      if (ck.category().HasAnyOf(Parse::NodeCategory::Type)) {
+        elem_type_id = HandleTypeExpr(context, child);
+      }
+    }
+
+    // Generator<T> at the SemIR level is stored as a GeneratorType instruction.
+    auto elem_type_inst_id = context.types().GetTypeInstId(elem_type_id);
+    auto inst_id = context.AddInstInNoBlock(SemIR::LocIdAndInst::NoLoc(
+        SemIR::GeneratorType{.type_id = SemIR::TypeType::TypeId,
+                             .element_type_id = elem_type_inst_id}));
+    return SemIR::TypeId::ForTypeConstant(
+        SemIR::ConstantId::ForConcreteConstant(inst_id));
+  }
+
   if (kind == Parse::NodeKind::FunctionType) {
     // Function types are represented as opaque pointers at runtime (in LLVM 20,
     // all pointers are ptr).  Create a PointerType to Int as a stand-in — it

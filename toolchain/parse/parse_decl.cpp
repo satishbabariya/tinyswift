@@ -337,6 +337,12 @@ static auto ParseFuncDecl(Context& context) -> void {
     context.Consume();
   }
 
+  // M100: Optional `async` modifier before return type.
+  if (context.Peek() == Lex::TokenKind::AsyncKeyword) {
+    auto async_token = context.Consume();
+    context.AddLeafNode(NodeKind::AsyncModifier, async_token);
+  }
+
   // Optional return type: `-> Type`
   if (context.Peek() == Lex::TokenKind::MinusGreater) {
     auto arrow = context.Consume();

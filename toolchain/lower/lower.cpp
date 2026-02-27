@@ -225,7 +225,10 @@ static auto LowerTopLevelInsts(Context& context) -> void {
         kind == SemIR::InstKind::TupleType ||
         kind == SemIR::InstKind::OptionalType ||
         kind == SemIR::InstKind::StructField ||
-        kind == SemIR::InstKind::BoundMethod) {
+        kind == SemIR::InstKind::BoundMethod ||
+        kind == SemIR::InstKind::GeneratorType ||
+        kind == SemIR::InstKind::AsyncFuncType ||
+        kind == SemIR::InstKind::Yield) {
       continue;
     }
     // Non-lowered patterns.

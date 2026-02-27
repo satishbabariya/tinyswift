@@ -66,6 +66,15 @@ struct Function : public Printable<Function> {
   // M76: The exported C symbol name for @cdecl functions.
   std::string cdecl_name;
 
+  // M98: Whether this function is a generator (returns Generator<T>).
+  bool is_generator = false;
+
+  // M98: The element type T for Generator<T> functions.
+  SemIR::TypeId generator_element_type_id = SemIR::TypeId::None;
+
+  // M100: Whether this function is async.
+  bool is_async = false;
+
   // M66-M68: Generics support.
   // Whether this function is a generic template (body not yet specialized).
   bool is_generic_template = false;

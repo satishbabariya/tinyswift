@@ -1552,6 +1552,56 @@ struct Release {
   InstId deinit_id;         // FunctionDecl for deinit, or InstId::None
 };
 
+// ============================================================================
+// Coroutines: Generators (M98-M99)
+// ============================================================================
+
+// M98: Yield a value from a generator function.
+// Before coroutine transform: marks a suspend/yield point.
+// After coroutine transform: replaced by state machine instructions.
+struct Yield {
+  static constexpr auto Kind = InstKind::Yield.Define<Parse::YieldStatement>(
+      {.ir_name = "yield",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;           // Element type T
+  InstId value_id;          // The yielded value expression
+};
+
+// M98: Generator<T> type — a two-pointer struct {frame_ptr, resume_fn_ptr}.
+struct GeneratorType {
+  static constexpr auto Kind =
+      InstKind::GeneratorType.Define<Parse::GeneratorType>(
+          {.ir_name = "generator_type",
+           .is_type = InstIsType::Always,
+           .constant_kind = InstConstantKind::AlwaysUnique});
+  TypeId type_id;
+  TypeInstId element_type_id;  // T in Generator<T>
+};
+
+// ============================================================================
+// Coroutines: Async/Await (M100-M102)
+// ============================================================================
+
+// M100: Await an async function call — suspends until result is available.
+struct AwaitExpr {
+  static constexpr auto Kind = InstKind::AwaitExpr.Define<Parse::AwaitExpr>(
+      {.ir_name = "await",
+       .constant_kind = InstConstantKind::Never});
+  TypeId type_id;           // Result type of the async call
+  InstId callee_id;         // The async function call instruction
+};
+
+// M100: Async function type marker — marks a function type as async.
+struct AsyncFuncType {
+  static constexpr auto Kind =
+      InstKind::AsyncFuncType.Define<Parse::NodeId>(
+          {.ir_name = "async_func_type",
+           .is_type = InstIsType::Always,
+           .constant_kind = InstConstantKind::AlwaysUnique});
+  TypeId type_id;
+  TypeInstId inner_type_id;  // The underlying return type
+};
+
 // These concepts are an implementation detail of the library, not public API.
 namespace Internal {
 

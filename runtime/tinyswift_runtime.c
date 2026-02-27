@@ -1161,3 +1161,167 @@ void __tinyswift_abort(const char* message) {
   }
   abort();
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Async Runtime (M100-M102)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// M100: blockOn — synchronously run an async function.
+// In M100, async functions execute synchronously. blockOn simply calls the
+// resume function in a loop until it completes (returns a non-suspended result).
+int64_t __tinyswift_block_on(void* frame, void* (*resume_fn)(void*)) {
+  if (!frame || !resume_fn) return 0;
+  // For synchronous async (M100), call resume once — it runs to completion.
+  return (int64_t)(intptr_t)resume_fn(frame);
+}
+
+// ── Event Loop (M101-M102) ──────────────────────────────────────────────────
+
+typedef struct {
+  void* frame;
+  void* (*resume_fn)(void*);
+} AsyncTask;
+
+#define MAX_EVENT_LOOP_TASKS 256
+static AsyncTask event_loop_tasks[MAX_EVENT_LOOP_TASKS];
+static int event_loop_task_count = 0;
+
+void __tinyswift_async_submit(void* frame, void* (*resume_fn)(void*)) {
+  if (event_loop_task_count < MAX_EVENT_LOOP_TASKS) {
+    event_loop_tasks[event_loop_task_count].frame = frame;
+    event_loop_tasks[event_loop_task_count].resume_fn = resume_fn;
+    event_loop_task_count++;
+  }
+}
+
+void __tinyswift_run_event_loop(void) {
+  // Simple round-robin: run all tasks until none remain.
+  while (event_loop_task_count > 0) {
+    for (int i = 0; i < event_loop_task_count; ++i) {
+      AsyncTask* task = &event_loop_tasks[i];
+      if (task->resume_fn) {
+        void* result = task->resume_fn(task->frame);
+        if (result != NULL) {
+          // Task completed — remove it.
+          event_loop_tasks[i] = event_loop_tasks[event_loop_task_count - 1];
+          event_loop_task_count--;
+          i--;  // Re-check this slot.
+        }
+      }
+    }
+  }
+}
+
+// ── I/O Polling (M102) ─────────────────────────────────────────────────────
+
+#ifdef __APPLE__
+#include <sys/event.h>
+#include <unistd.h>
+
+static int kq_fd = -1;
+
+static void ensure_kqueue(void) {
+  if (kq_fd < 0) {
+    kq_fd = kqueue();
+  }
+}
+
+void __tinyswift_io_poll(int64_t timeout_ms) {
+  ensure_kqueue();
+  struct timespec ts;
+  ts.tv_sec = timeout_ms / 1000;
+  ts.tv_nsec = (timeout_ms % 1000) * 1000000;
+  struct kevent events[16];
+  int n = kevent(kq_fd, NULL, 0, events, 16, &ts);
+  for (int i = 0; i < n; ++i) {
+    AsyncTask* task = (AsyncTask*)events[i].udata;
+    if (task && task->resume_fn) {
+      task->resume_fn(task->frame);
+    }
+  }
+}
+
+void __tinyswift_io_register_read(int64_t fd, void* frame,
+                                   void* (*resume_fn)(void*)) {
+  ensure_kqueue();
+  AsyncTask* task = (AsyncTask*)malloc(sizeof(AsyncTask));
+  task->frame = frame;
+  task->resume_fn = resume_fn;
+  struct kevent ev;
+  EV_SET(&ev, (uintptr_t)fd, EVFILT_READ, EV_ADD | EV_ONESHOT, 0, 0, task);
+  kevent(kq_fd, &ev, 1, NULL, 0, NULL);
+}
+
+void __tinyswift_io_register_write(int64_t fd, void* frame,
+                                    void* (*resume_fn)(void*)) {
+  ensure_kqueue();
+  AsyncTask* task = (AsyncTask*)malloc(sizeof(AsyncTask));
+  task->frame = frame;
+  task->resume_fn = resume_fn;
+  struct kevent ev;
+  EV_SET(&ev, (uintptr_t)fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, task);
+  kevent(kq_fd, &ev, 1, NULL, 0, NULL);
+}
+
+#else
+// Linux: epoll-based I/O polling.
+#include <sys/epoll.h>
+#include <unistd.h>
+
+static int epoll_fd = -1;
+
+static void ensure_epoll(void) {
+  if (epoll_fd < 0) {
+    epoll_fd = epoll_create1(0);
+  }
+}
+
+void __tinyswift_io_poll(int64_t timeout_ms) {
+  ensure_epoll();
+  struct epoll_event events[16];
+  int n = epoll_wait(epoll_fd, events, 16, (int)timeout_ms);
+  for (int i = 0; i < n; ++i) {
+    AsyncTask* task = (AsyncTask*)events[i].data.ptr;
+    if (task && task->resume_fn) {
+      task->resume_fn(task->frame);
+    }
+  }
+}
+
+void __tinyswift_io_register_read(int64_t fd, void* frame,
+                                   void* (*resume_fn)(void*)) {
+  ensure_epoll();
+  AsyncTask* task = (AsyncTask*)malloc(sizeof(AsyncTask));
+  task->frame = frame;
+  task->resume_fn = resume_fn;
+  struct epoll_event ev;
+  ev.events = EPOLLIN | EPOLLONESHOT;
+  ev.data.ptr = task;
+  epoll_ctl(epoll_fd, EPOLL_CTL_ADD, (int)fd, &ev);
+}
+
+void __tinyswift_io_register_write(int64_t fd, void* frame,
+                                    void* (*resume_fn)(void*)) {
+  ensure_epoll();
+  AsyncTask* task = (AsyncTask*)malloc(sizeof(AsyncTask));
+  task->frame = frame;
+  task->resume_fn = resume_fn;
+  struct epoll_event ev;
+  ev.events = EPOLLOUT | EPOLLONESHOT;
+  ev.data.ptr = task;
+  epoll_ctl(epoll_fd, EPOLL_CTL_ADD, (int)fd, &ev);
+}
+
+#endif
+
+// ── Timer (M102) ────────────────────────────────────────────────────────────
+
+void __tinyswift_timer_create(int64_t ms, void* frame,
+                               void* (*resume_fn)(void*)) {
+  // Simple implementation: sleep in a new thread-like way.
+  // For v1 (single-threaded), just do a blocking usleep then resume.
+  usleep((useconds_t)(ms * 1000));
+  if (resume_fn) {
+    resume_fn(frame);
+  }
+}

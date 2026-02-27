@@ -8,6 +8,7 @@
 
 #include "common/vlog.h"
 #include "toolchain/check/context.h"
+#include "toolchain/check/coroutine_transform.h"
 #include "toolchain/check/handle_function.h"
 #include "toolchain/check/handle_stmt.h"
 #include "toolchain/check/handle_type_decl.h"
@@ -227,6 +228,11 @@ auto CheckParseTrees(
       HandleStatement(context, root);
     }
   }
+
+  // --- Pass 3: Coroutine transform (M98-M102) ---
+  // Rewrites generator and async functions into state machines.
+  // After this pass, all Yield/AwaitExpr instructions are eliminated.
+  TransformCoroutines(context);
 
   // Pop the top-level block and set it as the file's top inst block.
   auto top_block_id = context.PopInstBlock();

@@ -544,6 +544,151 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
     // Evaluate the array expression.
     auto array_ref_id = HandleExpr(context, sequence_node);
 
+    // M99: Generator<T> for-in → while-loop with next() calls.
+    // Desugars to: while let <binding> = gen.next() { body }
+    if (array_ref_id.has_value()) {
+      auto gen_expr_type = context.insts().Get(array_ref_id).type_id();
+      auto gen_type_inst_id = context.types().GetTypeInstId(gen_expr_type);
+      if (gen_type_inst_id.has_value()) {
+        auto gen_type_inst = context.insts().Get(gen_type_inst_id);
+        if (gen_type_inst.Is<SemIR::GeneratorType>()) {
+          auto gen_ty = gen_type_inst.As<SemIR::GeneratorType>();
+          auto elem_type_id =
+              context.types().GetTypeIdForTypeInstId(gen_ty.element_type_id);
+          auto int_type = context.GetBuiltinType("Int");
+          auto bool_type = context.GetBuiltinType("Bool");
+
+          // Get loop variable name from pattern.
+          SemIR::NameId loop_var_name_id = SemIR::NameId::None;
+          if (pattern_node.has_value()) {
+            auto text =
+                context.token_text(context.node_token(pattern_node));
+            auto ident_id = context.identifiers().Add(text);
+            loop_var_name_id = SemIR::NameId::ForIdentifier(ident_id);
+          }
+
+          // Build Optional<T> type.
+          auto opt_type_inst = context.AddInstInNoBlock(
+              SemIR::LocIdAndInst::NoLoc(SemIR::OptionalType{
+                  .type_id = SemIR::TypeType::TypeId,
+                  .inner_type_id = gen_ty.element_type_id}));
+          auto opt_type = SemIR::TypeId::ForTypeConstant(
+              SemIR::ConstantId::ForConcreteConstant(opt_type_inst));
+
+          // Create blocks.
+          auto cond_block_id = context.inst_blocks().AddPlaceholder();
+          auto body_block_id = context.inst_blocks().AddPlaceholder();
+          auto merge_block_id = context.inst_blocks().AddPlaceholder();
+
+          // Entry → cond_block.
+          context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::Branch{.target_id = SemIR::LabelId(cond_block_id)}));
+
+          // Cond block: call next() on generator.
+          SemIR::InstId opt_result_id = SemIR::InstId::None;
+          {
+            context.PushInstBlock();
+
+            // TupleAccess(gen, 0) → frame_ptr
+            auto frame_id = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::TupleAccess{.type_id = int_type,
+                                   .tuple_id = array_ref_id,
+                                   .index = SemIR::ElementIndex(0)}));
+            // TupleAccess(gen, 1) → resume_fn_ptr
+            auto resume_fn_id = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::TupleAccess{.type_id = int_type,
+                                   .tuple_id = array_ref_id,
+                                   .index = SemIR::ElementIndex(1)}));
+
+            // Call resume_fn(frame_ptr) → Optional<T>
+            auto args_block = context.inst_blocks().AddPlaceholder();
+            context.inst_blocks().ReplacePlaceholder(
+                args_block,
+                llvm::ArrayRef<SemIR::InstId>({frame_id}));
+            opt_result_id = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::Call{.type_id = opt_type,
+                            .callee_id = resume_fn_id,
+                            .args_id = args_block}));
+
+            // Check has_value: TupleAccess(opt_result, 0) → Bool
+            auto has_value = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::TupleAccess{.type_id = bool_type,
+                                   .tuple_id = opt_result_id,
+                                   .index = SemIR::ElementIndex(0)}));
+
+            context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::BranchIf{
+                    .target_id = SemIR::LabelId(body_block_id),
+                    .cond_id = has_value}));
+            context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::Branch{
+                    .target_id = SemIR::LabelId(merge_block_id)}));
+
+            auto tmp = context.PopInstBlock();
+            auto cond_insts = context.inst_blocks().Get(tmp);
+            context.inst_blocks().ReplacePlaceholder(
+                cond_block_id,
+                llvm::ArrayRef<SemIR::InstId>(cond_insts));
+            context.AddBodyBlock(cond_block_id);
+          }
+
+          // Body block: extract payload, bind loop var, execute body.
+          {
+            context.PushInstBlockWithId(body_block_id);
+            context.AddBodyBlock(body_block_id);
+            context.PushLoopContext(merge_block_id, cond_block_id);
+
+            // Extract payload: TupleAccess(opt_result, 1) → T
+            auto payload_id = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::TupleAccess{
+                    .type_id = elem_type_id,
+                    .tuple_id = opt_result_id,
+                    .index = SemIR::ElementIndex(1)}));
+
+            // Bind loop variable.
+            if (loop_var_name_id.has_value()) {
+              auto entity_name_id = context.entity_names().Add(
+                  {.name_id = loop_var_name_id,
+                   .parent_scope_id = context.CurrentScopeId()});
+              auto binding_id = context.AddInst(SemIR::LocIdAndInst(
+                  SemIR::LocId(pattern_node.has_value() ? pattern_node
+                                                        : node_id),
+                  SemIR::ValueBinding{
+                      .type_id = elem_type_id,
+                      .entity_name_id = entity_name_id,
+                      .value_id = payload_id}));
+              context.AddNameToScope(loop_var_name_id, binding_id);
+            }
+
+            // Execute body.
+            if (body_node.has_value()) HandleCodeBlock(context, body_node);
+            context.PopLoopContext();
+
+            // Branch back to cond.
+            if (!context.IsCurrentBlockTerminated()) {
+              context.AddInst(SemIR::LocIdAndInst(
+                  SemIR::LocId(node_id),
+                  SemIR::Branch{
+                      .target_id = SemIR::LabelId(cond_block_id)}));
+            }
+            context.PopInstBlock();
+          }
+
+          context.SwitchInstBlock(merge_block_id);
+          context.AddBodyBlock(merge_block_id);
+          return;
+        }
+      }
+    }
+
     // Look through NameRef → VarStorage/ValueBinding → ArrayLiteralInit
     // to find the element count and type.
     SemIR::InstId ali_id = SemIR::InstId::None;
@@ -1377,6 +1522,34 @@ auto HandleDeferStatement(Context& context, Parse::NodeId node_id) -> void {
   }
 }
 
+// M98: Handles a `yield expr` statement in a generator function.
+auto HandleYieldStatement(Context& context, Parse::NodeId node_id) -> void {
+  auto children = context.children_source_order(node_id);
+
+  SemIR::InstId value_id = SemIR::InstId::None;
+  for (auto child : children) {
+    auto child_kind = context.node_kind(child);
+    if (child_kind == Parse::NodeKind::YieldStatementStart) {
+      continue;
+    }
+    if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+      value_id = HandleExpr(context, child);
+    }
+  }
+
+  if (!value_id.has_value()) {
+    return;
+  }
+
+  // Determine the yield element type from the value expression.
+  auto value_type = context.insts().Get(value_id).type_id();
+
+  // Emit a Yield instruction. The coroutine transform (Pass 3) will
+  // process these to build the state machine.
+  context.AddInst(SemIR::LocIdAndInst::NoLoc(
+      SemIR::Yield{.type_id = value_type, .value_id = value_id}));
+}
+
 // Handles a break statement by branching to the enclosing loop's merge block.
 auto HandleBreakStatement(Context& context, Parse::NodeId node_id) -> void {
   auto* loop = context.CurrentLoop();
@@ -1692,6 +1865,12 @@ auto HandleStatement(Context& context, Parse::NodeId node_id) -> void {
   }
   if (kind == Parse::NodeKind::DeferStatement) {
     HandleDeferStatement(context, node_id);
+    return;
+  }
+
+  // M98: yield statement.
+  if (kind == Parse::NodeKind::YieldStatement) {
+    HandleYieldStatement(context, node_id);
     return;
   }
 

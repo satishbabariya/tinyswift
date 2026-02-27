@@ -125,6 +125,19 @@ static auto ParsePrimaryType(Context& context) -> void {
       kind == Lex::TokenKind::AnyKeyword ||
       kind == Lex::TokenKind::CapitalSelfKeyword) {
     auto name = context.Consume();
+
+    // M98: Special handling for `Generator<T>` type.
+    auto name_text = context.tokens().GetTokenText(name);
+    if (name_text == "Generator" &&
+        (context.Peek() == Lex::TokenKind::OperatorBinaryUnspaced ||
+         context.Peek() == Lex::TokenKind::OperatorPrefix) &&
+        context.GetTokenText() == "<") {
+      // Parse `Generator<T>` — consume `<`, parse inner type, consume `>`.
+      ParseGenericArguments(context);
+      context.AddNode(NodeKind::GeneratorType, name);
+      return;
+    }
+
     context.AddLeafNode(NodeKind::IdentifierType, name);
 
     // Handle generic arguments: `Type<T, U>`

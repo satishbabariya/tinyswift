@@ -231,6 +231,10 @@ TINYSWIFT_PARSE_NODE_KIND(DoCatchClause)
 TINYSWIFT_PARSE_NODE_KIND(DeferStatementStart)
 TINYSWIFT_PARSE_NODE_KIND(DeferStatement)
 
+// M98: Yield statement (generators)
+TINYSWIFT_PARSE_NODE_KIND(YieldStatementStart)
+TINYSWIFT_PARSE_NODE_KIND(YieldStatement)
+
 // ============================================================================
 // Condition lists (for if/guard/while)
 // ============================================================================
@@ -318,6 +322,9 @@ TINYSWIFT_PARSE_NODE_KIND(ProtocolCompositionType)
 TINYSWIFT_PARSE_NODE_KIND(MemberType)
 TINYSWIFT_PARSE_NODE_KIND(MetatypeType)
 
+// M98: Generator type annotation `Generator<T>`
+TINYSWIFT_PARSE_NODE_KIND(GeneratorType)
+
 // ============================================================================
 // Generics
 // ============================================================================
@@ -354,6 +361,12 @@ TINYSWIFT_PARSE_NODE_KIND(Attribute)
 TINYSWIFT_PARSE_NODE_KIND(AccessModifier)
 TINYSWIFT_PARSE_NODE_KIND(StaticModifier)
 TINYSWIFT_PARSE_NODE_KIND(MutatingModifier)
+
+// M100: Async modifier on function declarations
+TINYSWIFT_PARSE_NODE_KIND(AsyncModifier)
+
+// M100: Await expression `await <expr>`
+TINYSWIFT_PARSE_NODE_KIND(AwaitExpr)
 
 // ============================================================================
 // Conditional compilation

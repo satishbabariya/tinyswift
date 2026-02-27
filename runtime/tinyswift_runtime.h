@@ -130,6 +130,26 @@ char*   __tinyswift_tcp_read(int64_t fd, int64_t maxlen);
 int64_t __tinyswift_tcp_write(int64_t fd, const char* data);
 int64_t __tinyswift_tcp_close(int64_t fd);
 
+// ── Async Runtime (M100-M102) ──────────────────────────────────────────────
+// blockOn: synchronously runs an async function to completion.
+// In M100, async functions run synchronously, so this is a simple wrapper.
+int64_t __tinyswift_block_on(void* frame, void* (*resume_fn)(void*));
+
+// Event loop task submission (M101-M102).
+void    __tinyswift_async_submit(void* frame, void* (*resume_fn)(void*));
+void    __tinyswift_run_event_loop(void);
+
+// I/O polling and async registration (M102).
+void    __tinyswift_io_poll(int64_t timeout_ms);
+void    __tinyswift_io_register_read(int64_t fd, void* frame,
+                                      void* (*resume_fn)(void*));
+void    __tinyswift_io_register_write(int64_t fd, void* frame,
+                                       void* (*resume_fn)(void*));
+
+// Timer support (M102).
+void    __tinyswift_timer_create(int64_t ms, void* frame,
+                                  void* (*resume_fn)(void*));
+
 // ── Prelude support (M88) ──────────────────────────────────────────────────
 int64_t __tinyswift_int_abs(int64_t x);
 int64_t __tinyswift_int_clamp(int64_t x, int64_t lo, int64_t hi);

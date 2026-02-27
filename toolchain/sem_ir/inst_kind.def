@@ -261,4 +261,12 @@ TINYSWIFT_SEM_IR_INST_KIND(AllocClass)            // heap-allocate class + init 
 TINYSWIFT_SEM_IR_INST_KIND(Retain)                // increment refcount
 TINYSWIFT_SEM_IR_INST_KIND(Release)               // decrement refcount, free if zero
 
+// Coroutines: Generators (M98-M99)
+TINYSWIFT_SEM_IR_INST_KIND(Yield)                 // yield value from generator
+TINYSWIFT_SEM_IR_INST_KIND(GeneratorType)         // Generator<T> type
+
+// Coroutines: Async/Await (M100-M102)
+TINYSWIFT_SEM_IR_INST_KIND(AwaitExpr)             // await async_call
+TINYSWIFT_SEM_IR_INST_KIND(AsyncFuncType)         // async function type marker
+
 #undef TINYSWIFT_SEM_IR_INST_KIND

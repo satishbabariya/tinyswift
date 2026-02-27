@@ -142,6 +142,14 @@ static auto ParseExprImpl(Context& context, int min_precedence) -> void {
     return;
   }
 
+  // M100: `await <expr>` prefix expression.
+  if (kind == Lex::TokenKind::AwaitKeyword) {
+    auto await_token = context.Consume();
+    ParseExprImpl(context, Prec_Prefix);
+    context.AddNode(NodeKind::AwaitExpr, await_token);
+    return;
+  }
+
   // M40: Address-of expression `&varName` (prefix `&`, not binary bitwise-AND).
   if (kind == Lex::TokenKind::Amp) {
     auto amp_token = context.Consume();

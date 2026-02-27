@@ -533,6 +533,33 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
     // call-site lookup.
   }
 
+  // M98: Detect Generator<T> return type → mark as generator.
+  bool is_generator = false;
+  SemIR::TypeId generator_element_type_id = SemIR::TypeId::None;
+  if (sig.return_type_id.has_value() && sig.return_type_id.is_concrete()) {
+    auto rt_inst_id = context.types().GetTypeInstId(sig.return_type_id);
+    if (rt_inst_id.has_value()) {
+      auto rt_inst = context.insts().Get(rt_inst_id);
+      if (auto gen_type = rt_inst.TryAs<SemIR::GeneratorType>()) {
+        is_generator = true;
+        generator_element_type_id =
+            context.types().GetTypeIdForTypeInstId(gen_type->element_type_id);
+      }
+    }
+  }
+
+  // M100: Detect `async` modifier in function signature.
+  bool is_async = false;
+  {
+    auto sig_children = context.children_source_order(sig_node_id);
+    for (auto c : sig_children) {
+      if (context.node_kind(c) == Parse::NodeKind::AsyncModifier) {
+        is_async = true;
+        break;
+      }
+    }
+  }
+
   // M74: Consume pending access level.
   auto access_level = context.TakePendingAccessLevel();
 
@@ -547,6 +574,9 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
   fn.is_static = is_static;
   fn.is_mutating = is_mutating;
   fn.is_throwing = sig.is_throwing;
+  fn.is_generator = is_generator;
+  fn.generator_element_type_id = generator_element_type_id;
+  fn.is_async = is_async;
   fn.param_default_nodes = sig.param_defaults;
   fn.access_level = access_level;
   fn.is_extern_c = attr_info.is_extern_c;

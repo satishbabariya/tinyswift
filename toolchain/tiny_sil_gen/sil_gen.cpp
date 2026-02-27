@@ -102,7 +102,23 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
       kind == SemIR::InstKind::EnumCaseWithPayload ||
       kind == SemIR::InstKind::TupleType ||
       kind == SemIR::InstKind::OptionalType ||
-      kind == SemIR::InstKind::StructField) {
+      kind == SemIR::InstKind::StructField ||
+      kind == SemIR::InstKind::GeneratorType ||
+      kind == SemIR::InstKind::AsyncFuncType) {
+    return;
+  }
+
+  // M98: Yield instructions should be eliminated by the coroutine transform
+  // (Pass 3). If one survives, skip it.
+  if (kind == SemIR::InstKind::Yield) {
+    return;
+  }
+
+  // M100: AwaitExpr is a pass-through in synchronous mode.
+  // Map it to the same value as its callee_id.
+  if (auto await_expr = inst.TryAs<SemIR::AwaitExpr>()) {
+    auto callee_val = ctx.GetValue(await_expr->callee_id);
+    ctx.SetValue(inst_id, callee_val);
     return;
   }
 

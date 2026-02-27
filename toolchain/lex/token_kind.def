@@ -189,6 +189,7 @@ TINYSWIFT_STMT_KEYWORD_TOKEN(DefaultKeyword,      "default")
 TINYSWIFT_STMT_KEYWORD_TOKEN(WhereKeyword,        "where")
 TINYSWIFT_STMT_KEYWORD_TOKEN(CatchKeyword,        "catch")
 TINYSWIFT_STMT_KEYWORD_TOKEN(ThrowKeyword,        "throw")
+TINYSWIFT_STMT_KEYWORD_TOKEN(YieldKeyword,        "yield")
 
 // clang-format on
 #undef TINYSWIFT_STMT_KEYWORD_TOKEN
@@ -214,6 +215,8 @@ TINYSWIFT_EXPR_KEYWORD_TOKEN(CapitalSelfKeyword,  "Self")
 TINYSWIFT_EXPR_KEYWORD_TOKEN(TrueKeyword,         "true")
 TINYSWIFT_EXPR_KEYWORD_TOKEN(TryKeyword,          "try")
 TINYSWIFT_EXPR_KEYWORD_TOKEN(ThrowsKeyword,       "throws")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(AsyncKeyword,        "async")
+TINYSWIFT_EXPR_KEYWORD_TOKEN(AwaitKeyword,        "await")
 
 // clang-format on
 #undef TINYSWIFT_EXPR_KEYWORD_TOKEN
