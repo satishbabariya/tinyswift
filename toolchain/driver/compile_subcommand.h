@@ -70,6 +70,13 @@ struct CompileOptions {
 
   // M107: Conditional compilation defines (from --define flags).
   llvm::SmallVector<llvm::StringRef> defines;
+
+  // M115: Linking options.
+  bool emit_object = false;       // --emit-object: stop after .o, don't link
+  bool release = false;           // --release: O3 + Thin LTO + strip
+  bool lto_thin = false;          // --lto-thin
+  bool emit_bitcode = false;      // --emit-bitcode
+  llvm::SmallVector<llvm::StringRef> link_libs;  // --link-lib=<name> (repeatable)
 };
 
 // Implements the compile subcommand of the driver.

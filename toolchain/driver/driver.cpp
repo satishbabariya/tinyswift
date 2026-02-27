@@ -9,9 +9,12 @@
 #include "common/command_line.h"
 #include "common/pretty_stack_trace_function.h"
 #include "common/version.h"
+#include "toolchain/driver/build_subcommand.h"
 #include "toolchain/driver/compile_subcommand.h"
 #include "toolchain/driver/format_subcommand.h"
 #include "toolchain/driver/language_server_subcommand.h"
+#include "toolchain/driver/run_subcommand.h"
+#include "toolchain/driver/test_subcommand.h"
 
 namespace TinySwift {
 
@@ -25,9 +28,12 @@ struct Options {
   bool fuzzing = false;
   bool include_diagnostic_kind = false;
 
+  BuildSubcommand build;
   CompileSubcommand compile;
   FormatSubcommand format;
   LanguageServerSubcommand language_server;
+  RunSubcommand run;
+  TestSubcommand test;
 
   // On success, this is set to the subcommand to run.
   DriverSubcommand* selected_subcommand = nullptr;
@@ -70,9 +76,12 @@ When printing diagnostics, include the diagnostic kind as part of output.
       },
       [&](auto& arg_b) { arg_b.Set(&include_diagnostic_kind); });
 
+  build.AddTo(b, &selected_subcommand);
   compile.AddTo(b, &selected_subcommand);
   format.AddTo(b, &selected_subcommand);
   language_server.AddTo(b, &selected_subcommand);
+  run.AddTo(b, &selected_subcommand);
+  test.AddTo(b, &selected_subcommand);
 
   b.RequiresSubcommand();
 }

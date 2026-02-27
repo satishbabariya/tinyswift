@@ -42,7 +42,27 @@ TINYSWIFT_DIAGNOSTIC_KIND(ToolFuzzingDisallowed)
 TINYSWIFT_DIAGNOSTIC_KIND(CppInteropDriverWarning)
 TINYSWIFT_DIAGNOSTIC_KIND(CppInteropDriverError)
 
-// TODO: Add your language's driver diagnostics here.
+// M115: Linking diagnostics.
+TINYSWIFT_DIAGNOSTIC_KIND(CompileTempFileError)
+TINYSWIFT_DIAGNOSTIC_KIND(LinkFailed)
+TINYSWIFT_DIAGNOSTIC_KIND(ArFailed)
+
+// M116: Build/Run diagnostics.
+TINYSWIFT_DIAGNOSTIC_KIND(BuildNoSources)
+TINYSWIFT_DIAGNOSTIC_KIND(BuildDirError)
+TINYSWIFT_DIAGNOSTIC_KIND(BuildCompileFailed)
+TINYSWIFT_DIAGNOSTIC_KIND(BuildCircularDep)
+TINYSWIFT_DIAGNOSTIC_KIND(BuildManifestError)
+TINYSWIFT_DIAGNOSTIC_KIND(RunCwdError)
+TINYSWIFT_DIAGNOSTIC_KIND(RunExeNotFound)
+
+// M117: Test diagnostics.
+TINYSWIFT_DIAGNOSTIC_KIND(TestCwdError)
+TINYSWIFT_DIAGNOSTIC_KIND(TestNoFiles)
+TINYSWIFT_DIAGNOSTIC_KIND(TestNoFunctions)
+TINYSWIFT_DIAGNOSTIC_KIND(TestBuildDirError)
+TINYSWIFT_DIAGNOSTIC_KIND(TestHarnessError)
+TINYSWIFT_DIAGNOSTIC_KIND(TestCompileFailed)
 
 // ============================================================================
 // SourceBuffer diagnostics

@@ -33,6 +33,9 @@ class CodeGen {
   // Note this requires a `pwrite` stream to allow patching the output.
   auto EmitAssembly(llvm::raw_pwrite_stream& out) -> bool;
 
+  // Writes LLVM bitcode to the output stream (for LTO).
+  auto EmitBitcode(llvm::raw_ostream& out) -> bool;
+
  private:
   // Using the llvm pass emits either assembly or object code to dest.
   // Returns false in case of failure, and any information about the failure is

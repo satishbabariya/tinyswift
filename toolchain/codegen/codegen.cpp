@@ -9,6 +9,7 @@
 #include <string>
 
 #include "common/check.h"
+#include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Target/TargetOptions.h"
@@ -23,6 +24,12 @@ auto CodeGen::EmitAssembly(llvm::raw_pwrite_stream& out) -> bool {
 
 auto CodeGen::EmitObject(llvm::raw_pwrite_stream& out) -> bool {
   return EmitCode(out, llvm::CodeGenFileType::ObjectFile);
+}
+
+auto CodeGen::EmitBitcode(llvm::raw_ostream& out) -> bool {
+  module_->setDataLayout(target_machine_->createDataLayout());
+  llvm::WriteBitcodeToFile(*module_, out);
+  return true;
 }
 
 auto CodeGen::EmitCode(llvm::raw_pwrite_stream& out,

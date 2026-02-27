@@ -26,6 +26,7 @@
 #include "toolchain/base/timings.h"
 #include "toolchain/check/check.h"
 #include "toolchain/codegen/codegen.h"
+#include "toolchain/driver/link.h"
 #include "toolchain/diagnostics/emitter.h"
 #include "toolchain/diagnostics/sorting_consumer.h"
 #include "toolchain/lex/lex.h"
@@ -264,6 +265,39 @@ Selects the amount of optimization to perform.
         arg_b.Default(true);
         arg_b.Set(&run_llvm_verifier);
       });
+
+  // M115: Linking flags.
+  b.AddFlag(
+      {
+          .name = "emit-object",
+          .help = "Emit an object file (.o) without linking.",
+      },
+      [&](auto& arg_b) { arg_b.Set(&emit_object); });
+  b.AddFlag(
+      {
+          .name = "release",
+          .help = "Build in release mode (O3, Thin LTO, strip).",
+      },
+      [&](auto& arg_b) { arg_b.Set(&release); });
+  b.AddFlag(
+      {
+          .name = "lto-thin",
+          .help = "Enable Thin LTO.",
+      },
+      [&](auto& arg_b) { arg_b.Set(&lto_thin); });
+  b.AddFlag(
+      {
+          .name = "emit-bitcode",
+          .help = "Emit LLVM bitcode (.bc) instead of object code.",
+      },
+      [&](auto& arg_b) { arg_b.Set(&emit_bitcode); });
+  b.AddStringOption(
+      {
+          .name = "link-lib",
+          .value_name = "NAME",
+          .help = "Link against library NAME (can be repeated).",
+      },
+      [&](auto& arg_b) { arg_b.Append(&link_libs); });
 }
 
 static constexpr CommandLine::CommandInfo SubcommandInfo = {
@@ -607,6 +641,9 @@ auto CompilationUnit::MakeTargetMachine() -> void {
   constexpr llvm::StringLiteral Features = "";
 
   llvm::TargetOptions target_opts;
+  // M115: Enable per-function/per-data sections for dead code stripping.
+  target_opts.FunctionSections = true;
+  target_opts.DataSections = true;
   target_machine_.reset(target_->createTargetMachine(
       target_triple, CPU, Features, target_opts, llvm::Reloc::PIC_));
 }
@@ -728,7 +765,9 @@ auto CompilationUnit::RunCodeGenHelper() -> bool {
   }
 
   if (options_->output_filename == "-") {
-    if (options_->force_obj_output) {
+    if (options_->emit_bitcode) {
+      codegen.EmitBitcode(*driver_env_->output_stream);
+    } else if (options_->force_obj_output) {
       if (!codegen.EmitObject(*driver_env_->output_stream)) {
         return false;
       }
@@ -749,31 +788,100 @@ auto CompilationUnit::RunCodeGenHelper() -> bool {
         return false;
       }
       output_filename = input_filename_;
-      llvm::sys::path::replace_extension(output_filename,
-                                         options_->asm_output ? ".s" : ".o");
+      if (options_->emit_bitcode) {
+        llvm::sys::path::replace_extension(output_filename, ".bc");
+      } else if (options_->asm_output) {
+        llvm::sys::path::replace_extension(output_filename, ".s");
+      } else if (options_->emit_object) {
+        llvm::sys::path::replace_extension(output_filename, ".o");
+      } else {
+        // Default: executable (no extension on Unix, remove .swift).
+        llvm::sys::path::replace_extension(output_filename, "");
+      }
     }
     TINYSWIFT_VLOG("Writing output to: {0}\n", output_filename);
 
-    std::error_code ec;
-    llvm::raw_fd_ostream output_file(output_filename, ec,
+    // M115: Emit bitcode directly if requested.
+    if (options_->emit_bitcode) {
+      std::error_code ec;
+      llvm::raw_fd_ostream output_file(output_filename, ec,
+                                       llvm::sys::fs::OF_None);
+      if (ec) {
+        TINYSWIFT_DIAGNOSTIC(CompileOutputFileOpenError, Error,
+                          "could not open output file `{0}`: {1}", std::string,
+                          std::string);
+        driver_env_->emitter.Emit(CompileOutputFileOpenError,
+                                  output_filename.str().str(), ec.message());
+        return false;
+      }
+      return codegen.EmitBitcode(output_file);
+    }
+
+    // M115: If --emit-object or --asm-output, produce .o/.s without linking.
+    if (options_->emit_object || options_->asm_output) {
+      std::error_code ec;
+      llvm::raw_fd_ostream output_file(output_filename, ec,
+                                       llvm::sys::fs::OF_None);
+      if (ec) {
+        TINYSWIFT_DIAGNOSTIC(CompileOutputFileOpenError, Error,
+                          "could not open output file `{0}`: {1}", std::string,
+                          std::string);
+        driver_env_->emitter.Emit(CompileOutputFileOpenError,
+                                  output_filename.str().str(), ec.message());
+        return false;
+      }
+      if (options_->asm_output) {
+        return codegen.EmitAssembly(output_file);
+      }
+      return codegen.EmitObject(output_file);
+    }
+
+    // M115: Default — emit .o to a temp file, then link to executable.
+    llvm::SmallString<256> temp_obj_path;
+    {
+      std::error_code ec =
+          llvm::sys::fs::createTemporaryFile("tinyswift", "o", temp_obj_path);
+      if (ec) {
+        TINYSWIFT_DIAGNOSTIC(CompileTempFileError, Error,
+                          "could not create temporary file: {0}", std::string);
+        driver_env_->emitter.Emit(CompileTempFileError, ec.message());
+        return false;
+      }
+    }
+    // Clean up the temp file on exit.
+    auto cleanup = llvm::scope_exit(
+        [&] { llvm::sys::fs::remove(temp_obj_path); });
+
+    {
+      std::error_code ec;
+      llvm::raw_fd_ostream temp_file(temp_obj_path, ec,
                                      llvm::sys::fs::OF_None);
-    if (ec) {
-      TINYSWIFT_DIAGNOSTIC(CompileOutputFileOpenError, Error,
-                        "could not open output file `{0}`: {1}", std::string,
-                        std::string);
-      driver_env_->emitter.Emit(CompileOutputFileOpenError,
-                                output_filename.str().str(), ec.message());
-      return false;
-    }
-    if (options_->asm_output) {
-      if (!codegen.EmitAssembly(output_file)) {
+      if (ec) {
+        TINYSWIFT_DIAGNOSTIC(CompileOutputFileOpenError, Error,
+                          "could not open output file `{0}`: {1}", std::string,
+                          std::string);
+        driver_env_->emitter.Emit(CompileOutputFileOpenError,
+                                  temp_obj_path.str().str(), ec.message());
         return false;
       }
-    } else {
-      if (!codegen.EmitObject(output_file)) {
+      if (!codegen.EmitObject(temp_file)) {
         return false;
       }
     }
+
+    // Link the temp .o into an executable.
+    LinkOptions link_opts;
+    link_opts.output_path = output_filename;
+    link_opts.object_files.push_back(temp_obj_path.str().str());
+    for (const auto& lib : options_->link_libs) {
+      link_opts.link_libs.push_back(lib.str());
+    }
+    link_opts.dead_strip = true;
+    link_opts.strip = options_->release;
+    link_opts.lto_thin = options_->release || options_->lto_thin;
+    link_opts.target_triple = options_->codegen_options.target;
+
+    return InvokeLinker(*driver_env_->installation, link_opts, *consumer_);
   }
   return true;
 }
@@ -828,6 +936,12 @@ static auto FindCoreDirectory() -> std::string {
 auto CompileSubcommand::Run(DriverEnv& driver_env) -> DriverResult {
   if (!ValidateOptions(driver_env.emitter)) {
     return {.success = false};
+  }
+
+  // M115: Apply --release mode defaults.
+  if (options_.release) {
+    options_.opt_level = Lower::OptimizationLevel::Speed;
+    options_.lto_thin = true;
   }
 
   // Validate the target.

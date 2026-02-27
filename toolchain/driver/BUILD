@@ -34,6 +34,8 @@ cc_library(
 cc_library(
     name = "driver",
     srcs = [
+        "build_subcommand.cpp",
+        "build_subcommand.h",
         "compile_subcommand.cpp",
         "compile_subcommand.h",
         "driver.cpp",
@@ -43,6 +45,14 @@ cc_library(
         "format_subcommand.h",
         "language_server_subcommand.cpp",
         "language_server_subcommand.h",
+        "link.cpp",
+        "link.h",
+        "manifest.cpp",
+        "manifest.h",
+        "run_subcommand.cpp",
+        "run_subcommand.h",
+        "test_subcommand.cpp",
+        "test_subcommand.h",
     ],
     hdrs = [
         "driver.h",
@@ -66,6 +76,7 @@ cc_library(
         "//toolchain/check",
         "//toolchain/codegen",
         "//toolchain/diagnostics:emitter",
+        "//toolchain/diagnostics:file_diagnostics",
         "//toolchain/diagnostics:sorting_consumer",
         "//toolchain/format",
         "//toolchain/language_server",

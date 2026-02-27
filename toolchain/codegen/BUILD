@@ -19,6 +19,7 @@ cc_library(
         "//common:check",
         "//toolchain/diagnostics:emitter",
         "//toolchain/diagnostics:file_diagnostics",
+        "@llvm-project//llvm:BitWriter",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:MC",
         "@llvm-project//llvm:Support",

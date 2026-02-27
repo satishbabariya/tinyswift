@@ -161,6 +161,11 @@ int64_t __tinyswift_string_compare(const char* a, const char* b);
 int64_t __tinyswift_bool_hash(int64_t x);
 void    __tinyswift_abort(const char* message);
 
+// ── Test Runner Helper (M117) ─────────────────────────────────────────────
+// Runs a test function, catching assertion failures and crashes.
+// Returns 1 on success, 0 on failure.
+int     __tinyswift_run_test(void (*test_fn)(void));
+
 #ifdef __cplusplus
 }
 #endif

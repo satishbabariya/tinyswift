@@ -8,4 +8,8 @@ cc_library(
     name = "tinyswift_runtime",
     srcs = ["tinyswift_runtime.c"],
     hdrs = ["tinyswift_runtime.h"],
+    copts = [
+        "-ffunction-sections",
+        "-fdata-sections",
+    ],
 )

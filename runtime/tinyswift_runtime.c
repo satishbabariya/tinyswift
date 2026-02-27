@@ -1314,6 +1314,55 @@ void __tinyswift_io_register_write(int64_t fd, void* frame,
 
 #endif
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Test Runner Helper (M117)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#include <setjmp.h>
+#include <signal.h>
+
+static jmp_buf __tinyswift_test_jmp;
+static volatile sig_atomic_t __tinyswift_test_in_test = 0;
+
+static void __tinyswift_test_signal_handler(int sig) {
+  (void)sig;
+  if (__tinyswift_test_in_test) {
+    longjmp(__tinyswift_test_jmp, 1);
+  }
+}
+
+// Runs a test function, catching assertion failures and crashes.
+// Returns 1 on success, 0 on failure.
+int __tinyswift_run_test(void (*test_fn)(void)) {
+  // Install signal handlers for common crash signals.
+  struct sigaction sa, old_abrt, old_segv;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = __tinyswift_test_signal_handler;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+
+  sigaction(SIGABRT, &sa, &old_abrt);
+  sigaction(SIGSEGV, &sa, &old_segv);
+
+  int result = 0;
+  __tinyswift_test_in_test = 1;
+
+  if (setjmp(__tinyswift_test_jmp) == 0) {
+    test_fn();
+    result = 1;  // Success — no crash or assertion failure.
+  } else {
+    result = 0;  // Failed — caught a signal.
+  }
+
+  __tinyswift_test_in_test = 0;
+
+  // Restore original signal handlers.
+  sigaction(SIGABRT, &old_abrt, NULL);
+  sigaction(SIGSEGV, &old_segv, NULL);
+
+  return result;
+}
+
 // ── Timer (M102) ────────────────────────────────────────────────────────────
 
 void __tinyswift_timer_create(int64_t ms, void* frame,
