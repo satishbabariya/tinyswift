@@ -17,6 +17,7 @@ cc_library(
         "return_analysis.cpp",
     ],
     hdrs = [
+        "arc_elim.h",
         "pass_manager.h",
     ],
     deps = [

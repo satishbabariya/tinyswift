@@ -355,6 +355,91 @@ auto Context::GetClassDeinitId(SemIR::TypeId type_id) -> SemIR::InstId {
   return SemIR::InstId::None;
 }
 
+// Returns true if a struct type has any class-typed fields.
+auto Context::HasClassFields(SemIR::TypeId type_id) -> bool {
+  if (!type_id.has_value() || !type_id.is_concrete()) return false;
+  auto type_inst_id = types().GetTypeInstId(type_id);
+  if (!type_inst_id.has_value()) return false;
+  auto type_inst = insts().Get(type_inst_id);
+  auto st = type_inst.TryAs<SemIR::StructType>();
+  if (!st) return false;
+
+  auto& scope = name_scopes().Get(st->name_scope_id);
+  for (auto& [name_idx, inst_id] : scope.names) {
+    auto inst = insts().Get(inst_id);
+    if (auto sf = inst.TryAs<SemIR::StructField>()) {
+      if (IsReferenceType(sf->type_id)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Emit Retain for each class-typed field of a struct value.
+auto Context::EmitFieldRetains(Parse::NodeId loc,
+                               SemIR::TypeId struct_type_id,
+                               SemIR::InstId struct_value_id) -> void {
+  if (!struct_type_id.has_value() || !struct_type_id.is_concrete()) return;
+  auto type_inst_id = types().GetTypeInstId(struct_type_id);
+  if (!type_inst_id.has_value()) return;
+  auto type_inst = insts().Get(type_inst_id);
+  auto st = type_inst.TryAs<SemIR::StructType>();
+  if (!st) return;
+
+  auto& scope = name_scopes().Get(st->name_scope_id);
+  for (auto& [name_idx, inst_id] : scope.names) {
+    auto inst = insts().Get(inst_id);
+    if (auto sf = inst.TryAs<SemIR::StructField>()) {
+      if (IsReferenceType(sf->type_id)) {
+        // Emit FieldAccess to extract the field, then Retain the result.
+        auto access_id = AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(loc),
+            SemIR::FieldAccess{.type_id = sf->type_id,
+                                .base_id = struct_value_id,
+                                .index = sf->index}));
+        AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(loc),
+            SemIR::Retain{.type_id = SemIR::ErrorInst::TypeId,
+                          .value_id = access_id}));
+      }
+    }
+  }
+}
+
+// Emit Release for each class-typed field of a struct value.
+auto Context::EmitFieldReleases(Parse::NodeId loc,
+                                SemIR::TypeId struct_type_id,
+                                SemIR::InstId struct_value_id) -> void {
+  if (!struct_type_id.has_value() || !struct_type_id.is_concrete()) return;
+  auto type_inst_id = types().GetTypeInstId(struct_type_id);
+  if (!type_inst_id.has_value()) return;
+  auto type_inst = insts().Get(type_inst_id);
+  auto st = type_inst.TryAs<SemIR::StructType>();
+  if (!st) return;
+
+  auto& scope = name_scopes().Get(st->name_scope_id);
+  for (auto& [name_idx, inst_id] : scope.names) {
+    auto inst = insts().Get(inst_id);
+    if (auto sf = inst.TryAs<SemIR::StructField>()) {
+      if (IsReferenceType(sf->type_id)) {
+        // Emit FieldAccess to extract the field, then Release the result.
+        auto access_id = AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(loc),
+            SemIR::FieldAccess{.type_id = sf->type_id,
+                                .base_id = struct_value_id,
+                                .index = sf->index}));
+        auto deinit_id = GetClassDeinitId(sf->type_id);
+        AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(loc),
+            SemIR::Release{.type_id = SemIR::ErrorInst::TypeId,
+                           .value_id = access_id,
+                           .deinit_id = deinit_id}));
+      }
+    }
+  }
+}
+
 auto Context::AnalyzeCycleCapability(SemIR::InstId class_type_id,
                                      SemIR::NameScopeId scope_id) -> void {
   // M97: Check if any stored field in this class has a class type.

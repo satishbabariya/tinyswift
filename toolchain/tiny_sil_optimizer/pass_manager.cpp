@@ -4,6 +4,11 @@
 
 #include "toolchain/tiny_sil_optimizer/pass_manager.h"
 
+#include "llvm/Support/Debug.h"
+#include "toolchain/tiny_sil_optimizer/arc_elim.h"
+
+#define DEBUG_TYPE "tinyswift-sil-optimizer"
+
 namespace TinySwift::TinySILOptimizer {
 
 auto RunMandatoryPasses(TinySIL::SILModule& module,
@@ -25,18 +30,29 @@ auto RunMandatoryPasses(TinySIL::SILModule& module,
 }
 
 auto RunPerformancePasses(TinySIL::SILModule& module) -> void {
+  ARCEliminationStats total_stats;
+
   for (auto& fn : module.functions) {
     if (!fn->is_declaration && fn->hasBody()) {
       // Pass 1: Mem2Reg — promote alloc_stack to SSA values.
       RunMem2Reg(*fn);
 
       // Pass 2: ARC elimination — remove redundant retain/release pairs (M95/M96).
-      RunARCElimination(*fn);
+      RunARCElimination(*fn, &total_stats);
 
       // Pass 3: Dead code elimination — remove unused values.
       RunDeadCodeElimination(*fn);
     }
   }
+
+  LLVM_DEBUG(if (total_stats.retains_eliminated > 0 ||
+                 total_stats.releases_eliminated > 0 ||
+                 total_stats.moves_converted > 0) {
+    llvm::dbgs() << "ARC elimination: " << total_stats.retains_eliminated
+                 << " retains eliminated, " << total_stats.releases_eliminated
+                 << " releases eliminated, " << total_stats.moves_converted
+                 << " moves converted\n";
+  });
 }
 
 }  // namespace TinySwift::TinySILOptimizer

@@ -7,6 +7,8 @@
 // M96: Move semantics — eliminates retain/release when a value is copied
 //      to a new binding and the original is not used after the copy.
 
+#include "toolchain/tiny_sil_optimizer/arc_elim.h"
+
 #include "toolchain/tiny_sil_optimizer/pass_manager.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -128,7 +130,8 @@ auto IsAllocClassProducer(const TinySIL::SILFunction& function,
 
 }  // namespace
 
-auto RunARCElimination(TinySIL::SILFunction& function) -> void {
+auto RunARCElimination(TinySIL::SILFunction& function,
+                       ARCEliminationStats* stats) -> void {
   // ═══════════════════════════════════════════════════════════════════════════
   // Step 1: Collect all retain and release instructions, indexed by the
   //         value_id of their operand[0] (the class-typed pointer).
@@ -242,6 +245,7 @@ auto RunARCElimination(TinySIL::SILFunction& function) -> void {
       // Mark all copy-retains for removal.
       for (auto& r : retain_list) {
         to_remove.insert(r.inst);
+        if (stats) { ++stats->retains_eliminated; }
       }
 
       if (is_alloc_class) {
@@ -249,11 +253,13 @@ auto RunARCElimination(TinySIL::SILFunction& function) -> void {
         size_t to_elim = retain_list.size();
         for (size_t i = 0; i < to_elim && i < release_list.size(); ++i) {
           to_remove.insert(release_list[i].inst);
+          if (stats) { ++stats->releases_eliminated; }
         }
       } else {
         // Non-alloc-class value: all releases are copy-releases, remove them.
         for (auto& r : release_list) {
           to_remove.insert(r.inst);
+          if (stats) { ++stats->releases_eliminated; }
         }
       }
     }
@@ -373,6 +379,7 @@ auto RunARCElimination(TinySIL::SILFunction& function) -> void {
       // Ownership transfers to whatever consumed the retained copy.
       to_remove.insert(retain->inst);
       to_remove.insert(matching_release->inst);
+      if (stats) { ++stats->moves_converted; }
     }
   }
 

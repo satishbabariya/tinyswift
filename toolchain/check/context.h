@@ -821,6 +821,20 @@ class Context {
   // A class is cycle-capable if it has a stored field whose type is a class type.
   auto AnalyzeCycleCapability(SemIR::InstId class_type_id,
                               SemIR::NameScopeId scope_id) -> void;
+
+  // Returns true if a struct type has any fields whose type is a class
+  // reference type (i.e., fields that need ARC management).
+  auto HasClassFields(SemIR::TypeId type_id) -> bool;
+
+  // Emit Retain instructions for each class-typed field of a struct value.
+  // `struct_value_id` is the instruction producing the struct value.
+  auto EmitFieldRetains(Parse::NodeId loc, SemIR::TypeId struct_type_id,
+                        SemIR::InstId struct_value_id) -> void;
+
+  // Emit Release instructions for each class-typed field of a struct value.
+  // `struct_value_id` is the instruction producing the struct value.
+  auto EmitFieldReleases(Parse::NodeId loc, SemIR::TypeId struct_type_id,
+                         SemIR::InstId struct_value_id) -> void;
 };
 
 }  // namespace TinySwift::Check
