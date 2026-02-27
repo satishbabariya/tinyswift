@@ -251,6 +251,11 @@ auto CheckParseTrees(
   context.PopScope();
 
   // Dump/diagnostics on primary unit only.
+  if (options.dump_stream &&
+      options.include_in_dumps &&
+      options.include_in_dumps->Get(primary_unit.sem_ir->check_ir_id())) {
+    primary_unit.sem_ir->Print(*options.dump_stream);
+  }
   if (options.raw_dump_stream &&
       options.include_in_dumps &&
       options.include_in_dumps->Get(primary_unit.sem_ir->check_ir_id())) {
