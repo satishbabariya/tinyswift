@@ -600,3 +600,119 @@
 //     x * x  // No `return` keyword
 //   }
 //   // Compiles but exits with code 48 instead of correct result
+
+// ================================================================
+// BUG 42: [CRITICAL] Nested ternary operator evaluates wrong branch
+// ================================================================
+// When a ternary appears in the false branch of another ternary,
+// the result is always the outer true-branch value.
+// Even explicit parentheses don't fix it.
+//
+// REPRODUCTION:
+//   let x: Int = 5
+//   let r: Int = x > 10 ? 1 : x > 3 ? 2 : 3
+//   // r = 1 (WRONG, should be 2)
+//   let s: Int = (x > 10) ? 1 : ((x > 3) ? 2 : 3)
+//   // s = 1 (WRONG, even with parens)
+//
+// Simple (non-nested) ternaries work correctly.
+// WORKAROUND: Use sequential if-return statements.
+
+// ================================================================
+// BUG 43: [CRITICAL] String escape sequences not interpreted
+// ================================================================
+// Escape sequences \t, \n, \\, \" are printed as literal characters
+// instead of being interpreted.
+//
+// REPRODUCTION:
+//   print("a\tb")       // Prints literal "a\tb" not "a<TAB>b"
+//   print("line1\nline2")  // Prints literal "line1\nline2"
+//   print("a\\b")       // Prints literal "a\\b" not "a\b"
+//   print("he said \"hi\"")  // Prints literal backslash-quote
+
+// ================================================================
+// BUG 44: [CRITICAL] String interpolation with expressions is empty
+// ================================================================
+// String interpolation with expressions (not just variables) produces
+// empty string for the expression part.
+//
+// REPRODUCTION:
+//   let x: Int = 5; let y: Int = 10
+//   print("sum=\(x + y)")  // Prints "sum=" (missing 15)
+//   print("\(x)")           // Works: prints variable value
+//
+// Related to Bug 39 (literal interpolation empty).
+// WORKAROUND: Compute into a variable first, then interpolate.
+
+// ================================================================
+// BUG 45: [CRITICAL] No short-circuit evaluation for && and ||
+// ================================================================
+// Both operands are always evaluated regardless of left-hand value.
+//
+// REPRODUCTION:
+//   func side() -> Bool { print("called"); return true }
+//   let a: Bool = false && side()  // Prints "called" (should not)
+//   let b: Bool = true || side()   // Prints "called" (should not)
+
+// ================================================================
+// BUG 46: [CRITICAL] switch where clause condition is ignored
+// ================================================================
+// `case let n where <condition>:` always matches regardless of condition.
+//
+// REPRODUCTION:
+//   func classify(_ x: Int) -> Int {
+//     switch x {
+//     case let n where n > 100: return 3
+//     case let n where n > 0: return 1
+//     default: return 0
+//     }
+//   }
+//   // classify(5) returns 3, expected 1
+//   // classify(0) returns 3, expected 0
+
+// ================================================================
+// BUG 47: [CRASH-CG] Empty array literal crashes compiler
+// ================================================================
+// `let arr: [Int] = []` crashes with SemIR assertion error.
+// Non-empty array literals work.
+//
+// REPRODUCTION:
+//   let arr: [Int] = []
+//
+// Error: "CHECK failure: Casting inst {kind: ErrorInst} to wrong kind ClassType"
+
+// ================================================================
+// BUG 48: [SEMANTIC] for-in with inline array literal - var unbound
+// ================================================================
+// Loop variable is undefined when iterating over inline array literal.
+// Named array variable works.
+//
+// REPRODUCTION:
+//   for x in [1, 2, 3] { print(x) }  // ERROR: undefined 'x'
+//   let arr = [1, 2, 3]; for x in arr { print(x) }  // Works
+
+// ================================================================
+// BUG 49: [SEMANTIC] Extension methods need explicit self. prefix
+// ================================================================
+// Extension methods can't access struct fields without `self.` prefix,
+// but struct's own methods can.
+//
+// REPRODUCTION:
+//   struct Box { var value: Int }
+//   extension Box {
+//     func doubled() -> Int { return value * 2 }  // ERROR
+//   }
+//
+// WORKAROUND: Use self.value instead of value.
+
+// ================================================================
+// BUG 50: [PARSE] Semicolons fail in all code blocks (not just structs)
+// ================================================================
+// Extends Bug 37. Semicolons between statements crash parser in
+// function bodies, if-bodies, while-bodies, and all other contexts.
+//
+// REPRODUCTION:
+//   func main() -> Int {
+//     let x: Int = 5; print(x)  // ERROR: expected expression
+//     return 0
+//   }
