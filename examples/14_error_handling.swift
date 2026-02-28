@@ -78,12 +78,7 @@ func validateAge(_ age: Int) throws -> Bool {
   return true
 }
 
-// --- Error handling with Result enum ---
-
-enum Result<Success, Failure> {
-  case success(Success)
-  case failure(Failure)
-}
+// --- Error handling with Result enum (uses prelude's Result<S,F>) ---
 
 func safeParseToResult(_ s: String) -> Result<Int, String> {
   do {

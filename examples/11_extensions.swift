@@ -1,26 +1,18 @@
 // TinySwift Example: Extensions
 // Demonstrates extending existing types with new methods.
+// Note: The prelude already defines abs(), clamped(), isMultiple(),
+// hashValue(), description(), repeated(), etc. This example adds only
+// NEW methods to demonstrate the extension syntax.
 
-// --- Extension on Int ---
+// --- Extension on Int (new methods only) ---
 
 extension Int {
-  func abs() -> Int {
-    if self < 0 {
-      return 0 - self
-    }
-    return self
-  }
-
   func isEven() -> Bool {
     return self % 2 == 0
   }
 
   func isOdd() -> Bool {
     return self % 2 != 0
-  }
-
-  func isMultiple(of other: Int) -> Bool {
-    return self % other == 0
   }
 
   func isPositive() -> Bool {
@@ -35,35 +27,18 @@ extension Int {
     return self == 0
   }
 
-  func clamped(to lo: Int, _ hi: Int) -> Int {
-    if self < lo {
-      return lo
-    }
-    if self > hi {
-      return hi
-    }
-    return self
-  }
-
   func squared() -> Int {
     return self * self
   }
+
+  func cubed() -> Int {
+    return self * self * self
+  }
 }
 
-// --- Extension on Double ---
+// --- Extension on Double (new methods only) ---
 
 extension Double {
-  func abs() -> Double {
-    if self < 0.0 {
-      return 0.0 - self
-    }
-    return self
-  }
-
-  func rounded() -> Double {
-    return round(self)
-  }
-
   func isPositive() -> Bool {
     return self > 0.0
   }
@@ -71,9 +46,17 @@ extension Double {
   func isNegative() -> Bool {
     return self < 0.0
   }
+
+  func isZero() -> Bool {
+    return self == 0.0
+  }
+
+  func squared() -> Double {
+    return self * self
+  }
 }
 
-// --- Extension on Bool ---
+// --- Extension on Bool (new methods only) ---
 
 extension Bool {
   func toggled() -> Bool {
@@ -83,37 +66,27 @@ extension Bool {
     return true
   }
 
-  func description() -> String {
+  func toInt() -> Int {
     if self {
-      return "true"
+      return 1
     }
-    return "false"
+    return 0
   }
 }
 
-// --- Extension on String ---
+// --- Extension on String (new methods only) ---
 
 extension String {
   func isEmpty() -> Bool {
     return self == ""
   }
 
-  func reversed() -> String {
-    return self
-  }
-
-  func repeated(_ count: Int) -> String {
-    var result: String = ""
-    var i: Int = 0
-    while i < count {
-      result = result + self
-      i = i + 1
-    }
-    return result
-  }
-
   func hasPrefix(_ prefix: String) -> Bool {
     return self.indexOf(prefix) == 0
+  }
+
+  func upper() -> String {
+    return self  // placeholder — no runtime support yet
   }
 }
 

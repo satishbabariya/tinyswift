@@ -81,16 +81,16 @@ func handleResponse(_ resp: NetworkResponse) -> String {
   }
 }
 
-// --- Generic enum ---
+// --- Generic enum (demonstrates the pattern; prelude provides Optional<T>) ---
 
-enum Optional<Wrapped> {
-  case none
-  case some(Wrapped)
+enum Maybe<Wrapped> {
+  case nothing
+  case just(Wrapped)
 }
 
-// --- Generic enum with methods (Result pattern) ---
+// --- Generic enum with methods (demonstrates Result pattern; prelude provides Result<S,F>) ---
 
-enum Result<Success, Failure> {
+enum Outcome<Success, Failure> {
   case success(Success)
   case failure(Failure)
 
@@ -122,14 +122,14 @@ enum Result<Success, Failure> {
     }
   }
 
-  func map<NewSuccess>(_ transform: (Success) -> NewSuccess) -> Result<NewSuccess, Failure> {
+  func map<NewSuccess>(_ transform: (Success) -> NewSuccess) -> Outcome<NewSuccess, Failure> {
     switch self {
     case .success(let v): return .success(transform(v))
     case .failure(let e): return .failure(e)
     }
   }
 
-  func flatMap<NewSuccess>(_ transform: (Success) -> Result<NewSuccess, Failure>) -> Result<NewSuccess, Failure> {
+  func flatMap<NewSuccess>(_ transform: (Success) -> Outcome<NewSuccess, Failure>) -> Outcome<NewSuccess, Failure> {
     switch self {
     case .success(let v): return transform(v)
     case .failure(let e): return .failure(e)

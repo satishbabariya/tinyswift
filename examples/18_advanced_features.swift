@@ -48,7 +48,7 @@ func increment(_ value: inout Int) -> Void {
   value = value + 1
 }
 
-func swap(_ a: inout Int, _ b: inout Int) -> Void {
+func swapValues(_ a: inout Int, _ b: inout Int) -> Void {
   let temp: Int = a
   a = b
   b = temp
@@ -67,7 +67,7 @@ func normalize(_ x: inout Double, _ y: inout Double) -> Void {
 
 // var a: Int = 1
 // var b: Int = 2
-// swap(&a, &b)  // a is 2, b is 1
+// swapValues(&a, &b)  // a is 2, b is 1
 
 // --- Subscript declaration ---
 

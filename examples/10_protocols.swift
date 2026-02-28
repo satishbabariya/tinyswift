@@ -1,96 +1,100 @@
 // TinySwift Example: Protocols
 // Demonstrates protocol declarations, conformance, and Self type.
+// Note: The prelude provides Hashable, Equatable, Comparable,
+// DefaultInitializable, and CustomStringConvertible. This example defines
+// distinct protocols to demonstrate the syntax, then also shows conformance
+// to the prelude protocols.
 
 // --- Basic protocol ---
 
 protocol Describable {
-  func description() -> String
+  func describe() -> String
 }
 
 // --- Protocol with multiple requirements ---
 
-protocol Hashable {
-  func hashValue() -> Int
+protocol Hashing {
+  func hash() -> Int
 }
 
-protocol Equatable {
-  func equals(_ other: Self) -> Bool
+protocol Equating {
+  func isEqual(_ other: Self) -> Bool
 }
 
-protocol Comparable {
-  func lessThan(_ other: Self) -> Bool
+protocol Ordering {
+  func isLessThan(_ other: Self) -> Bool
 }
 
 // --- Protocol with initializer ---
 
-protocol DefaultInitializable {
+protocol Defaultable {
   init()
 }
 
 // --- Protocol combining multiple concepts ---
 
-protocol CustomStringConvertible {
-  func description() -> String
+protocol Displayable {
+  func display() -> String
 }
 
-// --- Structs conforming to protocols ---
+// --- Structs conforming to user-defined protocols ---
 
-struct Coordinate: Equatable {
+struct Coordinate: Equating {
   var x: Int
   var y: Int
 
-  func equals(_ other: Coordinate) -> Bool {
+  func isEqual(_ other: Coordinate) -> Bool {
     return x == other.x && y == other.y
   }
 }
 
-struct Size: Hashable {
+struct Size: Hashing {
   var width: Int
   var height: Int
 
-  func hashValue() -> Int {
+  func hash() -> Int {
     return width * 31 + height
   }
 }
 
-struct Animal: CustomStringConvertible {
+struct Animal: Displayable {
   var species: String
   var legs: Int
 
-  func description() -> String {
+  func display() -> String {
     return species
   }
 }
 
 // --- Struct conforming to multiple protocols ---
 
-struct Pixel: Equatable, Hashable, CustomStringConvertible {
+struct Pixel: Equating, Hashing, Displayable {
   var x: Int
   var y: Int
   var color: Int
 
-  func equals(_ other: Pixel) -> Bool {
+  func isEqual(_ other: Pixel) -> Bool {
     return x == other.x && y == other.y && color == other.color
   }
 
-  func hashValue() -> Int {
+  func hash() -> Int {
     return x * 10000 + y * 100 + color
   }
 
-  func description() -> String {
+  func display() -> String {
     return "Pixel"
   }
 }
 
 // --- Enum conforming to a protocol ---
 
-enum Suit: Hashable {
+enum Suit: Hashing {
   case hearts
   case diamonds
   case clubs
   case spades
 
-  func hashValue() -> Int {
+  func hash() -> Int {
     switch self {
     case .hearts: return 0
     case .diamonds: return 1
@@ -102,7 +106,7 @@ enum Suit: Hashable {
 
 // --- Class conforming to a protocol ---
 
-class Vehicle: CustomStringConvertible {
+class Vehicle: Displayable {
   var make: String
   var model: String
 
@@ -111,17 +115,42 @@ class Vehicle: CustomStringConvertible {
     self.model = model
   }
 
-  func description() -> String {
+  func display() -> String {
     return make
+  }
+}
+
+// --- Conforming to prelude protocols ---
+
+struct Temperature: Equatable {
+  var degrees: Double
+
+  func equals(_ other: Temperature) -> Bool {
+    return degrees == other.degrees
+  }
+}
+
+struct Color: Hashable {
+  var r: Int
+  var g: Int
+  var b: Int
+
+  func hashValue() -> Int {
+    return r * 65536 + g * 256 + b
+  }
+}
+
+struct Person: CustomStringConvertible {
+  var name: String
+  var age: Int
+
+  func description() -> String {
+    return name
   }
 }
 
 // --- Protocol as function parameter type ---
 
-func printDescription(_ item: CustomStringConvertible) -> String {
-  return item.description()
-}
-
-func areSame(_ a: Equatable, _ b: Equatable) -> Bool {
-  return a.equals(b)
+func printDisplay(_ item: Displayable) -> String {
+  return item.display()
 }

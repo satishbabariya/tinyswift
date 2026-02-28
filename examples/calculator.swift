@@ -96,16 +96,7 @@ func power(_ base: Int, _ exp: Int) -> Int {
   return half * half * base
 }
 
-// --- Absolute value ---
-
-func abs(_ x: Int) -> Int {
-  if x < 0 {
-    return 0 - x
-  }
-  return x
-}
-
-// --- GCD using Euclidean algorithm ---
+// --- GCD using Euclidean algorithm (uses prelude's abs()) ---
 
 func gcd(_ a: Int, _ b: Int) -> Int {
   var x: Int = abs(a)

@@ -48,12 +48,14 @@ func absoluteValue(_ x: Int) -> Int {
 }
 
 // --- Function overloading (same name, different types) ---
+// Note: The prelude provides min/max/swap. These use distinct names to
+// demonstrate the overloading pattern without conflicting.
 
-func min(_ a: Int, _ b: Int) -> Int {
+func minimum(_ a: Int, _ b: Int) -> Int {
   return a < b ? a : b
 }
 
-func min(_ a: Double, _ b: Double) -> Double {
+func minimum(_ a: Double, _ b: Double) -> Double {
   if a < b {
     return a
   }
@@ -62,7 +64,7 @@ func min(_ a: Double, _ b: Double) -> Double {
 
 // --- Inout parameters (pass by reference) ---
 
-func swap(_ a: inout Int, _ b: inout Int) -> Void {
+func swapValues(_ a: inout Int, _ b: inout Int) -> Void {
   let temp: Int = a
   a = b
   b = temp
@@ -71,7 +73,7 @@ func swap(_ a: inout Int, _ b: inout Int) -> Void {
 // Usage:
 // var x: Int = 1
 // var y: Int = 2
-// swap(&x, &y)  // x is now 2, y is now 1
+// swapValues(&x, &y)  // x is now 2, y is now 1
 
 // --- Function with many parameters ---
 
