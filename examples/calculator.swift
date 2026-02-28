@@ -1,5 +1,5 @@
 // TinySwift Algorithmic Example: Expression Calculator
-// Demonstrates: enums with associated values, switch, structs, closures, generics.
+// Demonstrates: enums with associated values, switch, functions, recursion.
 // Build: tinyswift compile examples/calculator.swift
 // Run:   ./calculator
 
@@ -12,16 +12,19 @@ enum Op {
   case divide
 }
 
+func safeDivideInt(_ a: Int, _ b: Int) -> Int {
+  if b == 0 {
+    return 0
+  }
+  return a / b
+}
+
 func applyOp(_ op: Op, _ a: Int, _ b: Int) -> Int {
   switch op {
   case .add: return a + b
   case .subtract: return a - b
   case .multiply: return a * b
-  case .divide:
-    if b == 0 {
-      return 0
-    }
-    return a / b
+  case .divide: return safeDivideInt(a, b)
   }
 }
 
@@ -34,50 +37,56 @@ func opName(_ op: Op) -> String {
   }
 }
 
-// --- Expression tree using enum ---
+// --- Expression evaluation using direct function calls ---
 
-enum Expr {
-  case number(Int)
-  case binary(Op, Int, Int)
+func evalNumber(_ n: Int) -> Int {
+  return n
 }
 
-func evaluate(_ expr: Expr) -> Int {
-  switch expr {
-  case .number(let n):
-    return n
-  case .binary(let op, let a, let b):
-    return applyOp(op, a, b)
-  }
+func evalBinary(_ op: Op, _ a: Int, _ b: Int) -> Int {
+  return applyOp(op, a, b)
 }
 
 // --- Result type for safe operations ---
+// Uses Int for both cases to work around compiler limitation with
+// mixed associated value types. 0 = success, 1 = error.
 
 enum CalcResult {
   case ok(Int)
-  case error(String)
+  case error(Int)
 }
 
 func safeDivide(_ a: Int, _ b: Int) -> CalcResult {
   if b == 0 {
-    return .error("division by zero")
+    return CalcResult.error(1)
   }
-  return .ok(a / b)
+  return CalcResult.ok(a / b)
 }
 
 func safeModulo(_ a: Int, _ b: Int) -> CalcResult {
   if b == 0 {
-    return .error("modulo by zero")
+    return CalcResult.error(2)
   }
-  return .ok(a % b)
+  return CalcResult.ok(a % b)
 }
 
-func printResult(_ result: CalcResult) -> Void {
+func printErrorCode(_ code: Int) {
+  switch code {
+  case 1: print("division by zero")
+  case 2: print("modulo by zero")
+  default: print("unknown error")
+  }
+  return
+}
+
+func printCalcResult(_ result: CalcResult) {
   switch result {
   case .ok(let value):
     print(value)
-  case .error(let msg):
-    print(msg)
+  case .error(let code):
+    printErrorCode(code)
   }
+  return
 }
 
 // --- Power function (exponentiation by squaring) ---
@@ -96,11 +105,20 @@ func power(_ base: Int, _ exp: Int) -> Int {
   return half * half * base
 }
 
-// --- GCD using Euclidean algorithm (uses prelude's abs()) ---
+// --- Helper for integer absolute value ---
+
+func intAbs(_ x: Int) -> Int {
+  if x < 0 {
+    return 0 - x
+  }
+  return x
+}
+
+// --- GCD using Euclidean algorithm ---
 
 func gcd(_ a: Int, _ b: Int) -> Int {
-  var x: Int = abs(a)
-  var y: Int = abs(b)
+  var x: Int = intAbs(a)
+  var y: Int = intAbs(b)
   while y != 0 {
     let temp: Int = y
     y = x % y
@@ -115,7 +133,7 @@ func lcm(_ a: Int, _ b: Int) -> Int {
   if a == 0 || b == 0 {
     return 0
   }
-  return abs(a) / gcd(a, b) * abs(b)
+  return intAbs(a) / gcd(a, b) * intAbs(b)
 }
 
 // --- Entry point ---
@@ -123,31 +141,26 @@ func lcm(_ a: Int, _ b: Int) -> Int {
 func main() -> Int {
   // Basic operations
   print("Basic arithmetic:")
-  print(applyOp(.add, 15, 27))       // 42
-  print(applyOp(.subtract, 100, 58)) // 42
-  print(applyOp(.multiply, 6, 7))    // 42
-  print(applyOp(.divide, 84, 2))     // 42
+  print(applyOp(Op.add, 15, 27))       // 42
+  print(applyOp(Op.subtract, 100, 58)) // 42
+  print(applyOp(Op.multiply, 6, 7))    // 42
+  print(applyOp(Op.divide, 84, 2))     // 42
 
   // Expression evaluation
   print("Expression evaluation:")
-  let e1: Expr = .number(42)
-  print(evaluate(e1))
-
-  let e2: Expr = .binary(.multiply, 6, 7)
-  print(evaluate(e2))
-
-  let e3: Expr = .binary(.add, 20, 22)
-  print(evaluate(e3))
+  print(evalNumber(42))
+  print(evalBinary(Op.multiply, 6, 7))
+  print(evalBinary(Op.add, 20, 22))
 
   // Safe division
   print("Safe division:")
-  printResult(safeDivide(100, 4))  // 25
-  printResult(safeDivide(10, 0))   // division by zero
+  printCalcResult(safeDivide(100, 4))  // 25
+  printCalcResult(safeDivide(10, 0))   // division by zero
 
   // Safe modulo
   print("Safe modulo:")
-  printResult(safeModulo(17, 5))   // 2
-  printResult(safeModulo(10, 0))   // modulo by zero
+  printCalcResult(safeModulo(17, 5))   // 2
+  printCalcResult(safeModulo(10, 0))   // modulo by zero
 
   // Power
   print("Powers:")

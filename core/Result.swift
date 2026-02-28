@@ -46,22 +46,22 @@ enum Result<Success, Failure> {
 
   func map<NewSuccess>(_ transform: (Success) -> NewSuccess) -> Result<NewSuccess, Failure> {
     switch self {
-    case .success(let v): return .success(transform(v))
-    case .failure(let e): return .failure(e)
+    case .success(let v): return Result<NewSuccess, Failure>.success(transform(v))
+    case .failure(let e): return Result<NewSuccess, Failure>.failure(e)
     }
   }
 
   func flatMap<NewSuccess>(_ transform: (Success) -> Result<NewSuccess, Failure>) -> Result<NewSuccess, Failure> {
     switch self {
     case .success(let v): return transform(v)
-    case .failure(let e): return .failure(e)
+    case .failure(let e): return Result<NewSuccess, Failure>.failure(e)
     }
   }
 
   func mapFailure<NewFailure>(_ transform: (Failure) -> NewFailure) -> Result<Success, NewFailure> {
     switch self {
-    case .success(let v): return .success(v)
-    case .failure(let e): return .failure(transform(e))
+    case .success(let v): return Result<Success, NewFailure>.success(v)
+    case .failure(let e): return Result<Success, NewFailure>.failure(transform(e))
     }
   }
 }

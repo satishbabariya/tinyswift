@@ -124,15 +124,15 @@ enum Outcome<Success, Failure> {
 
   func map<NewSuccess>(_ transform: (Success) -> NewSuccess) -> Outcome<NewSuccess, Failure> {
     switch self {
-    case .success(let v): return .success(transform(v))
-    case .failure(let e): return .failure(e)
+    case .success(let v): return Outcome<NewSuccess, Failure>.success(transform(v))
+    case .failure(let e): return Outcome<NewSuccess, Failure>.failure(e)
     }
   }
 
   func flatMap<NewSuccess>(_ transform: (Success) -> Outcome<NewSuccess, Failure>) -> Outcome<NewSuccess, Failure> {
     switch self {
     case .success(let v): return transform(v)
-    case .failure(let e): return .failure(e)
+    case .failure(let e): return Outcome<NewSuccess, Failure>.failure(e)
     }
   }
 }

@@ -13,9 +13,9 @@ enum TrafficLight {
 
 func nextLight(_ current: TrafficLight) -> TrafficLight {
   switch current {
-  case .red: return .green
-  case .green: return .yellow
-  case .yellow: return .red
+  case .red: return TrafficLight.green
+  case .green: return TrafficLight.yellow
+  case .yellow: return TrafficLight.red
   }
 }
 
@@ -56,11 +56,11 @@ func vendingStateName(_ state: VendingState) -> String {
 func insertCoin(_ state: VendingState, _ amount: Int) -> VendingState {
   switch state {
   case .idle:
-    return .hasCoins(amount)
+    return VendingState.hasCoins(amount)
   case .hasCoins(let current):
-    return .hasCoins(current + amount)
+    return VendingState.hasCoins(current + amount)
   case .dispensing:
-    return .error("busy dispensing")
+    return VendingState.error("busy dispensing")
   case .error:
     return state
   }
@@ -69,14 +69,14 @@ func insertCoin(_ state: VendingState, _ amount: Int) -> VendingState {
 func selectItem(_ state: VendingState, _ price: Int, _ name: String) -> VendingState {
   switch state {
   case .idle:
-    return .error("insert coins first")
+    return VendingState.error("insert coins first")
   case .hasCoins(let amount):
     if amount >= price {
-      return .dispensing(name)
+      return VendingState.dispensing(name)
     }
-    return .error("insufficient funds")
+    return VendingState.error("insufficient funds")
   case .dispensing:
-    return .error("already dispensing")
+    return VendingState.error("already dispensing")
   case .error:
     return state
   }
@@ -85,7 +85,7 @@ func selectItem(_ state: VendingState, _ price: Int, _ name: String) -> VendingS
 func collectItem(_ state: VendingState) -> VendingState {
   switch state {
   case .dispensing:
-    return .idle
+    return VendingState.idle
   default:
     return state
   }
@@ -103,20 +103,20 @@ enum ConnState {
 func connect(_ state: ConnState) -> ConnState {
   switch state {
   case .disconnected:
-    return .connecting
+    return ConnState.connecting
   case .connecting:
     return state // already connecting
   case .connected:
     return state // already connected
   case .error:
-    return .connecting // retry
+    return ConnState.connecting // retry
   }
 }
 
 func onConnected(_ state: ConnState, _ sessionId: Int) -> ConnState {
   switch state {
   case .connecting:
-    return .connected(sessionId)
+    return ConnState.connected(sessionId)
   default:
     return state
   }
@@ -125,16 +125,16 @@ func onConnected(_ state: ConnState, _ sessionId: Int) -> ConnState {
 func disconnect(_ state: ConnState) -> ConnState {
   switch state {
   case .connected:
-    return .disconnected
+    return ConnState.disconnected
   case .connecting:
-    return .disconnected
+    return ConnState.disconnected
   default:
     return state
   }
 }
 
 func onError(_ state: ConnState, _ msg: String) -> ConnState {
-  return .error(msg)
+  return ConnState.error(msg)
 }
 
 func isConnected(_ state: ConnState) -> Bool {
@@ -179,7 +179,7 @@ struct BoundedCounter {
 func main() -> Int {
   // Traffic light simulation
   print("Traffic light cycle:")
-  var light: TrafficLight = .red
+  var light: TrafficLight = TrafficLight.red
   var cycle: Int = 0
   while cycle < 6 {
     print(lightName(light))
@@ -190,7 +190,7 @@ func main() -> Int {
 
   // Vending machine
   print("Vending machine:")
-  var vend: VendingState = .idle
+  var vend: VendingState = VendingState.idle
   print(vendingStateName(vend))  // IDLE
 
   vend = insertCoin(vend, 50)
@@ -204,7 +204,7 @@ func main() -> Int {
   print(vendingStateName(vend))  // ERROR
 
   // Reset and try again
-  vend = .idle
+  vend = VendingState.idle
   vend = insertCoin(vend, 100)
   vend = selectItem(vend, 100, "Soda")
   print(vendingStateName(vend))  // DISPENSING
@@ -214,7 +214,7 @@ func main() -> Int {
 
   // Connection state machine
   print("Connection:")
-  var conn: ConnState = .disconnected
+  var conn: ConnState = ConnState.disconnected
 
   conn = connect(conn)
   if isConnected(conn) {

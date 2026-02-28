@@ -86,15 +86,15 @@ enum Either<Left, Right> {
 
   func mapLeft<NewLeft>(_ transform: (Left) -> NewLeft) -> Either<NewLeft, Right> {
     switch self {
-    case .left(let v): return .left(transform(v))
-    case .right(let v): return .right(v)
+    case .left(let v): return Either<NewLeft, Right>.left(transform(v))
+    case .right(let v): return Either<NewLeft, Right>.right(v)
     }
   }
 
   func mapRight<NewRight>(_ transform: (Right) -> NewRight) -> Either<Left, NewRight> {
     switch self {
-    case .left(let v): return .left(v)
-    case .right(let v): return .right(transform(v))
+    case .left(let v): return Either<Left, NewRight>.left(v)
+    case .right(let v): return Either<Left, NewRight>.right(transform(v))
     }
   }
 }

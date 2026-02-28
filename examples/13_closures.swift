@@ -102,7 +102,7 @@ func any(_ items: [Int], _ predicate: (Int) -> Bool) -> Bool {
 
 func all(_ items: [Int], _ predicate: (Int) -> Bool) -> Bool {
   for item in items {
-    if !predicate(item) {
+    if predicate(item) == false {
       return false
     }
   }

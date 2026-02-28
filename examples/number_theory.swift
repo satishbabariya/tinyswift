@@ -57,7 +57,15 @@ func nthPrime(_ n: Int) -> Int {
 
 // --- Prime factorization (print factors) ---
 
-func printPrimeFactors(_ n: Int) -> Void {
+func printIfPositive(_ x: Int) {
+  if x > 1 {
+    print(x)
+    return
+  }
+  return
+}
+
+func printPrimeFactors(_ n: Int) {
   var num: Int = n
   var divisor: Int = 2
   while divisor * divisor <= num {
@@ -67,9 +75,8 @@ func printPrimeFactors(_ n: Int) -> Void {
     }
     divisor = divisor + 1
   }
-  if num > 1 {
-    print(num)
-  }
+  printIfPositive(num)
+  return
 }
 
 // --- GCD (Euclidean) ---

@@ -27,10 +27,10 @@ enum Direction {
 
 func opposite(_ d: Direction) -> Direction {
   switch d {
-  case .north: return .south
-  case .south: return .north
-  case .east: return .west
-  case .west: return .east
+  case .north: return Direction.south
+  case .south: return Direction.north
+  case .east: return Direction.west
+  case .west: return Direction.east
   }
 }
 

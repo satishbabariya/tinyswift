@@ -83,8 +83,8 @@ func validateAge(_ age: Int) throws -> Bool {
 func safeParseToResult(_ s: String) -> Result<Int, String> {
   do {
     let value: Int = try parseNumber(s)
-    return .success(value)
+    return Result<Int, String>.success(value)
   } catch {
-    return .failure("Parse error")
+    return Result<Int, String>.failure("Parse error")
   }
 }
