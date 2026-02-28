@@ -716,3 +716,231 @@
 //     let x: Int = 5; print(x)  // ERROR: expected expression
 //     return 0
 //   }
+
+// ================================================================
+// BUG 51: [CRASH-CG] Array.append() crashes codegen
+// ================================================================
+// .append() on var array crashes with LLVM function signature assertion.
+//
+// REPRODUCTION:
+//   var arr: [Int] = [1, 2, 3]
+//   arr.append(4)  // COMPILER CRASH
+
+// ================================================================
+// BUG 52: [LINK] Array.removeLast() generates undefined symbol
+// ================================================================
+// .removeLast() compiles to codegen but generates <unknown_callee>
+// undefined reference at link time.
+//
+// REPRODUCTION:
+//   var arr: [Int] = [1, 2, 3]
+//   arr.removeLast()  // LINK ERROR
+
+// ================================================================
+// BUG 53: [SEMANTIC] for-in variable unbound with parameter array
+// ================================================================
+// for-in loop variable not bound when iterating a function parameter
+// array. Local let arrays work fine.
+//
+// REPRODUCTION:
+//   func sum(_ arr: [Int]) -> Int {
+//     for x in arr { total += x }  // ERROR: undefined 'x'
+//   }
+
+// ================================================================
+// BUG 54: [CRASH-CG] Returning array from function crashes
+// ================================================================
+// Functions that return [T] crash with SIL + LLVM assertions.
+//
+// REPRODUCTION:
+//   func makeArr() -> [Int] { return [1, 2] }  // CRASH
+
+// ================================================================
+// BUG 55: [CRASH-CG] Nested array [[Int]] crashes codegen
+// ================================================================
+// Array of arrays crashes LLVM with pointer type assertion.
+//
+// REPRODUCTION:
+//   let a: [[Int]] = [[1, 2], [3, 4]]  // CRASH
+
+// ================================================================
+// BUG 56: [CRITICAL] continue in for-in loop causes infinite loop
+// ================================================================
+// `continue` in for-in hangs forever. While-loop continue works.
+//
+// REPRODUCTION:
+//   for i in 1...5 {
+//     if i == 3 { continue }  // INFINITE LOOP
+//     print(i)
+//   }
+
+// ================================================================
+// BUG 57: [CRASH-CG] Mutating struct methods crash codegen
+// ================================================================
+// `mutating func` on structs crashes with SIL "return missing".
+//
+// REPRODUCTION:
+//   struct Counter { var n: Int; mutating func inc() { n += 1 } }
+
+// ================================================================
+// BUG 58: [CRASH-CG] Static let properties crash codegen
+// ================================================================
+// `static let` crashes with debug info mismatch. Static methods work.
+//
+// REPRODUCTION:
+//   struct Config { static let max: Int = 100 }  // CRASH
+
+// ================================================================
+// BUG 59: [CRASH-CG] Optional field in struct crashes codegen
+// ================================================================
+// Struct with `var field: T?` crashes LLVM ConstantAggregate assertion.
+//
+// REPRODUCTION:
+//   struct W { var value: Int? }  // CRASH
+
+// ================================================================
+// BUG 60: [CRASH-CG] willSet/didSet property observers crash
+// ================================================================
+// Property observers crash with SIL + LLVM assertions.
+//
+// REPRODUCTION:
+//   struct S { var x: Int { willSet { } } }  // CRASH
+
+// ================================================================
+// BUG 61: [CRASH-CG] Nested type definitions crash codegen
+// ================================================================
+// Struct defined inside another struct crashes. Separate composition works.
+//
+// REPRODUCTION:
+//   struct Outer { struct Inner { var x: Int } }  // CRASH
+
+// ================================================================
+// BUG 62: [CRITICAL] `as` type cast silently produces no output
+// ================================================================
+// `x as Type` compiles but result prints nothing.
+//
+// REPRODUCTION:
+//   let y: Int = 42 as Int; print(y)  // No output
+
+// ================================================================
+// BUG 63: [CRASH-RT] `is` type check crashes at runtime
+// ================================================================
+// `x is Type` compiles but segfaults when evaluated.
+//
+// REPRODUCTION:
+//   if 42 is Int { print("yes") }  // SEGFAULT
+
+// ================================================================
+// BUG 64: [CRITICAL] Underscore in numeric literals → wrong value
+// ================================================================
+// `1_000_000` evaluates to 0 instead of 1000000.
+//
+// REPRODUCTION:
+//   print(1_000_000)  // Prints 0
+
+// ================================================================
+// BUG 65: [CRASH-CG] Character type crashes codegen
+// ================================================================
+// `let c: Character = "A"` crashes with LLVM CastInst assertion.
+//
+// REPRODUCTION:
+//   let c: Character = "A"  // CRASH
+
+// ================================================================
+// BUG 66: [CRASH-CG] Variadic parameters crash compiler
+// ================================================================
+// `func f(_ x: Int...)` crashes during codegen.
+//
+// REPRODUCTION:
+//   func sum(_ nums: Int...) -> Int { ... }  // CRASH
+
+// ================================================================
+// BUG 67: [SEMANTIC+PARSE] Operator overloading not supported
+// ================================================================
+// Custom operator functions can't be declared (parse error for ==)
+// and custom + for user types isn't resolved (type error).
+//
+// REPRODUCTION:
+//   func +(l: V, r: V) -> V { ... }
+//   let c = a + b  // ERROR: invalid operand types
+
+// ================================================================
+// BUG 68: [CRASH-CG] Subscript declarations crash codegen
+// ================================================================
+// `subscript(row: Int, col: Int) -> Int` crashes SIL + LLVM.
+//
+// REPRODUCTION:
+//   struct G { subscript(i: Int) -> Int { return data[i] } }
+
+// ================================================================
+// BUG 69: [CRASH-CG] Enum named/multiple associated values crash
+// ================================================================
+// `case rect(width: Int, height: Int)` crashes codegen.
+// Single unnamed associated values work.
+//
+// REPRODUCTION:
+//   enum S { case rect(width: Int, height: Int) }  // CRASH
+
+// ================================================================
+// BUG 70: [LINK] Optional chaining ?.method() undefined reference
+// ================================================================
+// `value?.method()` generates <unknown_callee> at link time.
+//
+// REPRODUCTION:
+//   let r = optionalBox?.doubled()  // LINK ERROR
+
+// ================================================================
+// BUG 71: [CRASH-CG] `if var` optional binding crashes codegen
+// ================================================================
+// `if var val = optional` crashes. `if let` works for simple cases.
+//
+// REPRODUCTION:
+//   if var x = someOptional { x += 1 }  // CRASH
+
+// ================================================================
+// BUG 72: [CRASH-CG] Named tuple elements crash codegen
+// ================================================================
+// Tuples with named elements crash. Unnamed (.0, .1) partially work.
+//
+// REPRODUCTION:
+//   func f() -> (sum: Int, diff: Int) { ... }  // CRASH
+
+// ================================================================
+// BUG 73: [CRASH-CG] lazy var properties crash compiler
+// ================================================================
+// `lazy var` crashes during codegen.
+//
+// REPRODUCTION:
+//   struct S { lazy var x: Int = { 42 }() }  // CRASH
+
+// ================================================================
+// BUG 74: [SEMANTIC] String.uppercased()/lowercased() not callable
+// ================================================================
+// "cannot call non-function value" — exposed as properties not methods.
+//
+// REPRODUCTION:
+//   "hello".uppercased()  // ERROR: cannot call non-function value
+
+// ================================================================
+// BUG 75: [CRASH-RT] String.contains/hasPrefix/hasSuffix segfault
+// ================================================================
+// String search methods compile but segfault at runtime.
+//
+// REPRODUCTION:
+//   "hello".contains("ell")  // SEGFAULT
+
+// ================================================================
+// BUG 76: [CRASH-RT] String.isEmpty crashes at runtime
+// ================================================================
+// .isEmpty compiles but segfaults when accessed.
+//
+// REPRODUCTION:
+//   if "".isEmpty { print("yes") }  // SEGFAULT
+
+// ================================================================
+// BUG 77: [CRASH-CG] Half-open range ..<  crashes codegen
+// ================================================================
+// `0..<5` crashes. Closed range `0...5` works.
+//
+// REPRODUCTION:
+//   for i in 0..<5 { print(i) }  // CRASH
