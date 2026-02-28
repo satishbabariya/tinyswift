@@ -944,3 +944,152 @@
 //
 // REPRODUCTION:
 //   for i in 0..<5 { print(i) }  // CRASH
+
+// ================================================================
+// BUG 78: [CRASH-CG] Empty dictionary literal crashes
+// ================================================================
+// `[:]` crashes compiler. Non-empty String-keyed dicts work.
+//
+// REPRODUCTION:
+//   let d: [String: Int] = [:]  // CRASH
+
+// ================================================================
+// BUG 79: [CRASH-CG] Dictionary with non-String key crashes
+// ================================================================
+// Int-keyed dicts crash. String keys work.
+//
+// REPRODUCTION:
+//   let d: [Int: String] = [1: "one"]  // CRASH
+
+// ================================================================
+// BUG 80: [PARSE] Labeled loops not supported
+// ================================================================
+// `label: for` parsed as undefined name reference.
+//
+// REPRODUCTION:
+//   outer: for i in 1...5 { break outer }  // ERROR
+
+// ================================================================
+// BUG 81: [CRASH-CG] inout with array element crashes
+// ================================================================
+// `&arr[i]` crashes. Plain `&variable` works.
+//
+// REPRODUCTION:
+//   increment(&arr[1])  // CRASH
+
+// ================================================================
+// BUG 82: [CRASH-CG] Array of optionals crashes codegen
+// ================================================================
+// `[Int?]` containing nil crashes LLVM type assertion.
+//
+// REPRODUCTION:
+//   let arr: [Int?] = [1, nil, 3]  // CRASH
+
+// ================================================================
+// BUG 83: [CRITICAL] Multiple guard statements fail
+// ================================================================
+// Sequential guards don't check conditions correctly.
+// Second+ guards always fall through.
+//
+// REPRODUCTION:
+//   guard x > 0 else { return "bad" }
+//   guard y > 0 else { return "bad" }  // Never triggers
+
+// ================================================================
+// BUG 84: [CRASH-CG] Switch on tuple patterns crashes
+// ================================================================
+// `switch (x, y) { case (0, 0): ... }` crashes LLVM.
+//
+// REPRODUCTION:
+//   switch (x, y) { case (0, 0): ... }  // CRASH
+
+// ================================================================
+// BUG 85: [CRITICAL] defer in loop body doesn't execute per-iteration
+// ================================================================
+// defer inside while/for doesn't run at end of each iteration.
+//
+// REPRODUCTION:
+//   while i < 3 { defer { print("d") }; i += 1 }
+//   // "d" never prints
+
+// ================================================================
+// BUG 86: [CRITICAL] print() multi-args/separator/terminator broken
+// ================================================================
+// print(1,2,3) only prints first arg. separator/terminator ignored.
+//
+// REPRODUCTION:
+//   print(1, 2, 3)  // Prints "1" only
+//   print("hi", terminator: "")  // Still adds newline
+
+// ================================================================
+// BUG 87: [CRASH-CG] String indexing crashes codegen
+// ================================================================
+// startIndex, subscript, index(offsetBy:) all crash.
+//
+// REPRODUCTION:
+//   let i = s.startIndex; print(s[i])  // CRASH
+
+// ================================================================
+// BUG 88: [CRASH-CG] Ternary in string interpolation crashes
+// ================================================================
+// `\(cond ? "a" : "b")` crashes LLVM StringRef assertion.
+//
+// REPRODUCTION:
+//   print("\(x > 0 ? "pos" : "neg")")  // CRASH
+
+// ================================================================
+// BUG 89: [CRASH-CG] Tuple swap assignment crashes
+// ================================================================
+// `(a, b) = (b, a)` crashes. Destructuring `let (a,b) = (1,2)` works.
+//
+// REPRODUCTION:
+//   (a, b) = (b, a)  // CRASH
+
+// ================================================================
+// BUG 90: [SEMANTIC] if-let with multiple bindings doesn't bind
+// ================================================================
+// `if let a = x, let b = y { ... }` — variables not accessible.
+//
+// REPRODUCTION:
+//   if let a = x, let b = y { print(a) }  // ERROR: undefined 'a'
+
+// ================================================================
+// BUG 91: [CRASH-CG] Enum equality (==, !=) crashes codegen
+// ================================================================
+// Comparing enum values crashes LLVM ICmpInst type assertion.
+//
+// REPRODUCTION:
+//   if Color.red == Color.blue { ... }  // CRASH
+
+// ================================================================
+// BUG 92: [CRITICAL] nil comparison (== nil, != nil) fails silently
+// ================================================================
+// `x == nil` compiles but produces no output, exits with code 48.
+//
+// REPRODUCTION:
+//   let x: Int? = nil; if x == nil { print("nil") }  // No output
+
+// ================================================================
+// BUG 93: [CRITICAL] for-in variable leaks into outer scope
+// ================================================================
+// Loop variable shadows outer name but leaks after loop ends.
+//
+// REPRODUCTION:
+//   let i = 99; for i in 1...3 { }; print(i)  // Prints 3, not 99
+
+// ================================================================
+// BUG 94: [CRASH-RT] String equality (==, !=) segfaults at runtime
+// ================================================================
+// String comparison compiles but crashes.
+//
+// REPRODUCTION:
+//   if "hello" == "hello" { print("same") }  // SEGFAULT
+
+// ================================================================
+// BUG 95: [CRASH-CG] Double/Float types crash codegen
+// ================================================================
+// Any use of Double or Float crashes with LLVM cast assertion.
+//
+// REPRODUCTION:
+//   let x: Double = 3.14  // CRASH
+//   let y: Float = 2.5    // CRASH
