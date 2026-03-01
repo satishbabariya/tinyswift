@@ -1231,3 +1231,118 @@
 //   func isEqual<T: Equatable>(_ a: T, _ b: T) -> Bool {
 //     return a == b  // CRASH
 //   }
+
+// ================================================================
+// BUG 109: [PARSE] Qualified enum case name in switch crashes parser
+// ================================================================
+// Using `case Color.red:` (fully qualified) in switch case patterns
+// crashes the parser. Only implicit member syntax `case .red:` works.
+//
+// REPRODUCTION:
+//   switch c {
+//   case Color.red: return "RED"   // CRASH: "Expected :, got ."
+//   }
+//
+// WORKAROUND: Use dot syntax in switch: `case .red:`
+
+// ================================================================
+// BUG 110: [CRASH-RT] Bool returned from function segfaults in conditions
+// ================================================================
+// Functions returning Bool compile, but using the returned Bool value
+// in an if/while condition segfaults. Printing the Bool works (-1/0).
+// Passing Bool as a parameter and using it in `if b` also works.
+//
+// REPRODUCTION:
+//   func isPos(_ x: Int) -> Bool {
+//     if x > 0 { return true }
+//     return false
+//   }
+//   if isPos(5) { print("yes") }  // SEGFAULT
+//
+// WORKAROUND: Return Int (0/1) instead of Bool.
+
+// ================================================================
+// BUG 111: [CRITICAL] Guard else block never executes
+// ================================================================
+// When guard condition is false, the else block is skipped entirely.
+// Execution falls through to after the guard as if guard were not there.
+// Even `guard false else { return 42 }` falls through.
+// Supersedes Bug 83 (multiple guards).
+//
+// REPRODUCTION:
+//   func test(_ x: Int) -> Int {
+//     guard x > 0 else { return 0 }  // else block NEVER runs
+//     return x * 10
+//   }
+//   // test(-1) returns -10, expected 0
+//
+// WORKAROUND: Use `if x <= 0 { return 0 }` instead of guard.
+
+// ================================================================
+// BUG 112: [SEMANTIC] .reversed() on ranges not supported
+// ================================================================
+// `(1...5).reversed()` fails. Loop variable is unbound.
+//
+// REPRODUCTION:
+//   for i in (1...5).reversed() { print(i) }  // ERROR: undefined 'i'
+//
+// WORKAROUND: Use while loop: `var i = 5; while i >= 1 { ... i -= 1 }`
+
+// ================================================================
+// BUG 113: [SEMANTIC] Function overloading by parameter count broken
+// ================================================================
+// Same-name functions with different parameter counts: the compiler
+// always resolves to one overload and ignores others.
+//
+// REPRODUCTION:
+//   func f(_ a: Int) -> Int { return a }
+//   func f(_ a: Int, _ b: Int) -> Int { return a + b }
+//   print(f(5))      // ERROR: too few arguments
+//   print(f(5, 10))  // May crash codegen
+//
+// WORKAROUND: Use different function names (add1, add2).
+
+// ================================================================
+// BUG 114: [CRASH-CG] Ternary operator with String type crashes
+// ================================================================
+// `x > 3 ? "big" : "small"` crashes LLVM with CallInst assertion.
+// Ternary with Int type works. Only String (and likely other non-Int
+// types) crash.
+//
+// REPRODUCTION:
+//   let s: String = x > 3 ? "big" : "small"  // CRASH
+//
+// WORKAROUND: Use function with if-return:
+//   func pick(_ x: Int) -> String {
+//     if x > 3 { return "big" }
+//     return "small"
+//   }
+
+// ================================================================
+// BUG 115: [CRASH-CG] Array subscript on function parameter crashes
+// ================================================================
+// `arr[i]` on an array passed as function parameter crashes LLVM
+// with LoadInst "Ptr must have pointer type." assertion.
+// Local array subscript works fine.
+//
+// REPRODUCTION:
+//   func first(_ arr: [Int]) -> Int {
+//     return arr[0]  // CRASH
+//   }
+//
+// WORKAROUND: Access arrays only in the scope where they're defined.
+
+// ================================================================
+// BUG 116: [SEMANTIC] Struct methods cannot call free functions
+// ================================================================
+// Methods inside struct bodies cannot reference free (top-level)
+// functions. The compiler reports "use of undefined name" even
+// though the function exists at file scope.
+//
+// REPRODUCTION:
+//   func double(_ x: Int) -> Int { return x * 2 }
+//   struct Box {
+//     func doubled() -> Int { return double(self.val) }  // ERROR
+//   }
+//
+// WORKAROUND: Call the free function outside the method and pass result.
