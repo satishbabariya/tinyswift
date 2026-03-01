@@ -1093,3 +1093,141 @@
 // REPRODUCTION:
 //   let x: Double = 3.14  // CRASH
 //   let y: Float = 2.5    // CRASH
+
+// ================================================================
+// BUG 96: [CRITICAL] Switch range patterns only match first value
+// ================================================================
+// `case 90...100:` matches 90 but not 91-100. Range check is broken.
+//
+// REPRODUCTION:
+//   switch 95 {
+//   case 90...100: print("A")  // NOT matched for 95
+//   default: print("?")        // Taken instead
+//   }
+
+// ================================================================
+// BUG 97: [SEMANTIC] Int() / String() type conversions rejected
+// ================================================================
+// `Int("42")`, `String(123)`, `Int(3.14)` all produce type errors.
+//
+// REPRODUCTION:
+//   let x: Int = Int("42")      // ERROR: no matching overload
+//   let s: String = String(42)  // ERROR: no matching overload
+
+// ================================================================
+// BUG 98: [CRASH-CG] Array .first / .last crash codegen
+// ================================================================
+// Accessing .first or .last on an array crashes LLVM.
+//
+// REPRODUCTION:
+//   let arr: [Int] = [10, 20, 30]
+//   print(arr.first)  // CRASH
+
+// ================================================================
+// BUG 99: [CRASH-CG] Array .contains() crashes codegen
+// ================================================================
+// .contains() on Int array crashes with LLVM assertion.
+//
+// REPRODUCTION:
+//   let arr: [Int] = [1, 2, 3]
+//   print(arr.contains(2))  // CRASH
+
+// ================================================================
+// BUG 100: [CRITICAL] String for-in iteration broken
+// ================================================================
+// Iterating characters of a string with for-in either leaves the
+// variable unbound or only performs 1 iteration for a 5-char string.
+//
+// REPRODUCTION:
+//   for ch in "hello" { print(ch) }
+//   // Only prints first char or errors on 'ch'
+
+// ================================================================
+// BUG 101: [CRITICAL] switch fallthrough has no effect
+// ================================================================
+// `fallthrough` keyword in switch compiles but doesn't fall through
+// to the next case.
+//
+// REPRODUCTION:
+//   switch 1 {
+//   case 1: print("one"); fallthrough
+//   case 2: print("two")
+//   default: break
+//   }
+//   // Prints "one" only, expected "one" then "two"
+
+// ================================================================
+// BUG 102: [CRASH-CG] Custom init() in structs crashes codegen
+// ================================================================
+// Struct with explicit `init(...)` crashes with debug info error.
+//
+// REPRODUCTION:
+//   struct Celsius {
+//     var temp: Int
+//     init(fahrenheit f: Int) { self.temp = (f - 32) * 5 / 9 }
+//   }
+//   // CRASH: !dbg attachment points at wrong subprogram
+
+// ================================================================
+// BUG 103: [CRITICAL] Overflow operators &+ &- &* return left operand
+// ================================================================
+// `&+`, `&-`, `&*` compile but return the left operand unchanged.
+//
+// REPRODUCTION:
+//   print(100 &+ 50)  // Prints 100, expected 150
+//   print(10 &* 3)    // Prints 10, expected 30
+
+// ================================================================
+// BUG 104: [PARSE] Discard assignment `_ = expr` not supported
+// ================================================================
+// `_ = expression` to discard a return value is rejected by parser.
+//
+// REPRODUCTION:
+//   _ = sideEffect()  // ERROR: expected expression
+//
+// WORKAROUND: Assign to a named variable: `let unused = expr`
+
+// ================================================================
+// BUG 105: [CRITICAL] #if/#else/#endif conditional compilation inverted
+// ================================================================
+// `#if true` takes the `#else` branch instead of the `#if` branch.
+//
+// REPRODUCTION:
+//   #if true
+//   print("yes")   // Should be compiled
+//   #else
+//   print("no")    // Should be skipped
+//   #endif
+//   // Prints "no" instead of "yes"
+
+// ================================================================
+// BUG 106: [CRITICAL] Multiline strings """ parsed incorrectly
+// ================================================================
+// Triple-quoted strings include opening quotes and indentation in content.
+//
+// REPRODUCTION:
+//   let s: String = """
+//   hello
+//   world
+//   """
+//   // Prints '""' and '  hello' instead of 'hello\nworld'
+
+// ================================================================
+// BUG 107: [CRASH-CG] Struct with array field crashes codegen
+// ================================================================
+// Struct containing an `[Int]` field crashes with LLVM InsertValue assertion.
+//
+// REPRODUCTION:
+//   struct Team { var name: String; var scores: [Int] }
+//   let t = Team(name: "A", scores: [10, 20])  // CRASH
+
+// ================================================================
+// BUG 108: [CRASH-CG] Generic functions with constraints crash
+// ================================================================
+// `<T: Equatable>` or `where T: Protocol` constraints crash codegen
+// with debug info assertion.
+//
+// REPRODUCTION:
+//   func isEqual<T: Equatable>(_ a: T, _ b: T) -> Bool {
+//     return a == b  // CRASH
+//   }
