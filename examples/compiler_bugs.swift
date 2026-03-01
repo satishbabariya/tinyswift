@@ -1783,3 +1783,60 @@
 //   let arr: [Int] = []  // CRASH
 //
 // WORKAROUND: Use `var` instead of `let` for empty arrays.
+
+// ================================================================
+// BUG 155: [CRASH] Dictionary field in struct crashes codegen
+// ================================================================
+// Struct with a [String: Int] field crashes with InsertValueInst
+// assertion. Dictionaries as local variables work.
+//
+// REPRODUCTION:
+//   struct DB { var data: [String: Int] }  // CRASH when used
+//
+// WORKAROUND: Keep dictionaries as local variables, not struct fields.
+
+// ================================================================
+// BUG 156: [SEMANTIC/CRASH] Function overloading fails
+// ================================================================
+// Same-name functions with different param counts or types not resolved.
+// By arity: picks wrong overload. By type: crashes codegen.
+//
+// REPRODUCTION:
+//   func f(_ x: Int) -> Int { ... }
+//   func f(_ x: Int, _ y: Int) -> Int { ... }
+//   f(1)  // ERROR: too few arguments (picks 2-param)
+//
+// WORKAROUND: Use unique function names for each variant.
+
+// ================================================================
+// BUG 157: [SEMANTIC] Semicolons not parsed as statement separators
+// ================================================================
+// Multiple statements on one line with `;` cause parse errors.
+//
+// REPRODUCTION:
+//   let a: Int = 1; let b: Int = 2  // ERROR
+//
+// WORKAROUND: Put each statement on its own line.
+
+// ================================================================
+// BUG 158: [CRASH] Struct creation inline as function argument crashes
+// ================================================================
+// Passing a struct constructor directly to a function crashes.
+// Works when binding to a variable first.
+//
+// REPRODUCTION:
+//   func f(_ p: Point) -> Int { ... }
+//   print(f(Point(x: 3, y: 4)))  // CRASH
+//
+// WORKAROUND: Bind struct to variable first, then pass.
+
+// ================================================================
+// BUG 159: [WRONG] Ternary as function argument produces garbage
+// ================================================================
+// Ternary expression with String values directly in function call
+// produces a garbage pointer value instead of the string.
+//
+// REPRODUCTION:
+//   print(x > 3 ? "big" : "small")  // Prints garbage number
+//
+// WORKAROUND: Store ternary result in variable first.
