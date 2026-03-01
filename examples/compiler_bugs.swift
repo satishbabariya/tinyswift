@@ -1840,3 +1840,27 @@
 //   print(x > 3 ? "big" : "small")  // Prints garbage number
 //
 // WORKAROUND: Store ternary result in variable first.
+
+// ================================================================
+// BUG 160: [CRASH] Global variables/constants crash codegen
+// ================================================================
+// Variables or constants at file scope crash with debug metadata or
+// return type errors in __tinyswift_init.
+//
+// REPRODUCTION:
+//   var counter: Int = 0  // file scope - CRASH
+//   func main() -> Int { print(counter); return 0 }
+//
+// WORKAROUND: Declare all variables inside functions or pass as params.
+
+// ================================================================
+// BUG 161: [CRASH] Array literals >21 non-uniform elements crash
+// ================================================================
+// Array literals with 22+ elements crash when containing non-uniform
+// values. All-same-value arrays (e.g., all zeros) work up to 50+.
+// Arrays with 21 or fewer non-uniform elements work.
+//
+// REPRODUCTION:
+//   var arr: [Int] = [0,1,0,...0]  // 22 elements: CRASH
+//
+// WORKAROUND: Init with all-zeros, then assign non-zero values after.
