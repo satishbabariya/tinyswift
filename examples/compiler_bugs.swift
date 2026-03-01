@@ -1728,3 +1728,58 @@
 //   mutating func push(_ v: Int) { self.items[self.size] = v }  // CRASH
 //
 // WORKAROUND: Use free functions with inout or restructure data.
+
+// ================================================================
+// BUG 150: [SEMANTIC] Unary minus on literals not parsed
+// ================================================================
+// `-5` is not parsed as a negative literal. `-x` (on variables) works
+// in expression contexts like `return -x`.
+//
+// REPRODUCTION:
+//   let x: Int = -5  // ERROR: expected expression
+//
+// WORKAROUND: Use `0 - 5` or negate a variable.
+
+// ================================================================
+// BUG 151: [CRASH] Character type crashes codegen
+// ================================================================
+// `let c: Character = "A"` crashes with CastInst assertion.
+//
+// REPRODUCTION:
+//   let c: Character = "A"  // CRASH
+//
+// WORKAROUND: Use String type instead of Character.
+
+// ================================================================
+// BUG 152: [CRASH] `else if` chains segfault at runtime
+// ================================================================
+// Functions with `else if` (3+ branches) compile but segfault.
+// Simple if/else and sequential if-return work correctly.
+//
+// REPRODUCTION:
+//   if x > 0 { return 1 }
+//   else if x < 0 { return -1 }  // SEGFAULT
+//   else { return 0 }
+//
+// WORKAROUND: Use sequential if-return without else.
+
+// ================================================================
+// BUG 153: [SEMANTIC] Bool negation `!` prefix not parsed
+// ================================================================
+// `!variable` for Bool negation is not recognized as a prefix operator.
+// `!=` (not-equal comparison) works correctly.
+//
+// REPRODUCTION:
+//   let y: Bool = !x  // ERROR: expected expression
+//
+// WORKAROUND: Use `x == false` or `x != true`.
+
+// ================================================================
+// BUG 154: [CRASH] Empty `let` array literal crashes codegen
+// ================================================================
+// `let arr: [Int] = []` crashes. `var arr: [Int] = []` works.
+//
+// REPRODUCTION:
+//   let arr: [Int] = []  // CRASH
+//
+// WORKAROUND: Use `var` instead of `let` for empty arrays.
