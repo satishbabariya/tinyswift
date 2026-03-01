@@ -1390,3 +1390,208 @@
 //   S().value()  // ERROR: has no member 'value'
 //
 // WORKAROUND: Implement all methods directly in each conforming type.
+
+// ================================================================
+// BUG 120: [WRONG] Guard else clause never taken
+// ================================================================
+// Guard statements always succeed - the else clause is never entered.
+// `guard x > 10 else { return 0 }` falls through even when x <= 10.
+//
+// REPRODUCTION:
+//   guard x > 10 else { return 0 }
+//   return 1  // always reached
+//
+// WORKAROUND: Use if-else instead of guard.
+
+// ================================================================
+// BUG 121: [SEMANTIC] Guard-let bound variable out of scope
+// ================================================================
+// Variables bound in guard-let are not available after the guard.
+//
+// REPRODUCTION:
+//   guard let v = optionalVal else { return 0 }
+//   return v   // ERROR: use of undefined name 'v'
+//
+// WORKAROUND: Use if-let with body in if clause.
+
+// ================================================================
+// BUG 122: [CRASH] Computed properties crash codegen
+// ================================================================
+// Read-only computed properties cause debug metadata errors or SIL
+// verification failures. Get/set computed properties also crash.
+//
+// REPRODUCTION:
+//   struct S { var area: Int { return 42 } }
+//
+// WORKAROUND: Use methods instead of computed properties.
+
+// ================================================================
+// BUG 123: [CRASH] Static properties crash codegen
+// ================================================================
+// Static let/var properties cause debug metadata errors.
+// Note: static METHODS work correctly.
+//
+// REPRODUCTION:
+//   struct Config { static let max: Int = 5 }  // CRASH
+//
+// WORKAROUND: Use static methods or free constants.
+
+// ================================================================
+// BUG 124: [CRASH] Half-open range (..<) crashes codegen
+// ================================================================
+// The half-open range operator `..<` crashes during compilation.
+// Closed range `...` works correctly.
+//
+// REPRODUCTION:
+//   for i in 0..<3 { print(i) }  // CRASH
+//
+// WORKAROUND: Use `0...(n-1)` instead of `0..<n`.
+
+// ================================================================
+// BUG 125: [CRASH] Generic functions and types crash codegen
+// ================================================================
+// Generic functions crash with LLVM CallInst assertion or !dbg errors.
+// Generic structs fail to resolve memberwise init fields.
+//
+// REPRODUCTION:
+//   func identity<T>(_ x: T) -> T { return x }  // CRASH
+//
+// WORKAROUND: Write type-specific overloads instead of generics.
+
+// ================================================================
+// BUG 126: [CRASH] Type alias for tuple type crashes codegen
+// ================================================================
+// Using a typealias for a tuple as a function parameter causes SIL
+// verification errors and CallInst assertion failures.
+//
+// REPRODUCTION:
+//   typealias Pair = (Int, Int)
+//   func sum(_ p: Pair) -> Int { return p.0 + p.1 }  // CRASH
+//
+// WORKAROUND: Use raw tuple type directly.
+
+// ================================================================
+// BUG 127: [CRASH] Nested types (struct in struct) crash codegen
+// ================================================================
+// Defining a struct inside another struct crashes with a
+// ConstantAggregate assertion failure during codegen.
+//
+// REPRODUCTION:
+//   struct Outer { struct Inner { var v: Int }; var i: Inner }  // CRASH
+//
+// WORKAROUND: Define all types at file scope (no nesting).
+
+// ================================================================
+// BUG 128: [CRASH] Property observers (willSet/didSet) crash codegen
+// ================================================================
+// Properties with willSet or didSet observers cause "non-void function
+// missing return" errors and StoreInst assertions.
+//
+// REPRODUCTION:
+//   struct T { var value: Int { willSet { } } }  // CRASH
+//
+// WORKAROUND: Use a setter method instead of property observers.
+
+// ================================================================
+// BUG 129: [SEMANTIC] External parameter labels not recognized
+// ================================================================
+// Functions with different external and internal parameter names fail
+// with "incorrect argument label" when called with external name.
+//
+// REPRODUCTION:
+//   func move(from start: Int, to end: Int) -> Int { ... }
+//   move(from: 5, to: 15)  // ERROR: incorrect argument label
+//
+// WORKAROUND: Use _ for external name or same name for both.
+
+// ================================================================
+// BUG 130: [CRASH] Variadic parameters crash codegen
+// ================================================================
+// Functions with variadic parameters (Int...) crash during compilation.
+//
+// REPRODUCTION:
+//   func sum(_ values: Int...) -> Int { ... }  // CRASH
+//
+// WORKAROUND: Accept an array parameter instead of variadic.
+
+// ================================================================
+// BUG 131: [WRONG] `continue` in for-in loop causes infinite loop
+// ================================================================
+// `continue` inside for-in range loops causes infinite loops or SIL
+// errors. The loop counter is not incremented. Works in while loops.
+//
+// REPRODUCTION:
+//   for i in 1...5 { if i==3 { continue }; print(i) }  // HANGS
+//
+// WORKAROUND: Use while loop with manual counter, or restructure
+// logic to avoid continue (use if-else instead).
+
+// ================================================================
+// BUG 132: [WRONG] Switch fallthrough doesn't fall through
+// ================================================================
+// `fallthrough` in switch cases is parsed but has no effect. Control
+// does NOT transfer to the next case body.
+//
+// REPRODUCTION:
+//   switch x { case 1: fallthrough; case 2: print("2") }
+//   // "2" never prints when x==1
+//
+// WORKAROUND: Duplicate code from subsequent cases manually.
+
+// ================================================================
+// BUG 133: [SEMANTIC] Labeled break/continue not parsed
+// ================================================================
+// Statement labels (`outer:` on loops) are not recognized, causing
+// "use of undefined name" errors.
+//
+// REPRODUCTION:
+//   outer: for i in 1...5 { break outer }  // ERROR
+//
+// WORKAROUND: Use a flag variable checked in the outer loop.
+
+// ================================================================
+// BUG 134: [CRASH] Class types crash at runtime (segfault)
+// ================================================================
+// Class instances compile but segfault when accessed at runtime.
+//
+// REPRODUCTION:
+//   class Obj { var x: Int; init(x: Int) { self.x = x } }
+//   Obj(x: 42).x  // SEGFAULT
+//
+// WORKAROUND: Use struct types instead of classes.
+
+// ================================================================
+// BUG 135: [SEMANTIC] `override` keyword not parsed
+// ================================================================
+// The `override` keyword on subclass methods causes parse errors.
+// Blocks class inheritance with method overriding.
+//
+// REPRODUCTION:
+//   class Sub: Base { override func f() { } }  // ERROR
+//
+// WORKAROUND: Use protocol conformance with structs instead.
+
+// ================================================================
+// BUG 136: [CRASH] Subscript declarations crash codegen
+// ================================================================
+// Custom subscript declarations cause "non-void function missing return"
+// and InsertValueInst assertion failures.
+//
+// REPRODUCTION:
+//   struct G { subscript(i: Int) -> Int { return 0 } }  // CRASH
+//
+// WORKAROUND: Use a regular method (e.g., func get(_ i: Int) -> Int).
+
+// ================================================================
+// BUG 137: [WRONG] Multiline string literals not properly parsed
+// ================================================================
+// Triple-quoted strings (""") include the `""` markers and don't
+// strip leading indentation as Swift requires.
+//
+// REPRODUCTION:
+//   let s = """
+//     hello
+//     """
+//   // Outputs: ""<newline>  hello<newline>  ""
+//
+// WORKAROUND: Use single-line strings with \n or concatenation.
