@@ -17,7 +17,6 @@ namespace TinySwift::SemIR {
 // instruction has a fixed InstId equal to its index in this array.
 inline constexpr std::array SingletonInstKinds = {
     InstKind::ErrorInst,
-    InstKind::BoolType,
     InstKind::IntLiteralType,
     InstKind::NamespaceType,
     InstKind::TypeType,
