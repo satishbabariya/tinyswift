@@ -1864,3 +1864,26 @@
 //   var arr: [Int] = [0,1,0,...0]  // 22 elements: CRASH
 //
 // WORKAROUND: Init with all-zeros, then assign non-zero values after.
+
+// ================================================================
+// BUG 162: [WRONG] Implicit return doesn't return value
+// ================================================================
+// Single-expression function bodies without `return` keyword evaluate
+// but don't return the value. Function exits without result.
+//
+// REPRODUCTION:
+//   func double(_ x: Int) -> Int { x * 2 }  // Doesn't return
+//
+// WORKAROUND: Always use explicit `return` keyword.
+
+// ================================================================
+// BUG 163: [SEMANTIC] Default field values not used in memberwise init
+// ================================================================
+// Struct fields with defaults (var x: Int = 5) not used when calling
+// init without arguments. Reports "missing field".
+//
+// REPRODUCTION:
+//   struct S { var x: Int = 5 }
+//   S()  // ERROR: missing field 'x'
+//
+// WORKAROUND: Always provide all fields, or write custom init.
