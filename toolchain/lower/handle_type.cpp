@@ -20,8 +20,16 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
       return llvm::Type::getInt1Ty(context.llvm_context());
 
     case SemIR::InstKind::IntType: {
-      // Default to 64-bit integers.
-      return llvm::Type::getInt64Ty(context.llvm_context());
+      auto int_type = inst.As<SemIR::IntType>();
+      unsigned bit_width = 64;  // default fallback
+      if (int_type.bit_width_id.has_value()) {
+        auto width_inst = sem_ir.insts().Get(int_type.bit_width_id);
+        if (auto iv = width_inst.TryAs<SemIR::IntValue>()) {
+          auto ap = sem_ir.ints().Get(iv->int_id);
+          bit_width = static_cast<unsigned>(ap.getSExtValue());
+        }
+      }
+      return llvm::Type::getIntNTy(context.llvm_context(), bit_width);
     }
 
     case SemIR::InstKind::IntLiteralType:
