@@ -1664,3 +1664,67 @@
 //   print(P.low.rawValue)  // ERROR: no member 'rawValue'
 //
 // WORKAROUND: Use switch to manually map cases to raw values.
+
+// ================================================================
+// BUG 144: [CRASH] Boolean && operator crashes codegen
+// ================================================================
+// The && (logical AND) operator in conditions crashes during compilation.
+//
+// REPRODUCTION:
+//   if a && b { ... }  // CRASH
+//
+// WORKAROUND: Use nested if: `if a { if b { ... } }`
+
+// ================================================================
+// BUG 145: [CRASH] Boolean || operator crashes at runtime
+// ================================================================
+// The || (logical OR) compiles but segfaults at runtime.
+//
+// REPRODUCTION:
+//   if a || b { ... }  // SEGFAULT
+//
+// WORKAROUND: Use sequential if-statements.
+
+// ================================================================
+// BUG 146: [SEMANTIC] Custom init with _ parameter not bound
+// ================================================================
+// `init(_ x: Int)` - the internal name x is not available in body.
+//
+// REPRODUCTION:
+//   init(_ x: Int) { self.a = x }  // ERROR: undefined name 'x'
+//
+// WORKAROUND: Use labeled parameter: init(x: Int).
+
+// ================================================================
+// BUG 147: [WRONG] Defer in for-in fires once, not per iteration
+// ================================================================
+// Defer inside for-in loop body fires once at end of loop instead
+// of once per iteration.
+//
+// REPRODUCTION:
+//   for i in 1...3 { defer { print("d") }; print(i) }
+//   // Prints: 1, 2, 3, d (not 1, d, 2, d, 3, d)
+//
+// WORKAROUND: Call cleanup directly before loop end.
+
+// ================================================================
+// BUG 148: [CRASH] Array of Bool crashes at runtime
+// ================================================================
+// [Bool] arrays segfault when elements are accessed. [Int] and
+// [String] arrays work correctly.
+//
+// REPRODUCTION:
+//   let arr: [Bool] = [true]; if arr[0] { }  // SEGFAULT
+//
+// WORKAROUND: Use [Int] with 0/1 values instead of [Bool].
+
+// ================================================================
+// BUG 149: [CRASH] Mutating method with array subscript on self
+// ================================================================
+// Mutating methods that write to self's array field via subscript
+// crash with SIL verification errors.
+//
+// REPRODUCTION:
+//   mutating func push(_ v: Int) { self.items[self.size] = v }  // CRASH
+//
+// WORKAROUND: Use free functions with inout or restructure data.
