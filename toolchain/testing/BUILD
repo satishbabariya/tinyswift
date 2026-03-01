@@ -2,6 +2,7 @@
 # Exceptions. See /LICENSE for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//bazel/cc_rules:defs.bzl", "cc_library", "cc_test")
 load("//testing/file_test:rules.bzl", "file_test")
 
@@ -11,8 +12,17 @@ filegroup(
     name = "all_testdata",
     srcs = glob(
         ["testdata/**/*.swift"],
-        exclude = ["testdata/min_prelude/**"],
+        exclude = [
+            "testdata/min_prelude/**",
+            "testdata/driver/projects/**",
+        ],
     ),
+)
+
+filegroup(
+    name = "project_fixtures",
+    srcs = glob(["testdata/driver/projects/**"]),
+    visibility = ["//visibility:public"],
 )
 
 filegroup(
@@ -96,4 +106,22 @@ cc_test(
         "//testing/base:gtest_main",
         "@googletest//:gtest",
     ],
+)
+
+# Integration test exercising the CLI with real project fixtures.
+# This builds and runs the tinyswift binary against example projects
+# that use compile, build, run, and test subcommands.
+sh_test(
+    name = "cli_integration_test",
+    size = "large",
+    timeout = "moderate",
+    srcs = ["testdata/driver/projects/cli_integration_test.sh"],
+    data = [
+        ":project_fixtures",
+        "//examples:examples",
+        "//toolchain:tinyswift",
+    ],
+    env = {
+        "TINYSWIFT": "$(rootpath //toolchain:tinyswift)",
+    },
 )

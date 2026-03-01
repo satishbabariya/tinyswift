@@ -1,0 +1,7 @@
+[package]
+name = "stringutils"
+version = "0.1.0"
+
+[targets.stringutils]
+type = "library"
+sources = ["*.swift"]

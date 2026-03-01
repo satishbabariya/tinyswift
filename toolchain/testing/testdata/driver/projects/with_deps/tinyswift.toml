@@ -1,0 +1,10 @@
+[package]
+name = "with_deps"
+version = "0.1.0"
+
+[targets.app]
+type = "executable"
+sources = ["app.swift"]
+
+[dependencies]
+mathlib = { path = "mathlib" }

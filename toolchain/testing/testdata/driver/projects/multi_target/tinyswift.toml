@@ -1,0 +1,12 @@
+[package]
+name = "multi_target"
+version = "0.1.0"
+
+[targets.mathlib]
+type = "library"
+sources = ["src/mathlib.swift"]
+
+[targets.app]
+type = "executable"
+sources = ["src/app.swift"]
+dependencies = ["mathlib"]
