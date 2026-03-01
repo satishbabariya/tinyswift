@@ -1595,3 +1595,72 @@
 //   // Outputs: ""<newline>  hello<newline>  ""
 //
 // WORKAROUND: Use single-line strings with \n or concatenation.
+
+// ================================================================
+// BUG 138: [CRASH] Array.append on non-empty literal crashes codegen
+// ================================================================
+// .append() crashes when called on arrays initialized with literal
+// elements. Appending to initially-empty arrays works fine.
+//
+// REPRODUCTION:
+//   var arr: [Int] = [1, 2, 3]
+//   arr.append(4)  // CRASH
+//
+// WORKAROUND: Initialize as empty then append all elements.
+
+// ================================================================
+// BUG 139: [WRONG] Overflow operators (&+) don't wrap
+// ================================================================
+// &+ returns the original value instead of wrapping around.
+// Regular + wraps silently in tinyswift.
+//
+// REPRODUCTION:
+//   let x: Int = 9223372036854775807
+//   print(x &+ 1)  // Prints max, not min
+//
+// WORKAROUND: Use regular + which wraps silently.
+
+// ================================================================
+// BUG 140: [CRASH] `indirect enum` crashes codegen
+// ================================================================
+// Enums with the `indirect` keyword crash during compilation.
+//
+// REPRODUCTION:
+//   indirect enum Tree { case leaf(Int); case node(Tree, Tree) }
+//
+// WORKAROUND: Use arrays of enum values to simulate recursion.
+
+// ================================================================
+// BUG 141: [SEMANTIC] Custom operator overloading not recognized
+// ================================================================
+// Defining a free function `+` for custom types compiles, but using
+// the operator in expressions fails with "invalid operand types."
+//
+// REPRODUCTION:
+//   func +(lhs: Vec, rhs: Vec) -> Vec { ... }
+//   let c = a + b  // ERROR: invalid operand types
+//
+// WORKAROUND: Use a named function (e.g., func add).
+
+// ================================================================
+// BUG 142: [CRASH] Array.isEmpty crashes codegen
+// ================================================================
+// Accessing .isEmpty on arrays causes a stack dump.
+// String.isEmpty works (prints -1/0 per Bug 38).
+//
+// REPRODUCTION:
+//   let a: [Int] = []; print(a.isEmpty)  // CRASH
+//
+// WORKAROUND: Check arr.count == 0 instead of arr.isEmpty.
+
+// ================================================================
+// BUG 143: [SEMANTIC] Enum .rawValue accessor not available
+// ================================================================
+// Enums with raw value types compile, but .rawValue is not available
+// and init(rawValue:) fails.
+//
+// REPRODUCTION:
+//   enum P: Int { case low = 1 }
+//   print(P.low.rawValue)  // ERROR: no member 'rawValue'
+//
+// WORKAROUND: Use switch to manually map cases to raw values.
