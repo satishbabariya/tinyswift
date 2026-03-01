@@ -108,7 +108,23 @@ auto Context::GetOrCreateDIType(SemIR::TypeId type_id) -> llvm::DIType* {
   llvm::DIType* result = nullptr;
 
   switch (inst.kind()) {
-    case SemIR::InstKind::IntType:
+    case SemIR::InstKind::IntType: {
+      auto int_type = inst.As<SemIR::IntType>();
+      unsigned bit_width = 64;
+      if (int_type.bit_width_id.has_value()) {
+        auto width_inst = sem_ir_.insts().Get(int_type.bit_width_id);
+        if (auto iv = width_inst.TryAs<SemIR::IntValue>()) {
+          auto ap = sem_ir_.ints().Get(iv->int_id);
+          bit_width = static_cast<unsigned>(ap.getSExtValue());
+        }
+      }
+      bool is_signed = int_type.int_kind.is_signed();
+      std::string name = (is_signed ? "Int" : "UInt") + std::to_string(bit_width);
+      auto encoding = is_signed ? llvm::dwarf::DW_ATE_signed
+                                : llvm::dwarf::DW_ATE_unsigned;
+      result = di_builder_->createBasicType(name, bit_width, encoding);
+      break;
+    }
     case SemIR::InstKind::IntLiteralType:
       result = di_builder_->createBasicType("Int", 64,
                                             llvm::dwarf::DW_ATE_signed);

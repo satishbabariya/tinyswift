@@ -12,6 +12,19 @@
 
 namespace TinySwift::Lower {
 
+// Returns true if the given TypeId is an unsigned integer type (UInt*).
+static auto IsUnsignedIntType(const SemIR::File& sem_ir, SemIR::TypeId type_id)
+    -> bool {
+  if (!type_id.has_value() || !type_id.is_concrete()) return false;
+  auto type_inst_id = sem_ir.types().GetTypeInstId(type_id);
+  if (!type_inst_id.has_value()) return false;
+  auto type_inst = sem_ir.insts().Get(type_inst_id);
+  if (auto int_type = type_inst.TryAs<SemIR::IntType>()) {
+    return !int_type->int_kind.is_signed();
+  }
+  return false;
+}
+
 auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
   auto& sem_ir = context.sem_ir();
   auto inst = sem_ir.insts().Get(inst_id);
@@ -73,10 +86,13 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     case SemIR::InstKind::IntValue: {
       auto int_val = inst.As<SemIR::IntValue>();
       llvm::APInt ap_value = sem_ir.ints().Get(int_val.int_id);
-      // Sign-extend or truncate to 64 bits for our default integer type.
+      // Use the type's actual bit width (respects Int8, Int16, etc.).
+      llvm::Type* target_type = context.GetType(int_val.type_id);
+      unsigned target_bits = target_type->isIntegerTy()
+                                 ? target_type->getIntegerBitWidth()
+                                 : 64;
       auto* value = llvm::ConstantInt::get(
-          llvm::Type::getInt64Ty(context.llvm_context()),
-          ap_value.sextOrTrunc(64));
+          target_type, ap_value.sextOrTrunc(target_bits));
       context.SetLocal(inst_id, value);
       break;
     }
@@ -243,7 +259,11 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
       auto op = inst.As<SemIR::IntDiv>();
       auto* lhs = context.GetLocal(op.lhs_id);
       auto* rhs = context.GetLocal(op.rhs_id);
-      context.SetLocal(inst_id, context.builder().CreateSDiv(lhs, rhs));
+      if (IsUnsignedIntType(sem_ir, op.type_id)) {
+        context.SetLocal(inst_id, context.builder().CreateUDiv(lhs, rhs));
+      } else {
+        context.SetLocal(inst_id, context.builder().CreateSDiv(lhs, rhs));
+      }
       break;
     }
 
@@ -251,7 +271,11 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
       auto op = inst.As<SemIR::IntMod>();
       auto* lhs = context.GetLocal(op.lhs_id);
       auto* rhs = context.GetLocal(op.rhs_id);
-      context.SetLocal(inst_id, context.builder().CreateSRem(lhs, rhs));
+      if (IsUnsignedIntType(sem_ir, op.type_id)) {
+        context.SetLocal(inst_id, context.builder().CreateURem(lhs, rhs));
+      } else {
+        context.SetLocal(inst_id, context.builder().CreateSRem(lhs, rhs));
+      }
       break;
     }
 
@@ -285,7 +309,12 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
       auto op = inst.As<SemIR::IntLess>();
       auto* lhs = context.GetLocal(op.lhs_id);
       auto* rhs = context.GetLocal(op.rhs_id);
-      context.SetLocal(inst_id, context.builder().CreateICmpSLT(lhs, rhs));
+      auto lhs_type_id = sem_ir.insts().Get(op.lhs_id).type_id();
+      if (IsUnsignedIntType(sem_ir, lhs_type_id)) {
+        context.SetLocal(inst_id, context.builder().CreateICmpULT(lhs, rhs));
+      } else {
+        context.SetLocal(inst_id, context.builder().CreateICmpSLT(lhs, rhs));
+      }
       break;
     }
 
@@ -293,7 +322,12 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
       auto op = inst.As<SemIR::IntGreater>();
       auto* lhs = context.GetLocal(op.lhs_id);
       auto* rhs = context.GetLocal(op.rhs_id);
-      context.SetLocal(inst_id, context.builder().CreateICmpSGT(lhs, rhs));
+      auto lhs_type_id = sem_ir.insts().Get(op.lhs_id).type_id();
+      if (IsUnsignedIntType(sem_ir, lhs_type_id)) {
+        context.SetLocal(inst_id, context.builder().CreateICmpUGT(lhs, rhs));
+      } else {
+        context.SetLocal(inst_id, context.builder().CreateICmpSGT(lhs, rhs));
+      }
       break;
     }
 
@@ -301,7 +335,12 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
       auto op = inst.As<SemIR::IntLessEq>();
       auto* lhs = context.GetLocal(op.lhs_id);
       auto* rhs = context.GetLocal(op.rhs_id);
-      context.SetLocal(inst_id, context.builder().CreateICmpSLE(lhs, rhs));
+      auto lhs_type_id = sem_ir.insts().Get(op.lhs_id).type_id();
+      if (IsUnsignedIntType(sem_ir, lhs_type_id)) {
+        context.SetLocal(inst_id, context.builder().CreateICmpULE(lhs, rhs));
+      } else {
+        context.SetLocal(inst_id, context.builder().CreateICmpSLE(lhs, rhs));
+      }
       break;
     }
 
@@ -309,7 +348,12 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
       auto op = inst.As<SemIR::IntGreaterEq>();
       auto* lhs = context.GetLocal(op.lhs_id);
       auto* rhs = context.GetLocal(op.rhs_id);
-      context.SetLocal(inst_id, context.builder().CreateICmpSGE(lhs, rhs));
+      auto lhs_type_id = sem_ir.insts().Get(op.lhs_id).type_id();
+      if (IsUnsignedIntType(sem_ir, lhs_type_id)) {
+        context.SetLocal(inst_id, context.builder().CreateICmpUGE(lhs, rhs));
+      } else {
+        context.SetLocal(inst_id, context.builder().CreateICmpSGE(lhs, rhs));
+      }
       break;
     }
 

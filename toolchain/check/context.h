@@ -362,6 +362,10 @@ class Context {
   // Resolves a type name string to a builtin TypeId.
   auto GetBuiltinType(llvm::StringRef name) -> SemIR::TypeId;
 
+  // Creates a concrete IntType with the given signedness and bit width.
+  // Used to build Int8/16/32/64 and UInt8/16/32/64 builtin types.
+  auto MakeIntType(SemIR::IntKind int_kind, int bit_width) -> SemIR::TypeId;
+
   // --- Tree access ---
   auto tree() const -> const Parse::Tree& {
     return tree_and_subtrees_->tree();
