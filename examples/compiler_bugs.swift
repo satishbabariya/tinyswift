@@ -1346,3 +1346,47 @@
 //   }
 //
 // WORKAROUND: Call the free function outside the method and pass result.
+
+// ================================================================
+// BUG 117: [SEMANTIC] Function-typed local variables cannot be called
+// ================================================================
+// Storing a function reference in a variable of function type compiles,
+// but calling through that variable fails with "cannot call non-function
+// value". Passing as a parameter to another function works.
+//
+// REPRODUCTION:
+//   func double(_ x: Int) -> Int { return x * 2 }
+//   let f: (Int) -> Int = double
+//   print(f(5))  // ERROR: cannot call non-function value
+//
+// WORKAROUND: Pass function references as parameters, or call directly.
+
+// ================================================================
+// BUG 118: [CRITICAL] String interpolation with self.property is empty
+// ================================================================
+// `\(self.property)` in struct/extension methods produces empty string.
+// `self.property` works in arithmetic and assignments, but not in
+// string interpolation. Related to Bug 44 (expression interpolation).
+//
+// REPRODUCTION:
+//   struct ID { var num: Int
+//     func display() -> String { return "ID-\(self.num)" }
+//   }
+//   // display() returns "ID-" (num is empty)
+//
+// WORKAROUND: Copy to local var: `let n = self.num; return "ID-\(n)"`
+
+// ================================================================
+// BUG 119: [SEMANTIC] Protocol extension default implementations missing
+// ================================================================
+// Default method implementations provided via protocol extensions are
+// not available on conforming types. Also, protocol extensions can't
+// access protocol-required properties via `self`.
+//
+// REPRODUCTION:
+//   protocol P { func value() -> Int }
+//   extension P { func value() -> Int { return 0 } }
+//   struct S: P {}
+//   S().value()  // ERROR: has no member 'value'
+//
+// WORKAROUND: Implement all methods directly in each conforming type.
