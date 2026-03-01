@@ -16,9 +16,8 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
   auto inst = sem_ir.types().GetAsInst(type_id);
 
   switch (inst.kind()) {
-    case SemIR::InstKind::BoolType:
-      return llvm::Type::getInt1Ty(context.llvm_context());
-
+    // BoolType is no longer a singleton — Bool is IntType(Signed, 1).
+    // IntType handles all integer widths including i1 (Bool).
     case SemIR::InstKind::IntType: {
       auto int_type = inst.As<SemIR::IntType>();
       unsigned bit_width = 64;  // default fallback

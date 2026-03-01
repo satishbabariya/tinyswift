@@ -54,7 +54,6 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
       break;
 
     // Type instructions are not runtime values.
-    case SemIR::InstKind::BoolType:
     case SemIR::InstKind::IntType:
     case SemIR::InstKind::IntLiteralType:
     case SemIR::InstKind::FunctionType:

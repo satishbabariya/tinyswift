@@ -359,12 +359,18 @@ class Context {
 
   // --- Type resolution ---
 
-  // Resolves a type name string to a builtin TypeId.
+  // Resolves a type name string to a builtin TypeId (cached).
   auto GetBuiltinType(llvm::StringRef name) -> SemIR::TypeId;
 
   // Creates a concrete IntType with the given signedness and bit width.
   // Used to build Int8/16/32/64 and UInt8/16/32/64 builtin types.
   auto MakeIntType(SemIR::IntKind int_kind, int bit_width) -> SemIR::TypeId;
+
+ private:
+  // Uncached implementation of GetBuiltinType.
+  auto GetBuiltinTypeUncached(llvm::StringRef name) -> SemIR::TypeId;
+
+ public:
 
   // --- Tree access ---
   auto tree() const -> const Parse::Tree& {
@@ -587,6 +593,9 @@ class Context {
 
   // M88: Built-in type scopes for extensions (keyed by TypeInstId.index).
   llvm::DenseMap<int32_t, SemIR::NameScopeId> builtin_type_scopes_;
+
+  // Cache for GetBuiltinType results (keyed by type name).
+  llvm::StringMap<SemIR::TypeId> builtin_type_cache_;
 
   // Map from NameId.index to TypeId for typealias declarations.
   llvm::DenseMap<int32_t, SemIR::TypeId> typealias_map_;

@@ -189,8 +189,6 @@ auto Context::GetTypeName(SemIR::TypeId type_id) -> std::string {
   }
   auto type_inst = insts().Get(type_inst_id);
   switch (type_inst.kind()) {
-    case SemIR::InstKind::BoolType:
-      return "Bool";
     case SemIR::InstKind::IntType: {
       auto int_type = type_inst.As<SemIR::IntType>();
       int bit_width = 64;
@@ -200,6 +198,14 @@ auto Context::GetTypeName(SemIR::TypeId type_id) -> std::string {
           auto ap = sem_ir().ints().Get(iv->int_id);
           bit_width = static_cast<int>(ap.getSExtValue());
         }
+      }
+      // Int1 is Bool.
+      if (bit_width == 1 && int_type.int_kind.is_signed()) {
+        return "Bool";
+      }
+      // Platform-width Int/UInt (64-bit) display without suffix.
+      if (bit_width == 64) {
+        return int_type.int_kind.is_signed() ? "Int" : "UInt";
       }
       std::string prefix = int_type.int_kind.is_signed() ? "Int" : "UInt";
       return prefix + std::to_string(bit_width);
@@ -282,9 +288,23 @@ auto Context::MakeIntType(SemIR::IntKind int_kind, int bit_width)
 }
 
 auto Context::GetBuiltinType(llvm::StringRef name) -> SemIR::TypeId {
+  // Return cached result if available (MakeIntType creates new instructions
+  // each call, so caching is required for type identity comparisons).
+  auto cached = builtin_type_cache_.find(name);
+  if (cached != builtin_type_cache_.end()) {
+    return cached->second;
+  }
+  auto result = GetBuiltinTypeUncached(name);
+  if (result != SemIR::ErrorInst::TypeId) {
+    builtin_type_cache_.insert({name, result});
+  }
+  return result;
+}
+
+auto Context::GetBuiltinTypeUncached(llvm::StringRef name) -> SemIR::TypeId {
+  // Bool is Int1 — a 1-bit integer type (true=1, false=0).
   if (name == "Bool") {
-    return SemIR::TypeId::ForTypeConstant(
-        SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+    return MakeIntType(SemIR::IntKind::Signed, 1);
   }
   // Platform-width Int (defaults to 64-bit; future: arch-dependent via prelude).
   if (name == "Int") {

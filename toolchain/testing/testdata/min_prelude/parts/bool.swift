@@ -10,4 +10,6 @@ package Core library "prelude/parts/bool";
 
 export import library "prelude/parts/copy";
 
-fn Bool() -> type = "bool.make_type";
+// Bool is a built-in type alias for Int1 (1-bit signed integer).
+// The compiler resolves Bool via GetBuiltinType("Bool") -> IntType(Signed, 1).
+// `true` maps to 1, `false` maps to 0.

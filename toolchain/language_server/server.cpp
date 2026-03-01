@@ -425,11 +425,21 @@ auto Server::GetTypeDisplayName(const SemIR::File& file,
 
   auto inst = file.types().GetAsInst(type_id);
 
-  if (inst.Is<SemIR::BoolType>()) {
-    return "Bool";
-  }
   if (inst.Is<SemIR::IntType>()) {
-    return "Int";
+    auto int_type = inst.As<SemIR::IntType>();
+    int bit_width = 64;
+    if (int_type.bit_width_id.has_value()) {
+      auto width_inst = file.insts().Get(int_type.bit_width_id);
+      if (auto iv = width_inst.TryAs<SemIR::IntValue>()) {
+        auto ap = file.ints().Get(iv->int_id);
+        bit_width = static_cast<int>(ap.getSExtValue());
+      }
+    }
+    if (bit_width == 1 && int_type.int_kind.is_signed()) return "Bool";
+    if (bit_width == 64 && int_type.int_kind.is_signed()) return "Int";
+    if (bit_width == 64 && !int_type.int_kind.is_signed()) return "UInt";
+    return (int_type.int_kind.is_signed() ? "Int" : "UInt") +
+           std::to_string(bit_width);
   }
   if (inst.Is<SemIR::StringType>()) {
     return "String";

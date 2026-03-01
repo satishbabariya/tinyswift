@@ -1727,7 +1727,7 @@ auto HandleExtensionDefinition(Context& context, Parse::NodeId node_id)
   // M88: Fallback — built-in type extension (e.g., `extension Int { ... }`).
   if (!type_scope_id.has_value()) {
     auto type_inst = context.insts().Get(type_inst_id);
-    if (type_inst.Is<SemIR::BoolType>() ||
+    if (type_inst.Is<SemIR::IntType>() ||
         type_inst.Is<SemIR::IntLiteralType>() ||
         type_inst.Is<SemIR::StringType>() ||
         type_inst.Is<SemIR::FloatType>() ||

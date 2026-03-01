@@ -882,8 +882,7 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
 
     // M61: String method call — resolve StringMethodRef pending marker.
     if (auto smr = callee_inst.TryAs<SemIR::StringMethodRef>()) {
-      auto bool_type = SemIR::TypeId::ForTypeConstant(
-          SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+      auto bool_type = context.GetBuiltinType("Bool");
       SemIR::InstId arg_id =
           labeled_args.empty() ? SemIR::InstId::None : labeled_args[0].value_id;
       auto method_ident_id = smr->method_name_id.AsIdentifierId();
@@ -2122,8 +2121,7 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
       auto opt_member_type = SemIR::TypeId::ForTypeConstant(
           SemIR::ConstantId::ForConcreteConstant(opt_member_inst_id));
 
-      auto bool_type = SemIR::TypeId::ForTypeConstant(
-          SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+      auto bool_type = context.GetBuiltinType("Bool");
 
       // has_value = TupleAccess(base, 0)
       auto has_val_id = context.AddInst(SemIR::LocIdAndInst(
@@ -2410,9 +2408,7 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
             SemIR::IntValue{
                 .type_id = int_type,
                 .int_id = context.ints().Add(static_cast<int64_t>(0))}));
-        auto bool_type = SemIR::TypeId::ForTypeConstant(
-            SemIR::ConstantId::ForConcreteConstant(
-                SemIR::BoolType::TypeInstId));
+        auto bool_type = context.GetBuiltinType("Bool");
         return context.AddInst(SemIR::LocIdAndInst(
             SemIR::LocId(node_id),
             SemIR::IntEq{.type_id = bool_type,
@@ -2517,8 +2513,7 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
     }
     if (dict_id.has_value()) {
       auto int_type = context.GetBuiltinType("Int");
-      auto bool_type = SemIR::TypeId::ForTypeConstant(
-          SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+      auto bool_type = context.GetBuiltinType("Bool");
       if (member_name == "count") {
         return context.AddInst(SemIR::LocIdAndInst(
             SemIR::LocId(node_id),
@@ -2568,8 +2563,7 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
     }
     if (set_id.has_value()) {
       auto int_type = context.GetBuiltinType("Int");
-      auto bool_type = SemIR::TypeId::ForTypeConstant(
-          SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+      auto bool_type = context.GetBuiltinType("Bool");
       if (member_name == "count") {
         return context.AddInst(SemIR::LocIdAndInst(
             SemIR::LocId(node_id),
@@ -2677,8 +2671,7 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
     }
     if (dyn_arr_id.has_value()) {
       auto int_type = context.GetBuiltinType("Int");
-      auto bool_type = SemIR::TypeId::ForTypeConstant(
-          SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+      auto bool_type = context.GetBuiltinType("Bool");
       if (member_name == "count") {
         return context.AddInst(SemIR::LocIdAndInst(
             SemIR::LocId(node_id),

@@ -20,6 +20,9 @@
 //   UInt32 — 32-bit unsigned integer
 //   UInt64 — 64-bit unsigned integer
 
+// Boolean type (1-bit integer):
+//   Bool — 1-bit signed integer (Int1). `true` is 1, `false` is 0.
+
 // Platform-width integer types (resolved by the compiler):
 //   Int  — signed integer, same width as a pointer (64-bit on 64-bit platforms)
 //   UInt — unsigned integer, same width as a pointer (64-bit on 64-bit platforms)

@@ -454,8 +454,23 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
       }
     } else if (type_inst.Is<SemIR::IntLiteralType>()) {
       type_name = "Int";
-    } else if (type_inst.Is<SemIR::BoolType>()) {
-      type_name = "Bool";
+    } else if (auto int_type = type_inst.TryAs<SemIR::IntType>()) {
+      // IntType covers Bool (Int1), Int (Int64), UInt, and fixed-width types.
+      int bit_width = 64;
+      if (int_type->bit_width_id.has_value()) {
+        auto width_inst = context.insts().Get(int_type->bit_width_id);
+        if (auto iv = width_inst.TryAs<SemIR::IntValue>()) {
+          auto ap = context.sem_ir().ints().Get(iv->int_id);
+          bit_width = static_cast<int>(ap.getSExtValue());
+        }
+      }
+      if (bit_width == 1 && int_type->int_kind.is_signed()) {
+        type_name = "Bool";
+      } else if (bit_width == 64 && int_type->int_kind.is_signed()) {
+        type_name = "Int";
+      } else if (bit_width == 64 && !int_type->int_kind.is_signed()) {
+        type_name = "UInt";
+      }
     } else if (type_inst.Is<SemIR::StringType>()) {
       type_name = "String";
     } else if (type_inst.Is<SemIR::FloatType>()) {

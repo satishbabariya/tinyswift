@@ -261,8 +261,7 @@ static auto LowerTopLevelInsts(Context& context) -> void {
       continue;
     }
     // Type instructions are not runtime values.
-    if (kind == SemIR::InstKind::BoolType ||
-        kind == SemIR::InstKind::IntType ||
+    if (kind == SemIR::InstKind::IntType ||
         kind == SemIR::InstKind::IntLiteralType ||
         kind == SemIR::InstKind::FunctionType ||
         kind == SemIR::InstKind::PointerType ||
