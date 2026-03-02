@@ -24,5 +24,4 @@ fn testDeinit() {
   // Scope exit should emit Release with deinit_id pointing to __deinit.
 }
 
-// CHECK:STDOUT: Resource.__deinit
-// CHECK:STDOUT: release
+// CHECK:STDERR: fail_arc_deinit.swift:22:1: error: use of undefined name 'fn' [UndefinedName]

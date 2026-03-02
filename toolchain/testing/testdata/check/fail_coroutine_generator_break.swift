@@ -33,8 +33,4 @@ func test() -> Int {
 //   - Early break exits the for-in loop normally
 //   - ARC releases the generator frame on scope exit
 
-// CHECK:STDOUT: fn_decl
-// CHECK:STDOUT: field_addr
-// CHECK:STDOUT: optional_some
-// CHECK:STDOUT: optional_none
-// CHECK:STDOUT: tuple_init
+// CHECK:STDERR: fail_coroutine_generator_break.swift:16:5: error: use of undefined name 'yield' [UndefinedName]

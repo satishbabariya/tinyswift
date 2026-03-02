@@ -27,6 +27,6 @@ func testComptimeBool() -> Bool {
 //   comptime 10 * 4 → int_value 40
 //   comptime true && false → bool_literal false
 
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: IntValue
-// CHECK:STDOUT: BoolLiteral
+// CHECK:STDOUT: filename:        comptime_expressions.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: FunctionDecl, arg0: function60000000, arg1: inst_block60000005, type: type(TypeType)}

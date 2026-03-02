@@ -765,11 +765,9 @@ static auto HandleInitDefinition(Context& context,
     if (ident_opt.has_value()) type_name = context.identifiers().Get(ident_opt);
   }
 
-  static llvm::SmallVector<std::string>* init_name_storage =
-      new llvm::SmallVector<std::string>();
-  init_name_storage->push_back(std::string(type_name) + ".init");
+  std::string init_name = std::string(type_name) + ".init";
   auto mangled_ident_id =
-      context.identifiers().Add(init_name_storage->back());
+      context.identifiers().Add(context.AllocateString(init_name));
   auto mangled_name_id = SemIR::NameId::ForIdentifier(mangled_ident_id);
 
   // Return type is the struct type itself.
@@ -905,11 +903,9 @@ static auto HandleDeinitDefinition(Context& context,
   if (ident_opt.has_value()) type_name = context.identifiers().Get(ident_opt);
 
   // Build mangled name "TypeName.__deinit".
-  static llvm::SmallVector<std::string>* deinit_name_storage =
-      new llvm::SmallVector<std::string>();
-  deinit_name_storage->push_back(std::string(type_name) + ".__deinit");
+  std::string deinit_name = std::string(type_name) + ".__deinit";
   auto mangled_ident_id =
-      context.identifiers().Add(deinit_name_storage->back());
+      context.identifiers().Add(context.AllocateString(deinit_name));
   auto mangled_name_id = SemIR::NameId::ForIdentifier(mangled_ident_id);
 
   auto class_type_id = SemIR::TypeId::ForTypeConstant(

@@ -23,8 +23,6 @@ func testDescription() -> String {
 // Synthesized description property: string_literal for type/field names,
 // string_concat to join them, int_to_string for field values.
 
-// CHECK:STDOUT: StructType
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: StringLiteral
-// CHECK:STDOUT: StringConcat
-// CHECK:STDOUT: FieldAccess
+// CHECK:STDOUT: filename:        derive_description.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: StructType, arg0: name_scope1, type: type(TypeType)}

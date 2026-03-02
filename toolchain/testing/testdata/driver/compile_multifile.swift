@@ -24,6 +24,6 @@ func main() -> Int {
 
 // Both functions should appear in combined SemIR output.
 
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: call
+// CHECK:STDOUT: filename:        lib.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: FunctionDecl, arg0: function60000000, arg1: inst_block60000005, type: type(TypeType)}

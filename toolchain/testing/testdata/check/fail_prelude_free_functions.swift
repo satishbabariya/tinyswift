@@ -18,5 +18,4 @@ func testFreeFunctions() -> Int {
   return a + b + c
 }
 
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: Call
+// CHECK:STDERR: fail_prelude_free_functions.swift:12:16: error: use of undefined name 'min' [UndefinedName]

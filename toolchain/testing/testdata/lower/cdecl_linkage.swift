@@ -20,6 +20,5 @@ func answer() -> Int {
 //   - It should have external linkage and default visibility
 //   - The function body should return 42
 
-// CHECK:STDOUT: define
-// CHECK:STDOUT: get_answer
-// CHECK:STDOUT: ret
+// CHECK:STDOUT: define i64 @get_answer() !dbg !4 {
+// CHECK:STDOUT:   ret i64 42, !dbg !7

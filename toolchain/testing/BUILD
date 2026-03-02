@@ -17,7 +17,7 @@ filegroup(
 
 filegroup(
     name = "min_prelude",
-    srcs = glob(["testdata/min_prelude/**/*.swift"]),
+    srcs = glob(["testdata/min_prelude/**/*.tinyswift"]),
     visibility = ["//visibility:public"],
 )
 
@@ -58,6 +58,7 @@ file_test(
         ":min_prelude",
         "//toolchain/install:clang_headers",
         "//toolchain/install:clang_headers_manifest.txt",
+        "//toolchain/install:install_data",
     ],
     tests = [":all_testdata"],
     deps = [

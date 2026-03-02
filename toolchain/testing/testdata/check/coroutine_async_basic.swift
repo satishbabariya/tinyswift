@@ -25,6 +25,6 @@ func test() -> Int {
 //   - blockOn() is detected as a built-in and unwraps the AwaitExpr
 //   - In M100 synchronous mode, the async transform is a pass-through
 
-// CHECK:STDOUT: fn_decl
-// CHECK:STDOUT: call
-// CHECK:STDOUT: return
+// CHECK:STDOUT: filename:        coroutine_async_basic.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst60000023:    {kind: FunctionDecl, arg0: function60000000, arg1: inst_block60000007, type: type(TypeType)}

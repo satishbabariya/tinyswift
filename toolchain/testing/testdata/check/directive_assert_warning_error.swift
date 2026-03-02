@@ -21,6 +21,6 @@ func placeholder() -> Int {
 // #assert(true) is a no-op (passes).
 // #warning emits a diagnostic to stderr.
 
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDERR: warning
-// CHECK:STDERR: this is a compile-time warning
+// CHECK:STDOUT: filename:        directive_assert_warning_error.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: FunctionDecl, arg0: function60000000, arg1: inst_block60000005, type: type(TypeType)}

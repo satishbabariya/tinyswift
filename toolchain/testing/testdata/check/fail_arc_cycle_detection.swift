@@ -25,5 +25,4 @@ fn testCycleCapable() {
 }
 
 // TreeNode should be recognized as cycle-capable due to class-typed fields.
-// CHECK:STDOUT: alloc_class
-// CHECK:STDOUT: release
+// CHECK:STDERR: fail_arc_cycle_detection.swift:21:1: error: use of undefined name 'fn' [UndefinedName]

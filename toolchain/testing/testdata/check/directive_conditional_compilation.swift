@@ -23,5 +23,6 @@ func testConditional() -> Int {
 // The then-branch (let x = 42) is active because DEBUG is defined.
 // SemIR should contain the int_value for 42, and a fn_decl.
 
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: IntValue
+// CHECK:STDOUT: filename:        directive_conditional_compilation.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: FunctionDecl, arg0: function60000000, arg1: inst_block60000005, type: type(TypeType)}

@@ -16,6 +16,8 @@ cc_library(
     srcs = [
         "build_subcommand.cpp",
         "build_subcommand.h",
+        "clang_subcommand.cpp",
+        "clang_subcommand.h",
         "compile_subcommand.cpp",
         "compile_subcommand.h",
         "driver.cpp",
@@ -73,7 +75,9 @@ cc_library(
         "//toolchain/tiny_sil_gen",
         "//toolchain/tiny_sil_optimizer",
         "@llvm-project//clang:codegen",
+        "@llvm-project//clang:driver",
         "@llvm-project//clang:frontend",
+        "@llvm-project//clang:frontend_tool",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:MC",
         "@llvm-project//llvm:Support",

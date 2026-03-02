@@ -30,9 +30,6 @@ func testHash() -> Int {
 // Synthesized hash property for Pair: field_access + int_mul + int_add.
 // Synthesized hash property for Direction: enum_discriminant as hash basis.
 
-// CHECK:STDOUT: StructType
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: FieldAccess
-// CHECK:STDOUT: IntMul
-// CHECK:STDOUT: IntAdd
-// CHECK:STDOUT: EnumDecl
+// CHECK:STDOUT: filename:        derive_hashable.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: StructType, arg0: name_scope1, type: type(TypeType)}

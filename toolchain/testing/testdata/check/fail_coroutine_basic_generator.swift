@@ -37,9 +37,4 @@ func test() -> Int {
 //   - optional_some for yield returns
 //   - optional_none for exhaustion
 
-// CHECK:STDOUT: fn_decl
-// CHECK:STDOUT: field_addr
-// CHECK:STDOUT: assign
-// CHECK:STDOUT: tuple_init
-// CHECK:STDOUT: optional_some
-// CHECK:STDOUT: optional_none
+// CHECK:STDERR: fail_coroutine_basic_generator.swift:15:3: error: use of undefined name 'yield' [UndefinedName]

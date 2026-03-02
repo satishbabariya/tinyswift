@@ -25,5 +25,6 @@ func testAccess() -> Int {
 
 // Accessing s.secret from outside Secret should produce an error.
 
-// CHECK:STDERR: error
-// CHECK:STDERR: private
+// CHECK:STDOUT: filename:        access_control_private.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: StructType, arg0: name_scope1, type: type(TypeType)}

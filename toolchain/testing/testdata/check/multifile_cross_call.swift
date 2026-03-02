@@ -26,6 +26,6 @@ func testCrossCall() -> Int {
 //   - add defined in a.swift
 //   - testCrossCall defined in b.swift, calling add
 
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: call
+// CHECK:STDOUT: filename:        a.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst60000023:    {kind: FunctionDecl, arg0: function60000000, arg1: inst_block60000007, type: type(TypeType)}

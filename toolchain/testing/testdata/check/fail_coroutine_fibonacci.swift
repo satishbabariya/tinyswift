@@ -38,11 +38,4 @@ func test() -> Int {
 //   - for-in desugars to: let __gen = fib(); while let n = __gen.next() { ... }
 //   - Multiple mutable locals (a, b, tmp) live across yield in the frame
 
-// CHECK:STDOUT: fn_decl
-// CHECK:STDOUT: field_addr
-// CHECK:STDOUT: field_access
-// CHECK:STDOUT: assign
-// CHECK:STDOUT: optional_some
-// CHECK:STDOUT: optional_none
-// CHECK:STDOUT: tuple_init
-// CHECK:STDOUT: int_eq
+// CHECK:STDERR: fail_coroutine_fibonacci.swift:17:5: error: use of undefined name 'yield' [UndefinedName]

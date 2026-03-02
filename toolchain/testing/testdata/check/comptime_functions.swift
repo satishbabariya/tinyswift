@@ -31,5 +31,6 @@ func testComptimeFunctions() -> Int {
 // comptime add(a: 10, b: 20) → int_value 30
 // Both calls should be replaced with literal int_value constants in SemIR.
 
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: IntValue
+// CHECK:STDOUT: filename:        comptime_functions.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst60000020:    {kind: FunctionDecl, arg0: function60000000, arg1: inst_block60000007, type: type(TypeType)}

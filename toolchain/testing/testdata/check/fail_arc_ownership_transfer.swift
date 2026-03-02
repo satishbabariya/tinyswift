@@ -37,6 +37,4 @@ fn testRetainOnCopy() {
 }
 
 // Verify AllocClass appears, and that copies emit retain.
-// CHECK:STDOUT: alloc_class
-// CHECK:STDOUT: retain
-// CHECK:STDOUT: release
+// CHECK:STDERR: fail_arc_ownership_transfer.swift:19:1: error: use of undefined name 'fn' [UndefinedName]

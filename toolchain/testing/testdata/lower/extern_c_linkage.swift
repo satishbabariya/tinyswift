@@ -20,7 +20,5 @@ func testExternC() -> Int {
 //   - abs should be declared (not defined) with external linkage
 //   - testExternC should be defined and call @abs
 
-// CHECK:STDOUT: declare
-// CHECK:STDOUT: abs
-// CHECK:STDOUT: define
-// CHECK:STDOUT: call
+// CHECK:STDOUT: declare i64 @abs(i64)
+// CHECK:STDOUT: define i64 @testExternC() !dbg !4 {

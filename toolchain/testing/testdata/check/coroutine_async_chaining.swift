@@ -30,7 +30,6 @@ func test() -> Int {
 //   - blockOn() unwraps the outermost async call
 //   - In M100 synchronous mode, await is a no-op wrapper
 
-// CHECK:STDOUT: fn_decl
-// CHECK:STDOUT: await
-// CHECK:STDOUT: call
-// CHECK:STDOUT: return
+// CHECK:STDOUT: filename:        coroutine_async_chaining.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: FunctionDecl, arg0: function60000000, arg1: inst_block60000005, type: type(TypeType)}

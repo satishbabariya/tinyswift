@@ -1888,16 +1888,11 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
 
   // Create a synthetic function for the closure body.
   SemIR::Function closure_fn;
-  // Anonymous closure name. Use a static vector so StringRefs into it stay
-  // valid for the lifetime of the identifier store (i.e., this compilation).
   {
     static int closure_counter = 0;
-    static llvm::SmallVector<std::string>* closure_name_storage =
-        new llvm::SmallVector<std::string>();
-    closure_name_storage->push_back(
-        "__closure_" + std::to_string(closure_counter++));
+    std::string name = "__closure_" + std::to_string(closure_counter++);
     auto ident_id =
-        context.identifiers().Add(closure_name_storage->back());
+        context.identifiers().Add(context.AllocateString(name));
     closure_fn.name_id = SemIR::NameId::ForIdentifier(ident_id);
   }
   closure_fn.parent_scope_id = context.CurrentScopeId();
@@ -1907,11 +1902,8 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
   llvm::SmallVector<SemIR::InstId> all_param_ids;
   llvm::SmallVector<std::pair<SemIR::NameId, SemIR::InstId>> capture_param_pairs;
   {
-    static auto* capture_param_names = new llvm::SmallVector<std::string>();
     for (int i = 0; i < static_cast<int>(captures.size()); ++i) {
       auto [outer_id, name_id] = captures[i];
-      // Use the original name for the capture param.
-      capture_param_names->push_back("__capture_" + std::to_string(i));
       // Get the type of the captured variable.
       auto cap_type = GetInstType(context, outer_id);
       auto cap_param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
@@ -1940,10 +1932,9 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
     }
   } else if (max_dollar_idx >= 0) {
     // M46: Synthesize $0, $1, ..., $max_dollar_idx implicit parameters.
-    static auto* dollar_param_names = new llvm::SmallVector<std::string>();
     for (int i = 0; i <= max_dollar_idx; ++i) {
-      dollar_param_names->push_back("$" + std::to_string(i));
-      auto ident_id = context.identifiers().Add(dollar_param_names->back());
+      std::string dname = "$" + std::to_string(i);
+      auto ident_id = context.identifiers().Add(context.AllocateString(dname));
       auto dname_id = SemIR::NameId::ForIdentifier(ident_id);
       auto param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),

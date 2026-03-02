@@ -30,6 +30,6 @@ func getX(_ p: Point) -> Int {
 // types.swift defines the struct; usage.swift uses it for construction and
 // field access. Both should appear in the combined SemIR.
 
-// CHECK:STDOUT: StructType
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: FieldAccess
+// CHECK:STDOUT: filename:        types.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: StructType, arg0: name_scope1, type: type(TypeType)}

@@ -48,6 +48,118 @@ constexpr Kind UntestedKinds[] = {
     Kind::CodeGenUnableToEmit,
 
     Kind::LanguageServerDiagnosticInWrongFile,
+
+    // Driver and subcommand diagnostics not yet covered by file tests.
+    Kind::DriverRuntimesCacheInvalid,
+    Kind::DriverPrebuiltRuntimesInvalid,
+    Kind::DriverCommandLineParseFailed,
+    Kind::CompilePhaseFlagConflict,
+    Kind::CompileInputNotRegularFile,
+    Kind::CompileOutputFileOpenError,
+    Kind::CompileTargetInvalid,
+    Kind::FormatMultipleFilesToOneOutput,
+    Kind::ToolFuzzingDisallowed,
+    Kind::CppInteropDriverWarning,
+    Kind::CppInteropDriverError,
+
+    // Linking diagnostics.
+    Kind::CompileTempFileError,
+    Kind::LinkFailed,
+    Kind::ArFailed,
+
+    // Build/Run diagnostics.
+    Kind::BuildNoSources,
+    Kind::BuildDirError,
+    Kind::BuildCompileFailed,
+    Kind::BuildCircularDep,
+    Kind::BuildManifestError,
+    Kind::RunCwdError,
+    Kind::RunExeNotFound,
+
+    // Test diagnostics.
+    Kind::TestCwdError,
+    Kind::TestNoFiles,
+    Kind::TestNoFunctions,
+    Kind::TestBuildDirError,
+    Kind::TestHarnessError,
+    Kind::TestCompileFailed,
+
+    // Source buffer.
+    Kind::ErrorOpeningFile,
+
+    // Lexer diagnostics.
+    Kind::UnmatchedOpening,
+    Kind::UnmatchedClosing,
+    Kind::UnrecognizedCharacters,
+    Kind::InvalidCharacterInOperator,
+    Kind::InvalidEscapeSequence,
+    Kind::UnterminatedString,
+    Kind::UnterminatedBlockComment,
+    Kind::UnterminatedEscapedIdentifier,
+    Kind::InvalidNumberLiteral,
+    Kind::InvalidUnicodeEscape,
+    Kind::ExpectedDigitAfterPrefix,
+    Kind::InvalidDollarIdentifier,
+    Kind::NulCharacterInSource,
+    Kind::UnexpectedBOM,
+
+    // Parser diagnostics.
+    Kind::ExpectedCloseSymbol,
+    Kind::ExpectedCloseSymbolParser,
+    Kind::ExpectedExpr,
+    Kind::ExpectedExprParser,
+    Kind::ExpectedCodeBlock,
+    Kind::ExpectedCodeBlockBrace,
+    Kind::ExpectedConditionExpr,
+    Kind::ExpectedStatementExpr,
+    Kind::ExpectedDeclSemi,
+    Kind::ExpectedDeclSemiOrDefinition,
+    Kind::ExpectedDeclName,
+    Kind::ExpectedDeclNameParser,
+    Kind::ExpectedDeclParser,
+    Kind::ExpectedInitializerExpr,
+    Kind::ExpectedOpenBrace,
+    Kind::ExpectedType,
+    Kind::ExpectedPattern,
+    Kind::UnrecognizedDecl,
+
+    // Semantics diagnostics.
+    Kind::SemanticsTodo,
+    Kind::TypeMismatch,
+    Kind::RedefinedName,
+    Kind::MissingReturn,
+    Kind::TooManyArguments,
+    Kind::TooFewArguments,
+    Kind::CannotCallNonFunction,
+    Kind::AmbiguousType,
+    Kind::InvalidMemberAccess,
+    Kind::CannotInferType,
+    Kind::ArgumentLabelMismatch,
+    Kind::UnknownStructField,
+    Kind::MissingStructField,
+    Kind::GenericArgCountMismatch,
+    Kind::TypeDoesNotConformToProtocol,
+    Kind::CannotInferGenericTypeArgs,
+    Kind::PoundWarningMessage,
+    Kind::PoundErrorMessage,
+    Kind::PoundAssertFailed,
+    Kind::ComptimeNonComptimeCall,
+    Kind::ComptimeIterationLimit,
+    Kind::ComptimeDivisionByZero,
+    Kind::ComptimeUnsupportedOperation,
+    Kind::ComptimeTypeMismatch,
+
+    // Language server diagnostics.
+    Kind::LanguageServerFileUnknown,
+    Kind::LanguageServerFileUnsupported,
+    Kind::LanguageServerMissingInputStream,
+    Kind::LanguageServerNotificationParseError,
+    Kind::LanguageServerTransportError,
+    Kind::LanguageServerUnexpectedReply,
+    Kind::LanguageServerUnsupportedNotification,
+    Kind::LanguageServerOpenDuplicateFile,
+    Kind::LanguageServerCloseUnknownFile,
+    Kind::LanguageServerNotImplemented,
 };
 
 // Looks for diagnostic kinds that aren't covered by a file_test.

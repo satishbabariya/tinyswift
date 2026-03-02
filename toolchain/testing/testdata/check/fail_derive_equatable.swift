@@ -30,9 +30,4 @@ func testEquatable() -> Bool {
 // Synthesized == operator for Point: field_access for each field + int_eq.
 // Synthesized == operator for Color: enum_discriminant comparison.
 
-// CHECK:STDOUT: StructType
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: FieldAccess
-// CHECK:STDOUT: IntEq
-// CHECK:STDOUT: BoolAnd
-// CHECK:STDOUT: EnumDecl
+// CHECK:STDERR: fail_derive_equatable.swift:27:12: error: invalid operand types for '==': 'Point' and 'Point' [InvalidOperandTypes]

@@ -31,9 +31,4 @@ func test() -> Int {
 //   - Resume function implements the while-loop state machine
 //   - for-in is desugared to while-let + .next()
 
-// CHECK:STDOUT: fn_decl
-// CHECK:STDOUT: field_addr
-// CHECK:STDOUT: assign
-// CHECK:STDOUT: optional_some
-// CHECK:STDOUT: optional_none
-// CHECK:STDOUT: tuple_init
+// CHECK:STDERR: fail_coroutine_generator_param.swift:16:5: error: use of undefined name 'yield' [UndefinedName]

@@ -10,6 +10,7 @@
 #include "common/pretty_stack_trace_function.h"
 #include "common/version.h"
 #include "toolchain/driver/build_subcommand.h"
+#include "toolchain/driver/clang_subcommand.h"
 #include "toolchain/driver/compile_subcommand.h"
 #include "toolchain/driver/format_subcommand.h"
 #include "toolchain/driver/language_server_subcommand.h"
@@ -27,8 +28,10 @@ struct Options {
   bool verbose = false;
   bool fuzzing = false;
   bool include_diagnostic_kind = false;
+  llvm::StringRef prebuilt_runtimes;
 
   BuildSubcommand build;
+  ClangSubcommand clang;
   CompileSubcommand compile;
   FormatSubcommand format;
   LanguageServerSubcommand language_server;
@@ -76,7 +79,16 @@ When printing diagnostics, include the diagnostic kind as part of output.
       },
       [&](auto& arg_b) { arg_b.Set(&include_diagnostic_kind); });
 
+  b.AddStringOption(
+      {
+          .name = "prebuilt-runtimes",
+          .value_name = "PATH",
+          .help = "Path to prebuilt runtime libraries.",
+      },
+      [&](auto& arg_b) { arg_b.Set(&prebuilt_runtimes); });
+
   build.AddTo(b, &selected_subcommand);
+  clang.AddTo(b, &selected_subcommand);
   compile.AddTo(b, &selected_subcommand);
   format.AddTo(b, &selected_subcommand);
   language_server.AddTo(b, &selected_subcommand);

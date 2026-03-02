@@ -15,5 +15,6 @@ func testBoolExtensions() -> String {
   return d
 }
 
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: Call
+// CHECK:STDOUT: filename:        prelude_bool_extensions.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: FunctionDecl, arg0: function60000000, arg1: inst_block60000005, type: type(TypeType)}

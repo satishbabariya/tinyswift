@@ -30,6 +30,6 @@ public func makeCounter() -> Counter {
 // The struct, its methods, and the public function should all appear in SemIR.
 // Private field access within the struct is allowed.
 
-// CHECK:STDOUT: StructType
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: FieldAccess
+// CHECK:STDOUT: filename:        access_control_basic.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: StructType, arg0: name_scope1, type: type(TypeType)}

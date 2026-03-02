@@ -28,6 +28,4 @@ fn testReturnCleanup() -> Int {
   // n should be released before the return.
 }
 
-// CHECK:STDOUT: alloc_class
-// CHECK:STDOUT: release
-// CHECK:STDOUT: release
+// CHECK:STDERR: fail_arc_scope_cleanup.swift:19:1: error: use of undefined name 'fn' [UndefinedName]

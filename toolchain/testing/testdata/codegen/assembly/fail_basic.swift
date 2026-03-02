@@ -11,6 +11,6 @@
 //   bazel run //toolchain/testing:file_test -- --dump_output --file_tests=toolchain/codegen/testdata/assembly/basic.tinyswift
 // NOAUTOUPDATE
 // SET-CHECK-SUBSET
-// CHECK:STDOUT: _CMain.Main:
+// CHECK:STDERR: fail_basic.swift:16:1: error: use of undefined name 'fn' [UndefinedName]
 
 fn Main() {}

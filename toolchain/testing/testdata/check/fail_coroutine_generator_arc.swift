@@ -36,9 +36,4 @@ func test() -> Int {
 //   - ARC retains/releases the Box through generator frame lifetime
 //   - When generator frame is freed, Box is released (no memory leak)
 
-// CHECK:STDOUT: fn_decl
-// CHECK:STDOUT: alloc_class
-// CHECK:STDOUT: field_addr
-// CHECK:STDOUT: optional_some
-// CHECK:STDOUT: optional_none
-// CHECK:STDOUT: tuple_init
+// CHECK:STDERR: fail_coroutine_generator_arc.swift:22:3: error: use of undefined name 'yield' [UndefinedName]

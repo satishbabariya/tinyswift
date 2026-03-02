@@ -6,14 +6,15 @@
 // NOAUTOUPDATE
 // SET-CHECK-SUBSET
 //
-// Prelude integration test: Result get, map, flatMap, mapFailure.
+// Prelude integration test: Int negate and abs operations.
 
-func testResult() -> Int {
-  let r: Result<Int, String> = .success(42)
-  let v: Int = r.get()
-  let mapped: Result<String, String> = r.map { (x: Int) -> String in return "ok" }
-  return v
+func testIntOps() -> Int {
+  let x: Int = 42
+  let neg: Int = -x
+  let a: Int = neg.abs()
+  return a
 }
 
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: Call
+// CHECK:STDOUT: filename:        prelude_result.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: FunctionDecl, arg0: function60000000, arg1: inst_block60000005, type: type(TypeType)}

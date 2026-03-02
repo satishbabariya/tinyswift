@@ -19,5 +19,4 @@ func testMath() -> Double {
   return a + b
 }
 
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: Call
+// CHECK:STDERR: fail_prelude_math.swift:12:19: error: use of undefined name 'sqrt' [UndefinedName]

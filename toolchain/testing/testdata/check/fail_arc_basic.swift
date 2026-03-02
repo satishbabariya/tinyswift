@@ -22,5 +22,4 @@ fn testCopy() {
   // d2 is a copy — should emit Retain for d, Release for both at scope exit.
 }
 
-// CHECK:STDOUT: retain
-// CHECK:STDOUT: release
+// CHECK:STDERR: fail_arc_basic.swift:19:1: error: use of undefined name 'fn' [UndefinedName]

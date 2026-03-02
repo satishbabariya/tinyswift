@@ -7,4 +7,3 @@
 // --- min_prelude/none.tinyswift
 
 // A minimal prelude that avoids importing any prelude library at all.
-package MinPreludeNone;

@@ -734,10 +734,8 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
     }
 
     // Create a synthetic index VarStorage (e.g., `_for_idx`).
-    static auto* idx_names = new llvm::SmallVector<std::string>();
-    idx_names->push_back("_for_idx");
     auto idx_ident_id =
-        context.identifiers().Add(llvm::StringRef(idx_names->back()));
+        context.identifiers().Add(context.AllocateString("_for_idx"));
     auto idx_name_id = SemIR::NameId::ForIdentifier(idx_ident_id);
 
     auto idx_var_id = context.AddInst(SemIR::LocIdAndInst(

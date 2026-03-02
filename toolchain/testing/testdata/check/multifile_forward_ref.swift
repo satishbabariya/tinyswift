@@ -30,7 +30,6 @@ func testForwardRef() -> Int {
 // foo() calls bar() (forward reference from a.swift to b.swift).
 // testForwardRef() calls foo() (back reference from b.swift to a.swift).
 
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: call
+// CHECK:STDOUT: filename:        a.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: FunctionDecl, arg0: function60000000, arg1: inst_block60000005, type: type(TypeType)}

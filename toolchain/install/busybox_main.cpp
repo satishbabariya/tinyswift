@@ -15,6 +15,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LLVMDriver.h"
 #include "toolchain/base/install_paths.h"
+#include "toolchain/driver/clang_subcommand.h"
 #include "toolchain/driver/driver.h"
 #include "toolchain/install/busybox_info.h"
 
@@ -49,6 +50,21 @@ static auto Main(int argc, char** argv) -> ErrorOr<int> {
   llvm::SmallVector<llvm::StringRef> raw_args;
   raw_args.append(argv + 1, argv + argc);
 
+  // When the Clang driver re-invokes the busybox for cc1 jobs (out-of-process
+  // fallback for multi-input compilations), intercept -cc1 and handle it
+  // directly in-process rather than routing through the TinySwift driver.
+  if (busybox_info.mode &&
+      (*busybox_info.mode == "clang" || *busybox_info.mode == "clang++" ||
+       *busybox_info.mode == "clang-cl" || *busybox_info.mode == "clang-cpp") &&
+      !raw_args.empty() && raw_args[0] == "-cc1") {
+    // Build const char* argv for the cc1 handler.
+    llvm::SmallVector<const char*> cc1_argv;
+    for (const auto& arg : raw_args) {
+      cc1_argv.push_back(arg.data());
+    }
+    return ExecuteCC1InProcess(cc1_argv);
+  }
+
   llvm::SmallVector<llvm::StringRef> args;
   args.reserve(argc + 1);
   if (busybox_info.mode) {
@@ -57,8 +73,6 @@ static auto Main(int argc, char** argv) -> ErrorOr<int> {
     // to a specific subcommand with some flags set and then pass the remaining
     // busybox arguments as positional arguments to that subcommand.
     //
-    // TODO: Add relevant flags to the `clang` subcommand and add `clang`-based
-    // symlinks to this like `clang++`.
     auto subcommand_args =
         llvm::StringSwitch<llvm::SmallVector<llvm::StringRef>>(
             *busybox_info.mode)

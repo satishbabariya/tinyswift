@@ -22,7 +22,6 @@ func testSourceLocation() -> Int {
 // #column → int_value (column number)
 // #function → string_literal (function name)
 
-// CHECK:STDOUT: FunctionDecl
-// CHECK:STDOUT: StringLiteral
-// CHECK:STDOUT: IntValue
-// CHECK:STDOUT: StringLiteral
+// CHECK:STDOUT: filename:        directive_source_location.swift
+// CHECK:STDOUT:     inst60000008:    {kind: IntType, arg0: signed, arg1: inst7, type: type(TypeType)}
+// CHECK:STDOUT:     inst6000001D:    {kind: FunctionDecl, arg0: function60000000, arg1: inst_block60000005, type: type(TypeType)}
