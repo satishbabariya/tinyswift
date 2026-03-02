@@ -1653,15 +1653,14 @@ auto HandleDoStatement(Context& context, Parse::NodeId node_id) -> void {
         SemIR::LocId(node_id),
         SemIR::ErrorClear{}));
 
-    // Execute the first catch clause body.
+    // Execute all catch clause bodies.
     for (auto catch_node : catch_clause_nodes) {
       for (auto cc : context.children_source_order(catch_node)) {
         if (context.node_kind(cc) == Parse::NodeKind::CodeBlock) {
           HandleCodeBlock(context, cc);
-          break;
+          break;  // Only one CodeBlock per catch clause.
         }
       }
-      break;  // Only handle first catch clause.
     }
 
     auto tmp_id = context.PopInstBlock();

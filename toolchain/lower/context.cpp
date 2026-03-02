@@ -291,6 +291,31 @@ auto Context::GetOrCreateDIType(SemIR::TypeId type_id) -> llvm::DIType* {
                                             llvm::dwarf::DW_ATE_signed);
       break;
     }
+    case SemIR::InstKind::ArrayType:
+      result = di_builder_->createPointerType(
+          di_builder_->createBasicType("Array", 64, llvm::dwarf::DW_ATE_address),
+          64);
+      break;
+    case SemIR::InstKind::DictType:
+      result = di_builder_->createPointerType(
+          di_builder_->createBasicType("Dictionary", 64, llvm::dwarf::DW_ATE_address),
+          64);
+      break;
+    case SemIR::InstKind::HashSetType:
+      result = di_builder_->createPointerType(
+          di_builder_->createBasicType("Set", 64, llvm::dwarf::DW_ATE_address),
+          64);
+      break;
+    case SemIR::InstKind::ClosureType:
+      result = di_builder_->createPointerType(
+          di_builder_->createBasicType("Closure", 64, llvm::dwarf::DW_ATE_address),
+          64);
+      break;
+    case SemIR::InstKind::GeneratorType:
+      result = di_builder_->createPointerType(
+          di_builder_->createBasicType("Generator", 64, llvm::dwarf::DW_ATE_address),
+          64);
+      break;
     default:
       // Fall back to an unspecified type.
       result = di_builder_->createBasicType("_", 64, llvm::dwarf::DW_ATE_signed);

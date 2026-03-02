@@ -696,10 +696,15 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     // String operations
     // -----------------------------------------------------------------------
     case SemIR::InstKind::StringConcat: {
-      // String concatenation is a runtime operation - for now, just forward lhs.
       auto op = inst.As<SemIR::StringConcat>();
       auto* lhs = context.GetLocal(op.lhs_id);
-      context.SetLocal(inst_id, lhs);
+      auto* rhs = context.GetLocal(op.rhs_id);
+      auto* ptr_ty = llvm::PointerType::get(context.llvm_context(), 0);
+      auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty, ptr_ty}, false);
+      auto fn = context.module().getOrInsertFunction(
+          "__tinyswift_string_concat", fn_type);
+      context.SetLocal(inst_id,
+                        context.builder().CreateCall(fn, {lhs, rhs}));
       break;
     }
 

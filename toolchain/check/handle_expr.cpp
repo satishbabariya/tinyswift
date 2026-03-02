@@ -68,6 +68,7 @@ auto IsStringType(Context& context, SemIR::TypeId type_id) -> bool {
 
 // Returns true if the type is any integer type (Int, UInt, Int8-Int64,
 // UInt8-UInt64, Bool). Checks if the underlying type instruction is IntType.
+[[maybe_unused]]
 auto IsAnyIntegerType(Context& context, SemIR::TypeId type_id) -> bool {
   if (!type_id.has_value() || !type_id.is_concrete()) return false;
   auto type_inst_id = context.types().GetTypeInstId(type_id);
@@ -618,7 +619,7 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
   // M92: Handle file I/O builtins.
   if (is_file_io_call) {
     auto string_type = context.GetBuiltinType("String");
-    auto bool_type = context.GetBuiltinType("Int");  // Bool is Int in TinySwift
+    auto bool_type = context.GetBuiltinType("Bool");
 
     if (file_io_func_name == "readLine") {
       return context.AddInst(SemIR::LocIdAndInst(
@@ -670,6 +671,7 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
   if (is_os_call) {
     auto string_type = context.GetBuiltinType("String");
     auto int_type = context.GetBuiltinType("Int");
+    auto bool_type = context.GetBuiltinType("Bool");
 
     if (os_func_name == "getArgs") {
       return context.AddInst(SemIR::LocIdAndInst(
@@ -691,14 +693,14 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
     if (os_func_name == "setEnv" && labeled_args.size() >= 2) {
       return context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
-          SemIR::EnvSet{.type_id = int_type,
+          SemIR::EnvSet{.type_id = bool_type,
                         .key_id = labeled_args[0].value_id,
                         .value_id = labeled_args[1].value_id}));
     }
     if (os_func_name == "createDirectory" && labeled_args.size() >= 1) {
       return context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
-          SemIR::FsMkdir{.type_id = int_type,
+          SemIR::FsMkdir{.type_id = bool_type,
                          .path_id = labeled_args[0].value_id}));
     }
     if (os_func_name == "listDirectory" && labeled_args.size() >= 1) {
@@ -710,13 +712,13 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
     if (os_func_name == "isDirectory" && labeled_args.size() >= 1) {
       return context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
-          SemIR::FsIsDir{.type_id = int_type,
+          SemIR::FsIsDir{.type_id = bool_type,
                          .path_id = labeled_args[0].value_id}));
     }
     if (os_func_name == "copyFile" && labeled_args.size() >= 2) {
       return context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
-          SemIR::FsCopy{.type_id = int_type,
+          SemIR::FsCopy{.type_id = bool_type,
                         .src_id = labeled_args[0].value_id,
                         .dst_id = labeled_args[1].value_id}));
     }
@@ -762,9 +764,10 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
                           .data_id = labeled_args[1].value_id}));
     }
     if (net_func_name == "tcpClose" && labeled_args.size() >= 1) {
+      auto bool_type = context.GetBuiltinType("Bool");
       return context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
-          SemIR::TcpClose{.type_id = int_type,
+          SemIR::TcpClose{.type_id = bool_type,
                           .fd_id = labeled_args[0].value_id}));
     }
     return SemIR::InstId::None;
@@ -969,10 +972,10 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
       llvm::StringRef method_text = method_ident.has_value()
           ? context.identifiers().Get(method_ident) : llvm::StringRef();
       if (method_text == "contains" && arg_id.has_value()) {
-        auto int_type = context.GetBuiltinType("Int");
+        auto bool_type = context.GetBuiltinType("Bool");
         return context.AddInst(SemIR::LocIdAndInst(
             SemIR::LocId(node_id),
-            SemIR::DictContains{.type_id = int_type,
+            SemIR::DictContains{.type_id = bool_type,
                                 .dict_id = dmr->dict_id,
                                 .key_id = arg_id}));
       }
@@ -1000,10 +1003,10 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
                              .elem_id = arg_id}));
       }
       if (method_text == "contains" && arg_id.has_value()) {
-        auto int_type = context.GetBuiltinType("Int");
+        auto bool_type = context.GetBuiltinType("Bool");
         return context.AddInst(SemIR::LocIdAndInst(
             SemIR::LocId(node_id),
-            SemIR::SetContains{.type_id = int_type,
+            SemIR::SetContains{.type_id = bool_type,
                                .set_id = smr->set_id,
                                .elem_id = arg_id}));
       }
@@ -1672,9 +1675,21 @@ auto HandleCallExpr(Context& context, Parse::NodeId node_id)
       }
     } else if (callee_inst.Is<SemIR::ValueParam>()) {
       // --- Higher-order function call via parameter (e.g., f: (Int) -> Int) ---
-      // Function types lower to opaque ptr; use Int as default return type.
-      // lower.cpp indirect-call path builds the LLVM FunctionType dynamically.
+      // Try to extract return type from ClosureType; fall back to Int.
       type_id = context.GetBuiltinType("Int");
+      auto param_type = callee_inst.type_id();
+      if (param_type.has_value()) {
+        auto param_type_inst_id = context.types().GetTypeInstId(param_type);
+        if (param_type_inst_id.has_value()) {
+          auto param_type_inst = context.insts().Get(param_type_inst_id);
+          if (auto ct = param_type_inst.TryAs<SemIR::ClosureType>()) {
+            if (ct->return_type_id.has_value()) {
+              type_id = context.types().GetTypeIdForTypeInstId(
+                  ct->return_type_id);
+            }
+          }
+        }
+      }
       for (auto& arg : labeled_args) {
         ordered_args.push_back(arg.value_id);
       }
@@ -1811,7 +1826,10 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
     }
   }
 
-  // Use Int as default parameter/return type for minimal closure support.
+  // Default parameter/return type when no type annotation or expected type
+  // is available.  TODO: implement expected-type propagation from call sites
+  // so closures like `map { $0 + 1 }` can infer param types from the callee
+  // signature rather than defaulting to Int.
   auto int_type = context.GetBuiltinType("Int");
 
   // M53: Pre-scan body for outer variable captures.
@@ -2005,8 +2023,18 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
   context.inst_blocks().ReplacePlaceholder(
       captures_block_id, llvm::ArrayRef<SemIR::InstId>(capture_outer_ids));
 
-  // Emit ClosureExpr instruction.
-  auto closure_type_id = context.GetBuiltinType("Int");  // simplified
+  // Emit ClosureExpr instruction with proper ClosureType.
+  auto return_type_inst_id = context.functions().Get(function_id).return_type_inst_id;
+  if (!return_type_inst_id.has_value()) {
+    return_type_inst_id = context.types().GetTypeInstId(
+        context.GetBuiltinType("Int"));
+  }
+  auto closure_type_inst_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::ClosureType{.type_id = SemIR::TypeType::TypeId,
+                         .return_type_id = return_type_inst_id}));
+  auto closure_type_id = SemIR::TypeId::ForTypeConstant(
+      SemIR::ConstantId::ForConcreteConstant(closure_type_inst_id));
   return context.AddInst(SemIR::LocIdAndInst(
       SemIR::LocId(node_id),
       SemIR::ClosureExpr{.type_id = closure_type_id,
@@ -3669,10 +3697,20 @@ auto HandleAssignmentExpr(Context& context, Parse::NodeId node_id)
                         context.inst_blocks().ReplacePlaceholder(
                             setter_args_block,
                             llvm::ArrayRef<SemIR::InstId>(setter_args));
+                        // Setter returns Void; use ErrorInst::TypeId.
+                        auto setter_ret_type = SemIR::ErrorInst::TypeId;
+                        auto setter_inst = context.insts().Get(setter_inst_id);
+                        if (auto fd = setter_inst.TryAs<SemIR::FunctionDecl>()) {
+                          auto& sfn = context.functions().Get(fd->function_id);
+                          if (sfn.return_type_inst_id.has_value()) {
+                            setter_ret_type = context.types().GetTypeIdForTypeInstId(
+                                sfn.return_type_inst_id);
+                          }
+                        }
                         return context.AddInst(SemIR::LocIdAndInst(
                             SemIR::LocId(node_id),
                             SemIR::Call{
-                                .type_id = context.GetBuiltinType("Int"),
+                                .type_id = setter_ret_type,
                                 .callee_id = setter_inst_id,
                                 .args_id = setter_args_block}));
                       }
@@ -3835,8 +3873,19 @@ auto HandleTernaryExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId
         SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
   }
 
-  // Use Int as the result type (covers the common case).
+  // Pre-evaluate then-branch to infer result type.
+  context.PushInstBlock();
+  auto then_val = HandleExpr(context, then_node);
+  auto pre_then_block = context.PopInstBlock();
+
+  // Infer result type from then-branch (falls back to Int).
   auto result_type = context.GetBuiltinType("Int");
+  if (then_val.has_value()) {
+    auto then_type = context.insts().Get(then_val).type_id();
+    if (then_type.has_value()) {
+      result_type = then_type;
+    }
+  }
 
   // Allocate a temporary VarStorage for the result.
   auto temp_id = context.AddInst(SemIR::LocIdAndInst(
@@ -3863,22 +3912,21 @@ auto HandleTernaryExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId
   context.SwitchInstBlock(merge_block_id);
   context.AddBodyBlock(merge_block_id);
 
-  // Build then block: evaluate then_expr, assign to temp, branch to merge.
+  // Build then block using pre-evaluated instructions.
   {
-    context.PushInstBlock();
-    auto then_val = HandleExpr(context, then_node);
+    llvm::SmallVector<SemIR::InstId> then_insts_vec;
+    auto pre_insts = context.inst_blocks().Get(pre_then_block);
+    then_insts_vec.append(pre_insts.begin(), pre_insts.end());
     if (then_val.has_value()) {
-      context.AddInst(SemIR::LocIdAndInst(
+      then_insts_vec.push_back(context.AddInstInNoBlock(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
-          SemIR::Assign{.lhs_id = temp_id, .rhs_id = then_val}));
+          SemIR::Assign{.lhs_id = temp_id, .rhs_id = then_val})));
     }
-    context.AddInst(SemIR::LocIdAndInst(
+    then_insts_vec.push_back(context.AddInstInNoBlock(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
-        SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
-    auto tmp = context.PopInstBlock();
-    auto insts = context.inst_blocks().Get(tmp);
+        SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)})));
     context.inst_blocks().ReplacePlaceholder(
-        then_block_id, llvm::ArrayRef<SemIR::InstId>(insts));
+        then_block_id, llvm::ArrayRef<SemIR::InstId>(then_insts_vec));
     context.AddBodyBlock(then_block_id);
   }
 
@@ -3982,10 +4030,18 @@ auto HandleArrayExpr(Context& context, Parse::NodeId node_id)
         SemIR::DynamicArrayInit{.type_id = int_type}));
   }
 
-  // Infer element type from first element.
+  // Infer element type from first element, then verify all elements match.
   SemIR::TypeId elem_type_id = SemIR::ErrorInst::TypeId;
   if (!elem_ids.empty() && elem_ids[0].has_value()) {
     elem_type_id = context.insts().Get(elem_ids[0]).type_id();
+    for (size_t i = 1; i < elem_ids.size(); ++i) {
+      if (!elem_ids[i].has_value()) continue;
+      auto other_type = context.insts().Get(elem_ids[i]).type_id();
+      if (other_type.has_value() && other_type != elem_type_id) {
+        context.emitter().Emit(context.node_token(node_id), AmbiguousType);
+        break;
+      }
+    }
   }
 
   auto block_id = context.inst_blocks().AddPlaceholder();

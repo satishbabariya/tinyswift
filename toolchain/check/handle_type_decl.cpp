@@ -1328,23 +1328,27 @@ auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void {
     for (auto sc : context.children_source_order(start_node_id)) {
       if (context.node_kind(sc) == Parse::NodeKind::InheritanceClause) {
         // InheritanceClause children: InheritanceClauseStart + IdentifierType(s).
+        // In Swift, `class Foo: Bar, Proto1, Proto2` — only a ClassType is a
+        // superclass; StructType entries are protocol conformances (handled
+        // separately via extensions in M25/M59).
         for (auto ic : context.children_source_order(sc)) {
-          if (context.node_kind(ic) == Parse::NodeKind::IdentifierType) {
-            auto tok = context.node_token(ic);
-            auto super_text = context.token_text(tok);
-            auto super_ident_id = context.identifiers().Lookup(super_text);
-            if (super_ident_id.has_value()) {
-              auto super_name_id = SemIR::NameId::ForIdentifier(super_ident_id);
-              auto super_inst_id = context.LookupName(super_name_id);
-              if (super_inst_id.has_value()) {
-                auto super_inst = context.insts().Get(super_inst_id);
-                if (auto ct = super_inst.TryAs<SemIR::ClassType>()) {
-                  superclass_scope_id = ct->name_scope_id;
-                }
-              }
-            }
-            break;  // Only handle single inheritance.
+          if (context.node_kind(ic) != Parse::NodeKind::IdentifierType) {
+            continue;
           }
+          auto tok = context.node_token(ic);
+          auto super_text = context.token_text(tok);
+          auto super_ident_id = context.identifiers().Lookup(super_text);
+          if (!super_ident_id.has_value()) continue;
+          auto super_name_id = SemIR::NameId::ForIdentifier(super_ident_id);
+          auto super_inst_id = context.LookupName(super_name_id);
+          if (!super_inst_id.has_value()) continue;
+          auto super_inst = context.insts().Get(super_inst_id);
+          if (auto ct = super_inst.TryAs<SemIR::ClassType>()) {
+            superclass_scope_id = ct->name_scope_id;
+            break;  // Single superclass found — stop looking.
+          }
+          // Non-class types (protocols) are skipped here; conformance
+          // is handled through the extension mechanism (M59).
         }
         break;
       }

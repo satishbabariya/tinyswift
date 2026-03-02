@@ -631,7 +631,9 @@ void SynthesizeHashable(Context& context, SemIR::InstId type_inst_id,
     auto float_type = context.GetBuiltinType("Float");
 
     if (fields[i].type_id == string_type) {
-      // String: use StringLen as simple hash (good enough for basic synthesis).
+      // String: use StringLen as hash proxy.  A proper FNV-1a hash would
+      // require character iteration instructions; StringLen is a reasonable
+      // trade-off for synthesized Hashable conformance.
       field_hash = context.AddInst(SemIR::LocIdAndInst::UncheckedLoc(
           SemIR::LocId::None,
           SemIR::StringLen{.type_id = int_type_id,

@@ -334,7 +334,15 @@ auto VerifyGenericConstraints(Context& context,
     // Look up the protocol by name.
     auto protocol_inst_id = context.LookupName(constraint_name_id);
     if (!protocol_inst_id.has_value()) {
-      continue;  // Protocol not found — skip (warning would be nice but not blocking).
+      // Protocol not found — emit diagnostic.
+      auto constraint_ident = constraint_name_id.AsIdentifierId();
+      if (constraint_ident.has_value()) {
+        std::string proto_name = context.identifiers().Get(constraint_ident).str();
+        context.EmitError(call_node_id, TypeDoesNotConformToProtocol,
+                          "<unknown>", proto_name);
+      }
+      all_satisfied = false;
+      continue;
     }
 
     // Get the protocol's scope.
@@ -361,17 +369,66 @@ auto VerifyGenericConstraints(Context& context,
       type_scope_id = ct->name_scope_id;
     }
     if (!type_scope_id.has_value()) {
-      continue;  // Builtin types don't have scopes — skip for now.
+      // Builtin types (Int, String, Bool, etc.) don't have scopes.
+      // They cannot satisfy user-defined protocol constraints.
+      auto constraint_ident = constraint_name_id.AsIdentifierId();
+      std::string protocol_name = constraint_ident.has_value()
+          ? context.identifiers().Get(constraint_ident).str()
+          : "<unknown>";
+      context.EmitError(call_node_id, TypeDoesNotConformToProtocol,
+                        context.GetTypeName(type_args[i]), protocol_name);
+      all_satisfied = false;
+      continue;
     }
 
-    // Check that all required methods in the protocol scope exist in the type scope.
+    // Check that all required methods in the protocol scope exist in the type
+    // scope with matching signatures (arity and return type).
     auto& protocol_scope = context.name_scopes().Get(protocol_scope_id);
     auto& type_scope = context.name_scopes().Get(type_scope_id);
     for (auto& [proto_name_idx, proto_inst_id] : protocol_scope.names) {
       auto proto_inst = context.insts().Get(proto_inst_id);
-      if (proto_inst.Is<SemIR::FunctionDecl>()) {
-        // Check if the type has a matching method name.
-        if (type_scope.names.find(proto_name_idx) == type_scope.names.end()) {
+      if (!proto_inst.Is<SemIR::FunctionDecl>()) {
+        continue;
+      }
+
+      auto type_it = type_scope.names.find(proto_name_idx);
+      if (type_it == type_scope.names.end()) {
+        // Method not found at all.
+        auto constraint_ident = constraint_name_id.AsIdentifierId();
+        std::string protocol_name = constraint_ident.has_value()
+            ? context.identifiers().Get(constraint_ident).str()
+            : "<unknown>";
+        context.EmitError(call_node_id, TypeDoesNotConformToProtocol,
+                          context.GetTypeName(type_args[i]), protocol_name);
+        all_satisfied = false;
+        continue;
+      }
+
+      // Method found by name — now check signature compatibility.
+      auto type_method_inst = context.insts().Get(type_it->second);
+      if (auto proto_fn_decl = proto_inst.TryAs<SemIR::FunctionDecl>();
+          proto_fn_decl && type_method_inst.Is<SemIR::FunctionDecl>()) {
+        auto type_fn_decl = type_method_inst.As<SemIR::FunctionDecl>();
+        auto& proto_fn = context.functions().Get(proto_fn_decl->function_id);
+        auto& type_fn = context.functions().Get(type_fn_decl.function_id);
+
+        // Check parameter arity.
+        int proto_arity = 0;
+        int type_arity = 0;
+        if (proto_fn.call_params_id.has_value()) {
+          proto_arity = static_cast<int>(
+              context.inst_blocks().Get(proto_fn.call_params_id).size());
+        }
+        if (type_fn.call_params_id.has_value()) {
+          type_arity = static_cast<int>(
+              context.inst_blocks().Get(type_fn.call_params_id).size());
+        }
+        // Protocol methods don't have a `self` param but type methods do.
+        // Adjust: type methods have +1 param (self) compared to protocol decl.
+        if (type_arity > 0 && !type_fn.is_static) {
+          type_arity -= 1;
+        }
+        if (proto_arity != type_arity) {
           auto constraint_ident = constraint_name_id.AsIdentifierId();
           std::string protocol_name = constraint_ident.has_value()
               ? context.identifiers().Get(constraint_ident).str()
@@ -439,9 +496,10 @@ auto InferTypeArgs(Context& context,
                       if (arg_type.has_value()) {
                         if (!inferred[gi].has_value()) {
                           inferred[gi] = arg_type;
+                        } else if (inferred[gi] != arg_type) {
+                          // Conflicting inference — cannot unify.
+                          return {};
                         }
-                        // If already inferred, verify consistency.
-                        // (skip for now — first inference wins)
                       }
                     }
                   }

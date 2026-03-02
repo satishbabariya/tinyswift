@@ -51,10 +51,12 @@ auto Loc::FormatSnippet(llvm::raw_ostream& out, int indent) const -> void {
 
   int byte_offset = 0;
   for (char c : line) {
-    // TODO: Handle tab characters.
-    // TODO: Print Unicode characters directly, and use
-    // llvm::sys::unicode::getColumnWidth to determine their width.
-    if (std::isprint(static_cast<unsigned char>(c))) {
+    if (c == '\t') {
+      // Expand tabs to spaces (align to 8-column tab stops).
+      int spaces = 8 - (column % 8);
+      for (int s = 0; s < spaces; ++s) out << ' ';
+      column += spaces;
+    } else if (std::isprint(static_cast<unsigned char>(c))) {
       out << c;
       ++column;
     } else {

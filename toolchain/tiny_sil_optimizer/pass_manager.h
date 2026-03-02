@@ -25,10 +25,10 @@ auto RunDefiniteInitialization(TinySIL::SILModule& module,
 auto RunReturnAnalysis(TinySIL::SILModule& module,
                        llvm::raw_ostream* error_stream) -> bool;
 
-// Individual performance passes.
-auto RunMem2Reg(TinySIL::SILFunction& function) -> void;
+// Individual performance passes.  Return true if the function was modified.
+auto RunMem2Reg(TinySIL::SILFunction& function) -> bool;
 // RunARCElimination is declared in arc_elim.h (with optional stats parameter).
-auto RunDeadCodeElimination(TinySIL::SILFunction& function) -> void;
+auto RunDeadCodeElimination(TinySIL::SILFunction& function) -> bool;
 
 }  // namespace TinySwift::TinySILOptimizer
 

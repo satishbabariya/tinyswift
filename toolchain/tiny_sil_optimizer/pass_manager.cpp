@@ -34,14 +34,22 @@ auto RunPerformancePasses(TinySIL::SILModule& module) -> void {
 
   for (auto& fn : module.functions) {
     if (!fn->is_declaration && fn->hasBody()) {
-      // Pass 1: Mem2Reg — promote alloc_stack to SSA values.
-      RunMem2Reg(*fn);
+      // Run passes in a fixpoint loop — each pass may enable others.
+      constexpr int kMaxIterations = 4;
+      for (int iter = 0; iter < kMaxIterations; ++iter) {
+        bool changed = false;
 
-      // Pass 2: ARC elimination — remove redundant retain/release pairs (M95/M96).
-      RunARCElimination(*fn, &total_stats);
+        // Pass 1: Mem2Reg — promote alloc_stack to SSA values.
+        changed |= RunMem2Reg(*fn);
 
-      // Pass 3: Dead code elimination — remove unused values.
-      RunDeadCodeElimination(*fn);
+        // Pass 2: ARC elimination — remove redundant retain/release pairs.
+        RunARCElimination(*fn, &total_stats);
+
+        // Pass 3: Dead code elimination — remove unused values.
+        changed |= RunDeadCodeElimination(*fn);
+
+        if (!changed) break;
+      }
     }
   }
 

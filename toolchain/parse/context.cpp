@@ -102,17 +102,24 @@ auto Context::SkipTo(Lex::TokenIndex target) -> void {
 }
 
 auto Context::EmitInvalidParse(Lex::TokenIndex start) -> void {
-  // Emit InvalidParseStart at the start token, then skip tokens up to
-  // current, emitting InvalidParse for each, then close with
-  // InvalidParseSubtree.
-  // Simplified: just add InvalidParse nodes for all skipped tokens.
-  auto start_token = start;
-  AddLeafNode(NodeKind::InvalidParseStart, start_token, true);
-  // The InvalidParseSubtree will encompass from start to current.
-  while (position() != start && position().index > start_token.index) {
-    // Already consumed.
-    break;
+  // Emit InvalidParseStart, then skip to a synchronization point
+  // (func, struct, class, enum, protocol, }, or EOF).
+  AddLeafNode(NodeKind::InvalidParseStart, start, true);
+
+  // Skip tokens until we find a synchronization point.
+  while (!AtEndOfFile()) {
+    auto text = tokens().GetTokenText(position());
+    auto kind = tokens().GetKind(position());
+    // Synchronize at declaration keywords or closing braces.
+    if (text == "func" || text == "struct" || text == "class" ||
+        text == "enum" || text == "protocol" || text == "import" ||
+        text == "let" || text == "var" ||
+        kind == Lex::TokenKind::CloseCurlyBrace) {
+      break;
+    }
+    Consume();
   }
+
   AddNode(NodeKind::InvalidParseSubtree, position(), true);
   tree_.set_has_errors(true);
 }

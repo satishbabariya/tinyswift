@@ -22,7 +22,8 @@ namespace TinySwift::TinySILOptimizer {
 // After Mem2Reg:
 //   The load is replaced with the stored value directly, and the
 //   alloc_stack/store/load/dealloc_stack are removed.
-auto RunMem2Reg(TinySIL::SILFunction& function) -> void {
+auto RunMem2Reg(TinySIL::SILFunction& function) -> bool {
+  bool modified = false;
   for (auto& bb : function.blocks) {
     // Find alloc_stack values that are only used within this block.
     llvm::DenseMap<int32_t, TinySIL::SILValue> promoted_values;
@@ -87,6 +88,7 @@ auto RunMem2Reg(TinySIL::SILFunction& function) -> void {
     // Any instruction that uses a promoted value should use the original
     // stored value instead.
     if (!promoted_values.empty()) {
+      modified = true;
       for (auto& inst : bb->insts) {
         // Replace operands that reference promoted load results.
         for (int i = 0; i < inst->num_operands; ++i) {
@@ -117,6 +119,7 @@ auto RunMem2Reg(TinySIL::SILFunction& function) -> void {
       }
     }
   }
+  return modified;
 }
 
 }  // namespace TinySwift::TinySILOptimizer

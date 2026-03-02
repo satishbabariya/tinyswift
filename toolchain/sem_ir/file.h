@@ -105,13 +105,24 @@ class ConstantValueStore : public Yaml::Printable<ConstantValueStore> {
   llvm::SmallVector<ConstantId> values_;
 };
 
-// Stores computed global constants (e.g. types).
+// Stores computed global constants (e.g. types) with hash-consing for
+// deduplication.  Two identical type constants will share the same InstId.
 class ConstantStore {
  public:
   explicit ConstantStore(File* /*file*/) {}
 
-  // TODO: Implement constant deduplication and storage.
-  // See TinySwift compiler for reference implementation patterns.
+  // Look up or insert a constant instruction.  Returns the canonical InstId
+  // for the given key.  `key` should be a stable hash (e.g., inst kind +
+  // operand IDs).  If a constant with the same key already exists, the
+  // existing InstId is returned (deduplication).
+  auto GetOrAdd(uint64_t key, InstId inst_id) -> InstId {
+    auto [it, inserted] = dedup_map_.try_emplace(key, inst_id);
+    if (!inserted) {
+      return it->second;  // Already exists — return deduplicated ID.
+    }
+    insts_.push_back(inst_id);
+    return inst_id;
+  }
 
   auto CollectMemUsage(MemUsage& mem_usage, llvm::StringRef label) const
       -> void {
@@ -120,6 +131,7 @@ class ConstantStore {
 
  private:
   llvm::SmallVector<InstId> insts_;
+  llvm::DenseMap<uint64_t, InstId> dedup_map_;
 };
 
 // An entity name binding.

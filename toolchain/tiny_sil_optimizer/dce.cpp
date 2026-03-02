@@ -76,7 +76,8 @@ auto HasSideEffects(const TinySIL::SILInstruction& inst) -> bool {
 }  // namespace
 
 // Dead Code Elimination: removes instructions whose results are never used.
-auto RunDeadCodeElimination(TinySIL::SILFunction& function) -> void {
+auto RunDeadCodeElimination(TinySIL::SILFunction& function) -> bool {
+  bool modified = false;
   // Collect all used value IDs.
   llvm::DenseSet<int32_t> used_ids;
 
@@ -116,10 +117,13 @@ auto RunDeadCodeElimination(TinySIL::SILFunction& function) -> void {
 
       if (should_keep) {
         kept.push_back(std::move(inst));
+      } else {
+        modified = true;
       }
     }
     bb->insts = std::move(kept);
   }
+  return modified;
 }
 
 }  // namespace TinySwift::TinySILOptimizer

@@ -104,7 +104,10 @@ static auto GetBinaryPrecedence(Context& context) -> int {
     if (text == "&=") return Prec_Assignment;
     if (text == "|=") return Prec_Assignment;
     if (text == "^=") return Prec_Assignment;
-    // Any other binary operator defaults to addition precedence.
+    // Unrecognized binary operator — default to addition precedence.
+    // This handles user-defined operators (M58) which don't have explicit
+    // precedence groups yet.  A full implementation would look up the
+    // precedence group from the operator declaration.
     return Prec_Addition;
   }
 

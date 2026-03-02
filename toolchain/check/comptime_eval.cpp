@@ -1163,8 +1163,10 @@ auto ComptimeEvaluator::EvalStmt(Parse::NodeId node_id) -> bool {
     return EvalCodeBlockBody(node_id);
   }
 
-  // Unknown statement — skip silently (don't error for things like comments).
-  return true;
+  // Unknown/unsupported statement kind at comptime — emit diagnostic.
+  context_.EmitError(node_id, ComptimeUnsupportedOperation,
+                     "unsupported statement kind in #comptime block");
+  return false;
 }
 
 // ---------------------------------------------------------------------------

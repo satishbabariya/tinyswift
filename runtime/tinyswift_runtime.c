@@ -9,6 +9,7 @@
 
 #include "tinyswift_runtime.h"
 
+#include <stdatomic.h>
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -36,7 +37,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 typedef struct {
-  int32_t refcount;
+  _Atomic int32_t refcount;
   int32_t flags;
 } TinySwiftHeapHeader;
 
@@ -44,7 +45,7 @@ void* __tinyswift_alloc(int64_t payload_size) {
   void* raw = malloc(sizeof(TinySwiftHeapHeader) + (size_t)payload_size);
   if (!raw) return (void*)0;
   TinySwiftHeapHeader* header = (TinySwiftHeapHeader*)raw;
-  header->refcount = 1;
+  atomic_store_explicit(&header->refcount, 1, memory_order_relaxed);
   header->flags = 0;
   return (void*)((char*)raw + sizeof(TinySwiftHeapHeader));
 }
@@ -53,15 +54,14 @@ void __tinyswift_retain(void* obj) {
   if (!obj) return;
   TinySwiftHeapHeader* header =
       (TinySwiftHeapHeader*)((char*)obj - sizeof(TinySwiftHeapHeader));
-  header->refcount++;
+  atomic_fetch_add_explicit(&header->refcount, 1, memory_order_relaxed);
 }
 
 void __tinyswift_release(void* obj, void (*deinit_fn)(void*)) {
   if (!obj) return;
   TinySwiftHeapHeader* header =
       (TinySwiftHeapHeader*)((char*)obj - sizeof(TinySwiftHeapHeader));
-  header->refcount--;
-  if (header->refcount <= 0) {
+  if (atomic_fetch_sub_explicit(&header->refcount, 1, memory_order_acq_rel) == 1) {
     if (deinit_fn) {
       deinit_fn(obj);
     }
@@ -73,7 +73,7 @@ int64_t __tinyswift_is_unique(void* obj) {
   if (!obj) return 0;
   TinySwiftHeapHeader* header =
       (TinySwiftHeapHeader*)((char*)obj - sizeof(TinySwiftHeapHeader));
-  return header->refcount == 1 ? 1 : 0;
+  return atomic_load_explicit(&header->refcount, memory_order_acquire) == 1 ? 1 : 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -102,8 +102,8 @@ void __tinyswift_release_cycle_candidate(void* obj, void (*deinit_fn)(void*)) {
   }
   TinySwiftHeapHeader* header =
       (TinySwiftHeapHeader*)((char*)obj - sizeof(TinySwiftHeapHeader));
-  header->refcount--;
-  if (header->refcount <= 0) {
+  int32_t old = atomic_fetch_sub_explicit(&header->refcount, 1, memory_order_acq_rel);
+  if (old == 1) {
     // Refcount hit zero — deallocate normally (no cycle).
     if (deinit_fn) {
       deinit_fn(obj);
@@ -145,7 +145,8 @@ void __tinyswift_collect_cycles(void) {
         (TinySwiftHeapHeader*)((char*)obj - sizeof(TinySwiftHeapHeader));
 
     // Skip already-freed objects (refcount <= 0).
-    if (header->refcount <= 0) {
+    int32_t rc = atomic_load_explicit(&header->refcount, memory_order_acquire);
+    if (rc <= 0) {
       cycle_candidates[i].obj = NULL;
       continue;
     }
@@ -160,10 +161,10 @@ void __tinyswift_collect_cycles(void) {
 
     // If the refcount equals the number of candidate references,
     // the object is only kept alive by other candidates (cycle).
-    if (header->refcount <= (int32_t)candidate_refs) {
+    if (rc <= (int32_t)candidate_refs) {
       // Force-free this object.
       void (*deinit_fn)(void*) = cycle_candidates[i].deinit_fn;
-      header->refcount = 0;
+      atomic_store_explicit(&header->refcount, 0, memory_order_release);
       if (deinit_fn) {
         deinit_fn(obj);
       }
@@ -1502,12 +1503,24 @@ typedef struct {
   void* (*resume_fn)(void*);
 } AsyncTask;
 
-#define MAX_EVENT_LOOP_TASKS 256
-static AsyncTask event_loop_tasks[MAX_EVENT_LOOP_TASKS];
+static AsyncTask* event_loop_tasks = NULL;
 static int event_loop_task_count = 0;
+static int event_loop_task_capacity = 0;
+
+static void ensure_task_capacity(void) {
+  if (event_loop_task_count >= event_loop_task_capacity) {
+    int new_cap = event_loop_task_capacity == 0 ? 64 : event_loop_task_capacity * 2;
+    AsyncTask* new_tasks = (AsyncTask*)realloc(event_loop_tasks,
+                                                (size_t)new_cap * sizeof(AsyncTask));
+    if (!new_tasks) return;
+    event_loop_tasks = new_tasks;
+    event_loop_task_capacity = new_cap;
+  }
+}
 
 void __tinyswift_async_submit(void* frame, void* (*resume_fn)(void*)) {
-  if (event_loop_task_count < MAX_EVENT_LOOP_TASKS) {
+  ensure_task_capacity();
+  if (event_loop_task_count < event_loop_task_capacity) {
     event_loop_tasks[event_loop_task_count].frame = frame;
     event_loop_tasks[event_loop_task_count].resume_fn = resume_fn;
     event_loop_task_count++;
