@@ -1754,6 +1754,8 @@ auto HandleCodeBlock(Context& context, Parse::NodeId node_id) -> void {
         context.SetPendingAccessLevel(SemIR::AccessLevel::Public);
       } else if (text == "private") {
         context.SetPendingAccessLevel(SemIR::AccessLevel::Private);
+      } else if (text == "fileprivate") {
+        context.SetPendingAccessLevel(SemIR::AccessLevel::FilePrivate);
       } else {
         context.SetPendingAccessLevel(SemIR::AccessLevel::Internal);
       }

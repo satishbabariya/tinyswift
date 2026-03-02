@@ -17,7 +17,7 @@ namespace TinySwift::SemIR {
 class File;
 
 // M74: Access control levels for declarations.
-enum class AccessLevel : uint8_t { Public, Internal, Private };
+enum class AccessLevel : uint8_t { Public, Internal, FilePrivate, Private };
 
 // A function declaration and definition.
 struct Function : public Printable<Function> {

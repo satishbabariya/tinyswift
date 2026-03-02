@@ -110,8 +110,7 @@ auto Context::LookupName(SemIR::NameId name_id) -> SemIR::InstId {
     auto found = it->names.find(name_id.index);
     if (found != it->names.end()) {
       auto inst_id = found->second;
-      // M74: Enforce private access — skip names marked private if the
-      // current scope is not the declaring scope or a child of it.
+      // M74: Enforce access control — skip inaccessible names.
       auto access = GetAccessLevel(inst_id);
       if (access == SemIR::AccessLevel::Private) {
         auto decl_scope_it = private_decl_scope_map_.find(inst_id.index);
@@ -127,6 +126,14 @@ auto Context::LookupName(SemIR::NameId name_id) -> SemIR::InstId {
           }
           if (!accessible) {
             continue;  // Skip this private name, keep searching outer scopes.
+          }
+        }
+      } else if (access == SemIR::AccessLevel::FilePrivate) {
+        // FilePrivate: only accessible from the same source file.
+        auto file_it = fileprivate_file_map_.find(inst_id.index);
+        if (file_it != fileprivate_file_map_.end()) {
+          if (file_it->second != current_file_id_) {
+            continue;  // Skip fileprivate name from a different file.
           }
         }
       }

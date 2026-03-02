@@ -591,6 +591,9 @@ class Context {
   // M74: Scope ID that a private declaration belongs to (keyed by InstId.index).
   llvm::DenseMap<int32_t, SemIR::NameScopeId> private_decl_scope_map_;
 
+  // File ID that a fileprivate declaration belongs to (keyed by InstId.index).
+  llvm::DenseMap<int32_t, SemIR::CheckIRId> fileprivate_file_map_;
+
   // M88: Built-in type scopes for extensions (keyed by TypeInstId.index).
   llvm::DenseMap<int32_t, SemIR::NameScopeId> builtin_type_scopes_;
 
@@ -649,6 +652,9 @@ class Context {
     access_level_map_.insert_or_assign(inst_id.index, level);
     if (level == SemIR::AccessLevel::Private && declaring_scope.has_value()) {
       private_decl_scope_map_.insert_or_assign(inst_id.index, declaring_scope);
+    }
+    if (level == SemIR::AccessLevel::FilePrivate) {
+      fileprivate_file_map_.insert_or_assign(inst_id.index, current_file_id_);
     }
   }
 

@@ -241,29 +241,50 @@ auto HandleStringLiteral(Context& context, Parse::NodeId node_id)
     auto expr_text = remaining.take_front(close_pos);
     remaining = remaining.drop_front(close_pos + 1);  // skip past `)`
 
-    // Look up the expression by name in scope.
-    // M38 supports simple identifier interpolation only.
-    auto ident_id = context.identifiers().Lookup(expr_text);
+    // Look up the expression in scope.
+    // Supports: identifiers, integer literals, float literals.
     SemIR::InstId interp_inst = SemIR::InstId::None;
-    if (ident_id.has_value()) {
-      auto name_id = SemIR::NameId::ForIdentifier(ident_id);
-      auto value_id = context.LookupName(name_id);
-      if (value_id.has_value()) {
-        auto ref_type_id = GetInstType(context, value_id);
-        auto name_ref_id = context.AddInst(SemIR::LocIdAndInst(
+
+    // Try integer literal first (e.g., \(42)).
+    llvm::APInt int_val;
+    if (!expr_text.empty() && (std::isdigit(expr_text[0]) ||
+        (expr_text[0] == '-' && expr_text.size() > 1))) {
+      if (!expr_text.getAsInteger(10, int_val)) {
+        auto int_id = context.ints().Add(
+            static_cast<int64_t>(int_val.getSExtValue()));
+        auto lit_inst = context.AddInst(SemIR::LocIdAndInst(
             SemIR::LocId(node_id),
-            SemIR::NameRef{.type_id = ref_type_id,
-                           .name_id = name_id,
-                           .value_id = value_id}));
-        // Convert to String: Int/Bool → IntToString, String stays as-is.
-        if (ref_type_id == int_type_id ||
-            ref_type_id == context.GetBuiltinType("Bool")) {
-          interp_inst = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::IntValue{.type_id = int_type_id, .int_id = int_id}));
+        interp_inst = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntToString{.type_id = string_type_id,
+                               .operand_id = lit_inst}));
+      }
+    }
+
+    // Try identifier lookup (e.g., \(x)).
+    if (!interp_inst.has_value()) {
+      auto ident_id = context.identifiers().Lookup(expr_text);
+      if (ident_id.has_value()) {
+        auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+        auto value_id = context.LookupName(name_id);
+        if (value_id.has_value()) {
+          auto ref_type_id = GetInstType(context, value_id);
+          auto name_ref_id = context.AddInst(SemIR::LocIdAndInst(
               SemIR::LocId(node_id),
-              SemIR::IntToString{.type_id = string_type_id,
-                                 .operand_id = name_ref_id}));
-        } else {
-          interp_inst = name_ref_id;  // Already a String.
+              SemIR::NameRef{.type_id = ref_type_id,
+                             .name_id = name_id,
+                             .value_id = value_id}));
+          // Convert to String: Int/Bool → IntToString, String stays as-is.
+          if (ref_type_id == int_type_id ||
+              ref_type_id == context.GetBuiltinType("Bool")) {
+            interp_inst = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::IntToString{.type_id = string_type_id,
+                                   .operand_id = name_ref_id}));
+          } else {
+            interp_inst = name_ref_id;  // Already a String.
+          }
         }
       }
     }

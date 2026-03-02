@@ -1031,6 +1031,8 @@ auto HandleTypeMembers(Context& context,
             context.SetPendingAccessLevel(SemIR::AccessLevel::Public);
           } else if (text == "private") {
             context.SetPendingAccessLevel(SemIR::AccessLevel::Private);
+          } else if (text == "fileprivate") {
+            context.SetPendingAccessLevel(SemIR::AccessLevel::FilePrivate);
           } else {
             context.SetPendingAccessLevel(SemIR::AccessLevel::Internal);
           }
@@ -1322,15 +1324,16 @@ auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void {
     }
   }
 
-  // M55: Detect InheritanceClause inside ClassDefinitionStart to find superclass.
+  // M55: Detect InheritanceClause inside ClassDefinitionStart to find
+  // superclass and collect protocol conformances.
   SemIR::NameScopeId superclass_scope_id = SemIR::NameScopeId::None;
+  llvm::SmallVector<llvm::StringRef> class_protocols;
   if (start_node_id.has_value()) {
     for (auto sc : context.children_source_order(start_node_id)) {
       if (context.node_kind(sc) == Parse::NodeKind::InheritanceClause) {
         // InheritanceClause children: InheritanceClauseStart + IdentifierType(s).
-        // In Swift, `class Foo: Bar, Proto1, Proto2` — only a ClassType is a
-        // superclass; StructType entries are protocol conformances (handled
-        // separately via extensions in M25/M59).
+        // `class Foo: Bar, Proto1, Proto2` — ClassType is superclass,
+        // non-class types (StructType) are protocol conformances.
         for (auto ic : context.children_source_order(sc)) {
           if (context.node_kind(ic) != Parse::NodeKind::IdentifierType) {
             continue;
@@ -1338,17 +1341,24 @@ auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void {
           auto tok = context.node_token(ic);
           auto super_text = context.token_text(tok);
           auto super_ident_id = context.identifiers().Lookup(super_text);
-          if (!super_ident_id.has_value()) continue;
+          if (!super_ident_id.has_value()) {
+            class_protocols.push_back(super_text);
+            continue;
+          }
           auto super_name_id = SemIR::NameId::ForIdentifier(super_ident_id);
           auto super_inst_id = context.LookupName(super_name_id);
-          if (!super_inst_id.has_value()) continue;
+          if (!super_inst_id.has_value()) {
+            class_protocols.push_back(super_text);
+            continue;
+          }
           auto super_inst = context.insts().Get(super_inst_id);
           if (auto ct = super_inst.TryAs<SemIR::ClassType>()) {
             superclass_scope_id = ct->name_scope_id;
-            break;  // Single superclass found — stop looking.
+            // Don't break — continue to collect protocol names.
+          } else {
+            // Non-class type (protocol conformance).
+            class_protocols.push_back(super_text);
           }
-          // Non-class types (protocols) are skipped here; conformance
-          // is handled through the extension mechanism (M59).
         }
         break;
       }
@@ -1406,6 +1416,34 @@ auto HandleClassDefinition(Context& context, Parse::NodeId node_id) -> void {
 
   context.SetCurrentType(class_type_id);
   HandleTypeMembers(context, children);
+
+  // Synthesize protocol conformances for class types (like structs/enums).
+  if (!class_protocols.empty()) {
+    context.SetTypeConformances(class_type_id, class_protocols);
+    llvm::StringRef type_name_str;
+    if (name_id.has_value()) {
+      auto ident_opt = name_id.AsIdentifierId();
+      if (ident_opt.has_value()) {
+        type_name_str = context.identifiers().Get(ident_opt);
+      }
+    }
+    for (auto proto : class_protocols) {
+      if (proto == "Equatable") {
+        SynthesizeEquatable(context, class_type_id, type_scope_id,
+                            field_infos, /*is_enum=*/false, /*enum_case_count=*/0);
+      } else if (proto == "Comparable") {
+        SynthesizeComparable(context, class_type_id, type_scope_id,
+                             field_infos);
+      } else if (proto == "Hashable") {
+        SynthesizeHashable(context, class_type_id, type_scope_id,
+                           field_infos, /*is_enum=*/false, /*enum_case_count=*/0);
+      } else if (proto == "CustomStringConvertible") {
+        SynthesizeDescription(context, class_type_id, type_scope_id,
+                              field_infos, type_name_str);
+      }
+    }
+  }
+
   context.ClearCurrentType();
   context.PopScope();
 }

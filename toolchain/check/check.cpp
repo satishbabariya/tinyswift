@@ -132,6 +132,8 @@ auto CheckParseTrees(
         ctx.SetPendingAccessLevel(SemIR::AccessLevel::Public);
       } else if (text == "private") {
         ctx.SetPendingAccessLevel(SemIR::AccessLevel::Private);
+      } else if (text == "fileprivate") {
+        ctx.SetPendingAccessLevel(SemIR::AccessLevel::FilePrivate);
       } else {
         ctx.SetPendingAccessLevel(SemIR::AccessLevel::Internal);
       }
