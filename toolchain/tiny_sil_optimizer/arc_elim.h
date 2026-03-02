@@ -24,7 +24,7 @@ struct ARCEliminationStats {
 //
 // If `stats` is non-null, populates it with counts of eliminated operations.
 auto RunARCElimination(TinySIL::SILFunction& function,
-                       ARCEliminationStats* stats = nullptr) -> void;
+                       ARCEliminationStats* stats = nullptr) -> bool;
 
 }  // namespace TinySwift::TinySILOptimizer
 

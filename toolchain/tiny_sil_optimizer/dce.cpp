@@ -60,7 +60,12 @@ auto HasSideEffects(const TinySIL::SILInstruction& inst) -> bool {
           name == "string_trimmed" ||
           name == "array_literal_init" ||
           name == "array_element_addr" ||
-          name.starts_with("error_")) {
+          name.starts_with("error_") ||
+          name == "trap" ||
+          name == "fatalError" ||
+          name.starts_with("assert_") ||
+          name.starts_with("precondition_") ||
+          name == "optional_unwrap_trap") {
         return true;
       }
       // Pure builtins (arithmetic, comparison, access) — can be eliminated

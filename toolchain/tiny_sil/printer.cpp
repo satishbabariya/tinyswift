@@ -162,6 +162,9 @@ auto PrintInst(llvm::raw_ostream& out, const SILInstruction& inst) -> void {
     case SILInstKind::DebugValue:
       out << " ";
       PrintValue(out, inst.operands[0]);
+      if (!inst.debug_name.empty()) {
+        out << ", var, name \"" << inst.debug_name << "\"";
+      }
       break;
 
     default:

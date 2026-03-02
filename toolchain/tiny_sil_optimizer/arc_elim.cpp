@@ -131,7 +131,7 @@ auto IsAllocClassProducer(const TinySIL::SILFunction& function,
 }  // namespace
 
 auto RunARCElimination(TinySIL::SILFunction& function,
-                       ARCEliminationStats* stats) -> void {
+                       ARCEliminationStats* stats) -> bool {
   // ═══════════════════════════════════════════════════════════════════════════
   // Step 1: Collect all retain and release instructions, indexed by the
   //         value_id of their operand[0] (the class-typed pointer).
@@ -158,7 +158,7 @@ auto RunARCElimination(TinySIL::SILFunction& function,
   }
 
   // If no retains, nothing to optimize.
-  if (retains.empty()) return;
+  if (retains.empty()) return false;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Step 2: For each value that has both retains AND releases, check if
@@ -386,7 +386,7 @@ auto RunARCElimination(TinySIL::SILFunction& function,
   // ═══════════════════════════════════════════════════════════════════════════
   // Step 4: Remove all marked instructions from their blocks.
   // ═══════════════════════════════════════════════════════════════════════════
-  if (to_remove.empty()) return;
+  if (to_remove.empty()) return false;
 
   for (auto& bb : function.blocks) {
     llvm::SmallVector<std::unique_ptr<TinySIL::SILInstruction>> kept;
@@ -397,6 +397,7 @@ auto RunARCElimination(TinySIL::SILFunction& function,
     }
     bb->insts = std::move(kept);
   }
+  return true;
 }
 
 }  // namespace TinySwift::TinySILOptimizer

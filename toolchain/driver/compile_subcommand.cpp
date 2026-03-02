@@ -599,6 +599,11 @@ auto CompilationUnit::PostSilGen() -> void {
   // Run performance optimization passes.
   TinySILOptimizer::RunPerformancePasses(*sil_module_);
 
+  // Verify SIL after optimization to catch optimizer bugs.
+  if (!TinySIL::VerifySILModule(*sil_module_, driver_env_->error_stream)) {
+    success_ = false;
+  }
+
   // Dump SIL if requested.
   if (options_->dump_sil && IncludeInDumps()) {
     TinySIL::PrintSILModule(*driver_env_->output_stream, *sil_module_);

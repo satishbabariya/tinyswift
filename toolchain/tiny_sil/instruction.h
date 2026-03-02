@@ -84,6 +84,7 @@ struct SILInstruction {
   std::string string_literal_value;   // For StringLiteral.
   std::string function_name;          // For FunctionRef.
   std::string builtin_name;           // For BuiltinInst.
+  std::string debug_name;             // For DebugValue, AllocStack.
 
   int32_t target_block = -1;          // For Branch.
   int32_t true_block = -1;            // For CondBranch.

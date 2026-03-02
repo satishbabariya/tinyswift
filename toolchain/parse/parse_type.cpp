@@ -54,6 +54,15 @@ auto ParseTypeAnnotation(Context& context) -> void {
 
 // Parses a type expression.
 auto ParseType(Context& context) -> void {
+  // Guard against deeply nested types (e.g., `() -> () -> ... -> ()`)
+  // that could cause stack overflow.
+  if (++context.type_parse_depth_ > Context::kMaxTypeParseDepth) {
+    context.EmitError(ExpectedType);
+    context.AddLeafNode(NodeKind::InvalidParse, context.position(), true);
+    --context.type_parse_depth_;
+    return;
+  }
+
   ParsePrimaryType(context);
   ParsePostfixType(context);
 
@@ -62,6 +71,7 @@ auto ParseType(Context& context) -> void {
     auto arrow = context.Consume();
     ParseType(context);
     context.AddNode(NodeKind::FunctionType, arrow);
+    --context.type_parse_depth_;
     return;
   }
 
@@ -70,8 +80,11 @@ auto ParseType(Context& context) -> void {
     auto amp = context.Consume();
     ParseType(context);
     context.AddNode(NodeKind::ProtocolCompositionType, amp);
+    --context.type_parse_depth_;
     return;
   }
+
+  --context.type_parse_depth_;
 }
 
 // Parses a primary type (the base before postfix modifiers).

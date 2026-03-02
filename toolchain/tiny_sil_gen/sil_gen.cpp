@@ -184,8 +184,32 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
     auto sil_inst =
         MakeInst(TinySIL::SILInstKind::AllocStack, result);
     sil_inst->alloc_type = ctx.GetSILType(var_storage->type_id);
+
+    // Resolve variable name from binding pattern for debug info.
+    std::string var_name;
+    if (var_storage->pattern_id.has_value()) {
+      auto pattern_inst = sem_ir.insts().Get(var_storage->pattern_id);
+      if (auto vbp = pattern_inst.TryAs<SemIR::ValueBindingPattern>()) {
+        if (vbp->entity_name_id.has_value()) {
+          auto entity = sem_ir.entity_names().Get(vbp->entity_name_id);
+          if (entity.name_id.AsIdentifierId().has_value()) {
+            var_name = std::string(sem_ir.identifiers().Get(
+                entity.name_id.AsIdentifierId()));
+          }
+        }
+      }
+    }
+    sil_inst->debug_name = var_name;
     ctx.emit(std::move(sil_inst));
     ctx.SetValue(inst_id, result);
+
+    // Emit debug_value so the SIL lowering path can associate the variable.
+    if (!var_name.empty()) {
+      auto dbg_inst = MakeVoidInst(TinySIL::SILInstKind::DebugValue);
+      dbg_inst->setOperand(0, result);
+      dbg_inst->debug_name = var_name;
+      ctx.emit(std::move(dbg_inst));
+    }
     return;
   }
 

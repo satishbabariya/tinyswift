@@ -54,14 +54,23 @@ void __tinyswift_retain(void* obj) {
   if (!obj) return;
   TinySwiftHeapHeader* header =
       (TinySwiftHeapHeader*)((char*)obj - sizeof(TinySwiftHeapHeader));
-  atomic_fetch_add_explicit(&header->refcount, 1, memory_order_relaxed);
+  int32_t old = atomic_fetch_add_explicit(&header->refcount, 1, memory_order_relaxed);
+  if (old <= 0 || old == INT32_MAX) {
+    fprintf(stderr, "Fatal error: retain on object with invalid refcount %d\n", old);
+    abort();
+  }
 }
 
 void __tinyswift_release(void* obj, void (*deinit_fn)(void*)) {
   if (!obj) return;
   TinySwiftHeapHeader* header =
       (TinySwiftHeapHeader*)((char*)obj - sizeof(TinySwiftHeapHeader));
-  if (atomic_fetch_sub_explicit(&header->refcount, 1, memory_order_acq_rel) == 1) {
+  int32_t old = atomic_fetch_sub_explicit(&header->refcount, 1, memory_order_acq_rel);
+  if (old <= 0) {
+    fprintf(stderr, "Fatal error: release on object with invalid refcount %d\n", old);
+    abort();
+  }
+  if (old == 1) {
     if (deinit_fn) {
       deinit_fn(obj);
     }
@@ -91,13 +100,14 @@ typedef struct {
 
 static _Thread_local CycleCandidate cycle_candidates[CYCLE_CANDIDATES_MAX];
 static _Thread_local int64_t cycle_candidate_count = 0;
-static int cycle_atexit_registered = 0;
+static _Atomic int cycle_atexit_registered = 0;
 
 void __tinyswift_release_cycle_candidate(void* obj, void (*deinit_fn)(void*)) {
   if (!obj) return;
   // Register atexit handler on first use to collect remaining cycles.
-  if (!cycle_atexit_registered) {
-    cycle_atexit_registered = 1;
+  int expected = 0;
+  if (atomic_compare_exchange_strong_explicit(&cycle_atexit_registered,
+      &expected, 1, memory_order_seq_cst, memory_order_relaxed)) {
     atexit(__tinyswift_collect_cycles);
   }
   TinySwiftHeapHeader* header =
@@ -796,16 +806,31 @@ void __tinyswift_dynarray_append(void* handle, const void* elem) {
 }
 
 void* __tinyswift_dynarray_get(void* handle, int64_t index) {
-  if (!handle) return NULL;
+  if (!handle) {
+    fprintf(stderr, "Fatal error: subscript on nil Array\n");
+    abort();
+  }
   TinySwiftDynArray* arr = (TinySwiftDynArray*)handle;
-  if (index < 0 || index >= arr->count) return NULL;
+  if (index < 0 || index >= arr->count) {
+    fprintf(stderr, "Fatal error: Array index %lld out of range [0, %lld)\n",
+            (long long)index, (long long)arr->count);
+    abort();
+  }
   return (char*)arr->data + index * arr->elem_size;
 }
 
 void __tinyswift_dynarray_set(void* handle, int64_t index, const void* elem) {
-  if (!handle || !elem) return;
+  if (!handle) {
+    fprintf(stderr, "Fatal error: subscript on nil Array\n");
+    abort();
+  }
   TinySwiftDynArray* arr = (TinySwiftDynArray*)handle;
-  if (index < 0 || index >= arr->count) return;
+  if (index < 0 || index >= arr->count) {
+    fprintf(stderr, "Fatal error: Array index %lld out of range [0, %lld)\n",
+            (long long)index, (long long)arr->count);
+    abort();
+  }
+  if (!elem) return;
   memcpy((char*)arr->data + index * arr->elem_size, elem,
          (size_t)arr->elem_size);
 }
@@ -1706,4 +1731,32 @@ void __tinyswift_timer_create(int64_t ms, void* frame,
   if (resume_fn) {
     resume_fn(frame);
   }
+}
+
+// ── Optional Unwrap Trap ──────────────────────────────────────────────────────
+
+void __tinyswift_optional_unwrap_trap(void) {
+  fprintf(stderr, "Fatal error: Unexpectedly found nil while unwrapping an Optional value\n");
+  abort();
+}
+
+// ── UTF-8 Validation ──────────────────────────────────────────────────────────
+
+int64_t __tinyswift_string_is_valid_utf8(const char* str) {
+  if (!str) return 1;
+  while (*str) {
+    unsigned char c = (unsigned char)*str;
+    int cont = 0;
+    if ((c & 0x80) == 0)      { str++; continue; }
+    else if ((c & 0xE0) == 0xC0) { cont = 1; }
+    else if ((c & 0xF0) == 0xE0) { cont = 2; }
+    else if ((c & 0xF8) == 0xF0) { cont = 3; }
+    else { return 0; }
+    str++;
+    for (int i = 0; i < cont; i++) {
+      if (!*str || (((unsigned char)*str) & 0xC0) != 0x80) return 0;
+      str++;
+    }
+  }
+  return 1;
 }

@@ -1813,11 +1813,11 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
     -> SemIR::InstId {
   auto children = context.children_source_order(node_id);
 
-  // Extract closure signature (parameter name) and body.
+  // Extract closure signature (parameter names) and body.
   // ClosureParam and ClosureSignature are both leaf nodes (child_count=0) and
   // are direct children of ClosureExpr — ClosureParam is a sibling of
   // ClosureSignature, not a child of it.
-  SemIR::NameId param_name_id = SemIR::NameId::None;
+  llvm::SmallVector<SemIR::NameId> param_name_ids;
   bool has_signature = false;
 
   for (auto child : children) {
@@ -1829,10 +1829,9 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
       auto token = context.node_token(child);
       auto text = context.token_text(token);
       auto ident_id = context.identifiers().Add(text);
-      param_name_id = SemIR::NameId::ForIdentifier(ident_id);
+      param_name_ids.push_back(SemIR::NameId::ForIdentifier(ident_id));
     }
   }
-
   // M46: Pre-scan body for implicit $N parameters.
   // Only activate when there's no explicit ClosureParam signature.
   int max_dollar_idx = -1;
@@ -1858,9 +1857,11 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
   // resolves names in the outer scope.
   // Collect explicit closure param names to exclude from capture detection.
   llvm::DenseSet<llvm::StringRef> exclude_from_capture;
-  if (param_name_id.has_value()) {
-    if (auto id = param_name_id.AsIdentifierId(); id.has_value()) {
-      exclude_from_capture.insert(context.identifiers().Get(id));
+  for (auto& pname : param_name_ids) {
+    if (pname.has_value()) {
+      if (auto id = pname.AsIdentifierId(); id.has_value()) {
+        exclude_from_capture.insert(context.identifiers().Get(id));
+      }
     }
   }
   // Also exclude $N implicit params.
@@ -1927,14 +1928,16 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
 
   // Create explicit closure params (after capture params).
   llvm::SmallVector<SemIR::InstId> explicit_param_ids;
-  if (has_signature && param_name_id.has_value()) {
-    auto param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::ValueParam{.type_id = int_type,
-                          .index = SemIR::CallParamIndex(capture_offset),
-                          .pretty_name_id = param_name_id}));
-    explicit_param_ids.push_back(param_id);
-    all_param_ids.push_back(param_id);
+  if (has_signature && !param_name_ids.empty()) {
+    for (int pi = 0; pi < static_cast<int>(param_name_ids.size()); ++pi) {
+      auto param_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::ValueParam{.type_id = int_type,
+                            .index = SemIR::CallParamIndex(capture_offset + pi),
+                            .pretty_name_id = param_name_ids[pi]}));
+      explicit_param_ids.push_back(param_id);
+      all_param_ids.push_back(param_id);
+    }
   } else if (max_dollar_idx >= 0) {
     // M46: Synthesize $0, $1, ..., $max_dollar_idx implicit parameters.
     static auto* dollar_param_names = new llvm::SmallVector<std::string>();
@@ -1981,9 +1984,12 @@ auto HandleClosureExpr(Context& context, Parse::NodeId node_id)
     context.AddNameToScope(cap_name_id, cap_param_id);
   }
 
-  // Add explicit parameter to scope.
-  if (!explicit_param_ids.empty() && has_signature && param_name_id.has_value()) {
-    context.AddNameToScope(param_name_id, explicit_param_ids[0]);
+  // Add explicit parameters to scope.
+  if (!explicit_param_ids.empty() && has_signature) {
+    for (int pi = 0; pi < static_cast<int>(param_name_ids.size()) &&
+                     pi < static_cast<int>(explicit_param_ids.size()); ++pi) {
+      context.AddNameToScope(param_name_ids[pi], explicit_param_ids[pi]);
+    }
   }
   // M46: Add $N implicit parameters to scope.
   if (max_dollar_idx >= 0 && !has_signature) {

@@ -409,13 +409,37 @@ static auto ParsePrimaryExpr(Context& context) -> void {
     auto open = context.Consume();
     context.AddLeafNode(NodeKind::ClosureExprStart, open);
 
-    // Check for closure signature: `identifier in`
-    if (context.Peek() == Lex::TokenKind::Identifier &&
-        context.PeekNext() == Lex::TokenKind::InKeyword) {
-      auto param_token = context.Consume();  // identifier (param name)
-      context.AddLeafNode(NodeKind::ClosureParam, param_token);
-      auto in_token = context.Consume();  // 'in'
-      context.AddNode(NodeKind::ClosureSignature, in_token);
+    // Check for closure signature: `identifier in` or `a, b, c in`
+    // Scan ahead using token indices (without consuming) to detect `in`.
+    if (context.Peek() == Lex::TokenKind::Identifier) {
+      bool has_in = false;
+      if (context.PeekNext() == Lex::TokenKind::InKeyword) {
+        has_in = true;
+      } else if (context.PeekNext() == Lex::TokenKind::Comma) {
+        // Scan `id, id, ..., id in` using raw token indices.
+        auto& toks = context.tokens();
+        auto scan = Lex::TokenIndex(context.position().index + 1);
+        while (toks.GetKind(scan) == Lex::TokenKind::Comma) {
+          scan = Lex::TokenIndex(scan.index + 1);  // skip comma
+          if (toks.GetKind(scan) != Lex::TokenKind::Identifier) break;
+          scan = Lex::TokenIndex(scan.index + 1);  // skip id
+        }
+        if (toks.GetKind(scan) == Lex::TokenKind::InKeyword) {
+          has_in = true;
+        }
+      }
+
+      if (has_in) {
+        auto param_token = context.Consume();  // first param
+        context.AddLeafNode(NodeKind::ClosureParam, param_token);
+        while (context.Peek() == Lex::TokenKind::Comma) {
+          context.Consume();  // comma
+          auto next_param = context.Consume();  // next param
+          context.AddLeafNode(NodeKind::ClosureParam, next_param);
+        }
+        auto in_token = context.Consume();  // 'in'
+        context.AddNode(NodeKind::ClosureSignature, in_token);
+      }
     }
 
     // Parse the body as statements until `}`.

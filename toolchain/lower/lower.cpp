@@ -492,8 +492,9 @@ auto LowerSILInst(
           auto sil_type_id = SemIR::TypeId(inst.alloc_type.type_index);
           auto* di_type = context.GetOrCreateDIType(sil_type_id);
           if (di_type) {
+            std::string var_name = inst.debug_name.empty() ? "var" : inst.debug_name;
             auto* di_var = context.di_builder()->createAutoVariable(
-                context.current_scope(), "var", context.di_file(),
+                context.current_scope(), var_name, context.di_file(),
                 line, di_type);
             context.di_builder()->insertDeclare(
                 alloca_val, di_var,
@@ -2060,9 +2061,37 @@ auto LowerSILInst(
       // No-op — borrows don't have LLVM-level representation.
       break;
 
-    case TinySIL::SILInstKind::DebugValue:
-      // TODO: Emit llvm.dbg.value intrinsic when debug info is enabled.
+    case TinySIL::SILInstKind::DebugValue: {
+      if (context.debug_enabled() && context.current_scope() &&
+          inst.loc_id.has_value() && !inst.debug_name.empty()) {
+        auto* val = getSILValue(inst.operands[0]);
+        if (val) {
+          unsigned line = 0, col = 0;
+          if (context.ResolveLocToLineCol(inst.loc_id, line, col)) {
+            // Infer type from the operand (AllocStack alloc_type).
+            llvm::DIType* di_type = nullptr;
+            if (inst.alloc_type.type_index >= 0) {
+              auto sil_type_id = SemIR::TypeId(inst.alloc_type.type_index);
+              di_type = context.GetOrCreateDIType(sil_type_id);
+            }
+            if (!di_type) {
+              di_type = context.di_builder()->createBasicType(
+                  "_", 64, llvm::dwarf::DW_ATE_signed);
+            }
+            auto* di_var = context.di_builder()->createAutoVariable(
+                context.current_scope(), inst.debug_name, context.di_file(),
+                line, di_type);
+            context.di_builder()->insertDbgValueIntrinsic(
+                val, di_var,
+                context.di_builder()->createExpression(),
+                llvm::DILocation::get(context.llvm_context(), line, col,
+                                      context.current_scope()),
+                builder.GetInsertBlock());
+          }
+        }
+      }
       break;
+    }
 
     default:
       // Unknown SIL instruction kind — emit warning and continue.

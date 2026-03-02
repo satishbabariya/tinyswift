@@ -162,6 +162,11 @@ class Context {
   TokenEmitter emitter_;
   Lex::TokenIndex current_;
   [[maybe_unused]] llvm::raw_ostream* vlog_;
+
+ public:
+  // Recursion depth tracking for type parsing to prevent stack overflow.
+  int type_parse_depth_ = 0;
+  static constexpr int kMaxTypeParseDepth = 64;
 };
 
 }  // namespace TinySwift::Parse

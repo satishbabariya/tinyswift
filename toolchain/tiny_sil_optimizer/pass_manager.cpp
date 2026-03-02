@@ -43,7 +43,7 @@ auto RunPerformancePasses(TinySIL::SILModule& module) -> void {
         changed |= RunMem2Reg(*fn);
 
         // Pass 2: ARC elimination — remove redundant retain/release pairs.
-        RunARCElimination(*fn, &total_stats);
+        changed |= RunARCElimination(*fn, &total_stats);
 
         // Pass 3: Dead code elimination — remove unused values.
         changed |= RunDeadCodeElimination(*fn);
