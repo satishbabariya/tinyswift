@@ -66,6 +66,40 @@ auto IsStringType(Context& context, SemIR::TypeId type_id) -> bool {
   return type_id == string_type;
 }
 
+// Returns true if the type is any integer type (Int, UInt, Int8-Int64,
+// UInt8-UInt64, Bool). Checks if the underlying type instruction is IntType.
+auto IsAnyIntegerType(Context& context, SemIR::TypeId type_id) -> bool {
+  if (!type_id.has_value() || !type_id.is_concrete()) return false;
+  auto type_inst_id = context.types().GetTypeInstId(type_id);
+  if (!type_inst_id.has_value()) return false;
+  auto type_inst = context.insts().Get(type_inst_id);
+  return type_inst.Is<SemIR::IntType>();
+}
+
+// Returns true if the type is an integer type excluding Bool (signed 1-bit).
+// Use this for arithmetic and bitwise operations that shouldn't apply to Bool.
+auto IsNonBoolIntegerType(Context& context, SemIR::TypeId type_id) -> bool {
+  if (!type_id.has_value() || !type_id.is_concrete()) return false;
+  auto type_inst_id = context.types().GetTypeInstId(type_id);
+  if (!type_inst_id.has_value()) return false;
+  auto type_inst = context.insts().Get(type_inst_id);
+  if (auto int_type = type_inst.TryAs<SemIR::IntType>()) {
+    // Exclude Bool (Signed, 1-bit).
+    if (int_type->bit_width_id.has_value()) {
+      auto width_inst = context.insts().Get(int_type->bit_width_id);
+      if (auto iv = width_inst.TryAs<SemIR::IntValue>()) {
+        auto ap = context.ints().Get(iv->int_id);
+        // Bool is Signed + 1-bit. Unsigned 1-bit (UInt1) would not be Bool.
+        if (ap.getSExtValue() == 1 && int_type->int_kind.is_signed()) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
 // Returns true if the type is an error type.
 auto IsErrorType(SemIR::TypeId type_id) -> bool {
   return !type_id.has_value() || type_id == SemIR::ErrorInst::TypeId;
@@ -2848,6 +2882,17 @@ auto HandleInfixOperatorExpr(Context& context, Parse::NodeId node_id)
     auto lhs_type_id = lhs_type;
     SemIR::InstId result_id = SemIR::InstId::None;
 
+    // Only allow compound assignment on numeric types (float or non-Bool int).
+    if (!IsFloatType(context, lhs_type_id) &&
+        !IsNonBoolIntegerType(context, lhs_type_id)) {
+      context.EmitError(node_id, InvalidOperandTypes,
+                        std::string(op_text),
+                        context.GetTypeName(lhs_type),
+                        context.GetTypeName(rhs_type));
+      return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+          SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+    }
+
     if (IsFloatType(context, lhs_type_id)) {
       if (op_text == "+=")
         result_id = context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
@@ -2993,7 +3038,7 @@ auto HandleInfixOperatorExpr(Context& context, Parse::NodeId node_id)
   }
 
   bool lhs_is_float = IsFloatType(context, lhs_type);
-  bool lhs_is_int = IsIntType(context, lhs_type);
+  bool lhs_is_int = IsNonBoolIntegerType(context, lhs_type);
   bool lhs_is_bool = IsBoolType(context, lhs_type);
   bool lhs_is_string = IsStringType(context, lhs_type);
 
@@ -3203,42 +3248,77 @@ auto HandleInfixOperatorExpr(Context& context, Parse::NodeId node_id)
       }
     }
 
-    // Int comparisons.
-    if (op_text == "==") {
+    // Bool equality comparisons (== and != only, no ordering).
+    if (lhs_is_bool) {
+      if (op_text == "==") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntEq{
+                .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == "!=") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntNeq{
+                .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      // Bool doesn't support <, >, <=, >=.
+      context.EmitError(node_id, InvalidOperandTypes,
+                        std::string(op_text),
+                        context.GetTypeName(lhs_type),
+                        context.GetTypeName(rhs_type));
+      return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+          SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
+    }
+
+    // Int comparisons (all integer types except Bool).
+    if (lhs_is_int) {
+      if (op_text == "==") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntEq{
+                .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == "!=") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntNeq{
+                .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == "<") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntLess{
+                .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == ">") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntGreater{
+                .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      if (op_text == "<=") {
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntLessEq{
+                .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+      }
+      // >=
       return context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
-          SemIR::IntEq{
+          SemIR::IntGreaterEq{
               .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
     }
-    if (op_text == "!=") {
-      return context.AddInst(SemIR::LocIdAndInst(
-          SemIR::LocId(node_id),
-          SemIR::IntNeq{
-              .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
-    }
-    if (op_text == "<") {
-      return context.AddInst(SemIR::LocIdAndInst(
-          SemIR::LocId(node_id),
-          SemIR::IntLess{
-              .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
-    }
-    if (op_text == ">") {
-      return context.AddInst(SemIR::LocIdAndInst(
-          SemIR::LocId(node_id),
-          SemIR::IntGreater{
-              .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
-    }
-    if (op_text == "<=") {
-      return context.AddInst(SemIR::LocIdAndInst(
-          SemIR::LocId(node_id),
-          SemIR::IntLessEq{
-              .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
-    }
-    // >=
-    return context.AddInst(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::IntGreaterEq{
-            .type_id = bool_type, .lhs_id = lhs_id, .rhs_id = rhs_id}));
+
+    // Not a comparable type — check for operator overloading, then error.
+    // (Operator overloading for comparisons is handled in the general
+    // overload resolution below.)
+    context.EmitError(node_id, InvalidOperandTypes,
+                      std::string(op_text),
+                      context.GetTypeName(lhs_type),
+                      context.GetTypeName(rhs_type));
+    return context.AddInst(SemIR::LocIdAndInst::NoLoc(
+        SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
   }
 
   // Boolean operators: &&, ||
@@ -3378,7 +3458,7 @@ auto HandlePrefixOperatorExpr(Context& context, Parse::NodeId node_id)
           SemIR::FloatNegate{
               .type_id = operand_type, .operand_id = operand_id}));
     }
-    if (IsIntType(context, operand_type)) {
+    if (IsNonBoolIntegerType(context, operand_type)) {
       return context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
           SemIR::IntNegate{
@@ -3405,7 +3485,7 @@ auto HandlePrefixOperatorExpr(Context& context, Parse::NodeId node_id)
         SemIR::BoolNot{.type_id = operand_type, .operand_id = operand_id}));
   }
   if (op_text == "~") {
-    if (!IsIntType(context, operand_type)) {
+    if (!IsNonBoolIntegerType(context, operand_type)) {
       context.EmitError(node_id, InvalidOperandTypes,
                         std::string(op_text),
                         context.GetTypeName(operand_type),

@@ -103,7 +103,11 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
       kind == SemIR::InstKind::OptionalType ||
       kind == SemIR::InstKind::StructField ||
       kind == SemIR::InstKind::GeneratorType ||
-      kind == SemIR::InstKind::AsyncFuncType) {
+      kind == SemIR::InstKind::AsyncFuncType ||
+      kind == SemIR::InstKind::ArrayType ||
+      kind == SemIR::InstKind::DictType ||
+      kind == SemIR::InstKind::HashSetType ||
+      kind == SemIR::InstKind::ClosureType) {
     return;
   }
 
@@ -2082,6 +2086,10 @@ auto GenerateSIL(const SemIR::File& sem_ir)
           kind != SemIR::InstKind::EnumCaseWithPayload &&
           kind != SemIR::InstKind::TupleType &&
           kind != SemIR::InstKind::OptionalType &&
+          kind != SemIR::InstKind::ArrayType &&
+          kind != SemIR::InstKind::DictType &&
+          kind != SemIR::InstKind::HashSetType &&
+          kind != SemIR::InstKind::ClosureType &&
           kind != SemIR::InstKind::StructField &&
           kind != SemIR::InstKind::BoundMethod &&
           kind != SemIR::InstKind::ValueBindingPattern &&

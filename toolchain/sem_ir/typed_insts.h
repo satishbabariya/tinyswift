@@ -407,6 +407,63 @@ struct OptionalSome {
   InstId value_id;
 };
 
+// ============================================================================
+// Collection & Closure type instructions
+// ============================================================================
+
+// Array type [T] — replaces the shortcut of returning raw element type.
+// At LLVM level, arrays are still opaque pointers (runtime-managed),
+// but this preserves element type info for type checking.
+struct ArrayType {
+  static constexpr auto Kind = InstKind::ArrayType.Define<Parse::NodeId>(
+      {.ir_name = "array_type",
+       .is_type = InstIsType::Always,
+       .constant_kind = InstConstantKind::WheneverPossible});
+
+  TypeId type_id;
+  TypeInstId element_type_id;  // T in [T]
+};
+
+// Dictionary type [K:V] — replaces the shortcut of returning Int carrier.
+// At LLVM level, dicts are still opaque pointers (runtime-managed),
+// but this preserves key/value type info for type checking.
+struct DictType {
+  static constexpr auto Kind = InstKind::DictType.Define<Parse::NodeId>(
+      {.ir_name = "dict_type",
+       .is_type = InstIsType::Always,
+       .constant_kind = InstConstantKind::WheneverPossible});
+
+  TypeId type_id;
+  TypeInstId key_type_id;    // K in [K:V]
+  // Note: value_type_id stored via pending context (SemIR limit of 2 fields).
+};
+
+// Set type Set<T> — gives sets a proper type identity.
+// At LLVM level, sets are still opaque pointers (runtime-managed).
+struct HashSetType {
+  static constexpr auto Kind = InstKind::HashSetType.Define<Parse::NodeId>(
+      {.ir_name = "set_type",
+       .is_type = InstIsType::Always,
+       .constant_kind = InstConstantKind::WheneverPossible});
+
+  TypeId type_id;
+  TypeInstId element_type_id;  // T in Set<T>
+};
+
+// Closure type (T) -> U — replaces the shortcut of typing closures as Int.
+// At LLVM level, closures are still opaque pointers, but this preserves
+// the function signature for type checking.
+struct ClosureType {
+  static constexpr auto Kind = InstKind::ClosureType.Define<Parse::NodeId>(
+      {.ir_name = "closure_type",
+       .is_type = InstIsType::Always,
+       .constant_kind = InstConstantKind::WheneverPossible});
+
+  TypeId type_id;
+  TypeInstId return_type_id;  // Return type U
+  // Note: param types stored via function's param list.
+};
+
 // Integer arithmetic operations.
 struct IntAdd {
   static constexpr auto Kind = InstKind::IntAdd.Define<Parse::NodeId>(

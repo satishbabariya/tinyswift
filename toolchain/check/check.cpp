@@ -82,8 +82,13 @@ auto CheckParseTrees(
       auto name_id = SemIR::NameId::ForIdentifier(ident_id);
       context.AddNameToScope(name_id, bt.inst_id);
     }
-    // Dynamic types (Bool=Int1, Int=Int64) — register via GetBuiltinType.
-    static const char* dynamic_type_names[] = {"Bool", "Int", "UInt"};
+    // Dynamic types (Bool=Int1, Int=Int64, fixed-width) — register via
+    // GetBuiltinType.
+    static const char* dynamic_type_names[] = {
+        "Bool", "Int", "UInt",
+        "Int8", "Int16", "Int32", "Int64",
+        "UInt8", "UInt16", "UInt32", "UInt64",
+    };
     for (const auto* type_name : dynamic_type_names) {
       auto type_id = context.GetBuiltinType(type_name);
       auto type_inst_id = context.types().GetTypeInstId(type_id);

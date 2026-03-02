@@ -126,19 +126,29 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
   }
 
   if (kind == Parse::NodeKind::ArrayType) {
-    // For now, arrays are just a pointer to the element type.
+    // Emit a proper ArrayType instruction with element type.
     auto children = context.children_source_order(node_id);
+    SemIR::TypeId elem_type_id = SemIR::ErrorInst::TypeId;
     for (auto child : children) {
       if (context.node_kind(child).category().HasAnyOf(
               Parse::NodeCategory::Type)) {
-        return HandleTypeExpr(context, child);
+        elem_type_id = HandleTypeExpr(context, child);
+        break;
       }
     }
-    return SemIR::ErrorInst::TypeId;
+    if (elem_type_id == SemIR::ErrorInst::TypeId) {
+      return SemIR::ErrorInst::TypeId;
+    }
+    auto elem_type_inst_id = context.types().GetTypeInstId(elem_type_id);
+    auto inst_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::ArrayType{.type_id = SemIR::TypeType::TypeId,
+                         .element_type_id = elem_type_inst_id}));
+    return SemIR::TypeId::ForTypeConstant(
+        SemIR::ConstantId::ForConcreteConstant(inst_id));
   }
 
-  // M91: Dictionary type `[Key: Value]` — returns opaque ptr type.
-  // Store pending key/val types for use by HandleVariableDecl.
+  // M91: Dictionary type `[Key: Value]` — emit proper DictType instruction.
   if (kind == Parse::NodeKind::DictionaryType) {
     auto children = context.children_source_order(node_id);
     llvm::SmallVector<SemIR::TypeId> type_children;
@@ -152,8 +162,16 @@ auto HandleTypeExpr(Context& context, Parse::NodeId node_id) -> SemIR::TypeId {
     if (type_children.size() >= 2) {
       context.SetPendingDictKeyValTypes(type_children[0], type_children[1]);
     }
-    // Dict is an opaque pointer at runtime — use Int type as carrier.
-    return context.GetBuiltinType("Int");
+    // Emit a proper DictType instruction with key type.
+    SemIR::TypeId key_type_id = type_children.size() >= 1
+        ? type_children[0] : context.GetBuiltinType("Int");
+    auto key_type_inst_id = context.types().GetTypeInstId(key_type_id);
+    auto inst_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::DictType{.type_id = SemIR::TypeType::TypeId,
+                        .key_type_id = key_type_inst_id}));
+    return SemIR::TypeId::ForTypeConstant(
+        SemIR::ConstantId::ForConcreteConstant(inst_id));
   }
 
   // M98: Generator<T> type — creates a two-pointer tuple type.

@@ -71,6 +71,12 @@ TINYSWIFT_SEM_IR_INST_KIND(OptionalType)
 TINYSWIFT_SEM_IR_INST_KIND(OptionalNone)
 TINYSWIFT_SEM_IR_INST_KIND(OptionalSome)
 
+// Collection types (proper type instructions replacing Int placeholders)
+TINYSWIFT_SEM_IR_INST_KIND(ArrayType)          // [T] — element_type_id
+TINYSWIFT_SEM_IR_INST_KIND(DictType)           // [K:V] — key_type_id, value_type_id
+TINYSWIFT_SEM_IR_INST_KIND(HashSetType)            // Set<T> — element_type_id
+TINYSWIFT_SEM_IR_INST_KIND(ClosureType)        // (T) -> U — param_type_id, return_type_id
+
 // Arithmetic operators
 TINYSWIFT_SEM_IR_INST_KIND(IntAdd)
 TINYSWIFT_SEM_IR_INST_KIND(IntSub)

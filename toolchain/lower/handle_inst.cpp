@@ -68,6 +68,10 @@ auto LowerInst(Context& context, SemIR::InstId inst_id) -> void {
     case SemIR::InstKind::ClassType:
     case SemIR::InstKind::GeneratorType:   // M98: Generator type
     case SemIR::InstKind::AsyncFuncType:   // M100: Async function type
+    case SemIR::InstKind::ArrayType:       // Collection type metadata
+    case SemIR::InstKind::DictType:        // Collection type metadata
+    case SemIR::InstKind::HashSetType:         // Collection type metadata
+    case SemIR::InstKind::ClosureType:     // Closure type metadata
       break;
 
     // -----------------------------------------------------------------------

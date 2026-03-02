@@ -284,6 +284,10 @@ static auto LowerTopLevelInsts(Context& context) -> void {
         kind == SemIR::InstKind::BoundMethod ||
         kind == SemIR::InstKind::GeneratorType ||
         kind == SemIR::InstKind::AsyncFuncType ||
+        kind == SemIR::InstKind::ArrayType ||
+        kind == SemIR::InstKind::DictType ||
+        kind == SemIR::InstKind::HashSetType ||
+        kind == SemIR::InstKind::ClosureType ||
         kind == SemIR::InstKind::Yield) {
       continue;
     }

@@ -155,6 +155,22 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
       return llvm::StructType::get(context.llvm_context(), elem_types);
     }
 
+    case SemIR::InstKind::ArrayType:
+      // ArrayType lowers to opaque pointer (runtime-managed dynamic array).
+      return llvm::PointerType::get(context.llvm_context(), 0);
+
+    case SemIR::InstKind::DictType:
+      // DictType lowers to opaque pointer (runtime-managed hash map).
+      return llvm::PointerType::get(context.llvm_context(), 0);
+
+    case SemIR::InstKind::HashSetType:
+      // SetType lowers to opaque pointer (runtime-managed hash set).
+      return llvm::PointerType::get(context.llvm_context(), 0);
+
+    case SemIR::InstKind::ClosureType:
+      // ClosureType lowers to opaque pointer (function pointer + captures).
+      return llvm::PointerType::get(context.llvm_context(), 0);
+
     case SemIR::InstKind::GeneratorType: {
       // Generator<T> is a two-pointer struct: {frame_ptr, resume_fn_ptr}.
       auto* ptr_type = llvm::Type::getInt64Ty(context.llvm_context());
