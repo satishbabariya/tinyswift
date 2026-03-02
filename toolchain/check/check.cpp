@@ -162,7 +162,7 @@ auto CheckParseTrees(
     }
   }
 
-  // --- Pass 1b: Pre-register all top-level function names across ALL files ---
+  // --- Pass 1b: Pre-register all top-level function DEFINITIONS across ALL files ---
   for (int file_idx = 0; file_idx < static_cast<int>(all_file_roots.size()); ++file_idx) {
     auto& file_roots = all_file_roots[file_idx];
     auto& tree_and_subtrees = tree_and_subtrees_getters.Get(file_roots.check_ir_id)();
@@ -174,7 +174,11 @@ auto CheckParseTrees(
     for (auto root : file_roots.roots) {
       if (handle_access_modifier(context, root)) continue;
       auto kind = context.node_kind(root);
-      if (kind == Parse::NodeKind::FunctionDefinition) {
+      if (kind == Parse::NodeKind::FunctionDecl) {
+        // Bodyless function declarations (@extern("C") forward declarations).
+        HandleFunctionDecl(context, root);
+        processed_type_roots.insert(make_key(file_idx, root.index));
+      } else if (kind == Parse::NodeKind::FunctionDefinition) {
         auto children = context.children_source_order(root);
         for (auto child : children) {
           if (context.node_kind(child) ==
@@ -183,11 +187,6 @@ auto CheckParseTrees(
             break;
           }
         }
-      } else if (kind == Parse::NodeKind::FunctionDecl) {
-        HandleFunctionDecl(context, root);
-        // Mark bodyless FunctionDecl as processed so Pass 2 skips it.
-        // This prevents duplicate function entries for @extern declarations.
-        processed_type_roots.insert(make_key(file_idx, root.index));
       }
     }
   }

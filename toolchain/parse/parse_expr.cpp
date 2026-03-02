@@ -170,6 +170,13 @@ static auto ParseExprImpl(Context& context, int min_precedence) -> void {
     auto op = context.Consume();
     ParseExprImpl(context, Prec_Prefix);
     context.AddNode(NodeKind::PrefixOperatorExpr, op);
+  // Prefix `!` — the lexer always emits Exclaim for lone `!`; when it
+  // appears at expression-start (with leading whitespace or at BOF) it is
+  // the logical-NOT prefix operator.
+  } else if (kind == Lex::TokenKind::Exclaim) {
+    auto op = context.Consume();
+    ParseExprImpl(context, Prec_Prefix);
+    context.AddNode(NodeKind::PrefixOperatorExpr, op);
   } else {
     ParsePrimaryExpr(context);
     ParsePostfixExpr(context);

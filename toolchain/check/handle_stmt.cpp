@@ -1904,10 +1904,21 @@ auto HandleStatement(Context& context, Parse::NodeId node_id) -> void {
 
   // Import.
   if (kind == Parse::NodeKind::ImportDecl) {
-    // Stub: emit an import instruction.
+    // Resolve the module name from IdentifierNameNotBeforeParams children.
+    auto children = context.children_source_order(node_id);
+    SemIR::NameId package_id = SemIR::NameId::None;
+    for (auto child : children) {
+      if (context.node_kind(child) ==
+          Parse::NodeKind::IdentifierNameNotBeforeParams) {
+        auto text = context.token_text(context.node_token(child));
+        auto ident_id = context.identifiers().Add(text);
+        package_id = SemIR::NameId::ForIdentifier(ident_id);
+        break;  // First path component is the module name.
+      }
+    }
     context.AddInst(SemIR::LocIdAndInst::UncheckedLoc(
         SemIR::LocId(node_id),
-        SemIR::ImportDecl{.package_id = SemIR::NameId::None}));
+        SemIR::ImportDecl{.package_id = package_id}));
     return;
   }
 

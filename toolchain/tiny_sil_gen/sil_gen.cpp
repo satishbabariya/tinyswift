@@ -2100,6 +2100,8 @@ auto GenerateSIL(const SemIR::File& sem_ir)
       ctx.set_current_block(entry_bb);
 
       for (auto inst_id : top_insts) {
+        // M119: Thread source location to SIL instructions for debug info.
+        ctx.set_current_loc_id(sem_ir.insts().GetCanonicalLocId(inst_id));
         EmitInst(ctx, inst_id);
       }
 

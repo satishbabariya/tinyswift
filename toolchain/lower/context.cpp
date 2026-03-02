@@ -64,6 +64,12 @@ auto Context::ResolveLocToLineCol(SemIR::LocId loc_id,
     return false;
   }
 
+  // Multi-file safety: LocIds from non-primary files have NodeIds that are
+  // invalid for the primary file's parse tree. Bounds-check to avoid crash.
+  if (node_id.index >= sem_ir_.parse_tree().size()) {
+    return false;
+  }
+
   auto token = sem_ir_.parse_tree().node_token(node_id);
   line = static_cast<unsigned>(tokens_->GetLineNumber(token));
   col = static_cast<unsigned>(tokens_->GetColumnNumber(token));
@@ -71,14 +77,16 @@ auto Context::ResolveLocToLineCol(SemIR::LocId loc_id,
 }
 
 auto Context::SetDebugLoc(SemIR::LocId loc_id) -> void {
-  if (!debug_enabled_) return;
+  if (!debug_enabled_ || !current_scope_) return;
 
   unsigned line = 0, col = 0;
-  if (ResolveLocToLineCol(loc_id, line, col) && current_scope_) {
-    auto* di_loc =
-        llvm::DILocation::get(llvm_context_, line, col, current_scope_);
-    builder_.SetCurrentDebugLocation(di_loc);
-  }
+  // Try to resolve the source location. If it fails (e.g. NodeId from a
+  // non-primary file), use line 0 as a fallback to satisfy LLVM's requirement
+  // that all instructions in a function with debug info have a !dbg location.
+  ResolveLocToLineCol(loc_id, line, col);
+  auto* di_loc =
+      llvm::DILocation::get(llvm_context_, line, col, current_scope_);
+  builder_.SetCurrentDebugLocation(di_loc);
 }
 
 auto Context::ClearDebugLoc() -> void {

@@ -107,16 +107,15 @@ static auto DeclareFunctions(Context& context) -> void {
       llvm_fn->setVisibility(llvm::GlobalValue::DefaultVisibility);
     }
 
-    // M119: Create DISubprogram for debug info.
-    if (context.debug_enabled()) {
+    // M119: Create DISubprogram for functions with bodies only.
+    // Declarations (@extern("C") with no body) must not get SPFlagDefinition.
+    if (context.debug_enabled() && !function.body_block_ids.empty()) {
       unsigned line = 0, col = 0;
       // Try to get source location from the first body block instruction.
-      if (!function.body_block_ids.empty()) {
-        auto first_block = sem_ir.inst_blocks().Get(function.body_block_ids[0]);
-        if (!first_block.empty()) {
-          auto loc_id = sem_ir.insts().GetCanonicalLocId(first_block[0]);
-          context.ResolveLocToLineCol(loc_id, line, col);
-        }
+      auto first_block = sem_ir.inst_blocks().Get(function.body_block_ids[0]);
+      if (!first_block.empty()) {
+        auto loc_id = sem_ir.insts().GetCanonicalLocId(first_block[0]);
+        context.ResolveLocToLineCol(loc_id, line, col);
       }
       auto* sp = context.di_builder()->createFunction(
           context.di_file(), effective_name, effective_name,
@@ -141,9 +140,13 @@ static auto LowerFunctionBody(Context& context, SemIR::FunctionId func_id,
     return;
   }
 
-  // M119: Set debug scope to the function's DISubprogram.
-  if (context.debug_enabled() && llvm_fn->getSubprogram()) {
-    context.SetCurrentScope(llvm_fn->getSubprogram());
+  // M119: Set debug scope to the function's DISubprogram and clear any
+  // stale debug location from the previous function's lowering.
+  if (context.debug_enabled()) {
+    if (llvm_fn->getSubprogram()) {
+      context.SetCurrentScope(llvm_fn->getSubprogram());
+    }
+    context.ClearDebugLoc();
   }
 
   // Create basic blocks for all body blocks upfront.
@@ -304,6 +307,20 @@ static auto LowerTopLevelInsts(Context& context) -> void {
   auto* init_fn = llvm::Function::Create(
       init_fn_type, llvm::Function::ExternalLinkage, "__tinyswift_init",
       &context.module());
+
+  // M119: Create DISubprogram for __tinyswift_init so top-level instructions
+  // have the correct debug scope.
+  if (context.debug_enabled()) {
+    auto* sp = context.di_builder()->createFunction(
+        context.di_file(), "__tinyswift_init", "__tinyswift_init",
+        context.di_file(), /*LineNo=*/0,
+        context.CreateFunctionDIType(), /*ScopeLine=*/0,
+        llvm::DINode::FlagPrototyped,
+        llvm::DISubprogram::SPFlagDefinition);
+    init_fn->setSubprogram(sp);
+    context.SetCurrentScope(sp);
+  }
+
   auto* entry =
       llvm::BasicBlock::Create(context.llvm_context(), "entry", init_fn);
   context.builder().SetInsertPoint(entry);
@@ -2033,9 +2050,13 @@ auto LowerSILFunctionBody(Context& context,
     return;
   }
 
-  // M119: Set debug scope to the function's DISubprogram.
-  if (context.debug_enabled() && llvm_fn->getSubprogram()) {
-    context.SetCurrentScope(llvm_fn->getSubprogram());
+  // M119: Set debug scope to the function's DISubprogram and clear any
+  // stale debug location from the previous function's lowering.
+  if (context.debug_enabled()) {
+    if (llvm_fn->getSubprogram()) {
+      context.SetCurrentScope(llvm_fn->getSubprogram());
+    }
+    context.ClearDebugLoc();
   }
 
   llvm::DenseMap<int32_t, llvm::Value*> sil_values;
@@ -2069,8 +2090,17 @@ auto LowerSILFunctionBody(Context& context,
 
     for (const auto& inst : bb->insts) {
       // M119: Set debug location from SIL instruction's loc_id.
-      if (context.debug_enabled() && inst->loc_id.has_value()) {
-        context.SetDebugLoc(inst->loc_id);
+      // Always set a location (even line 0) so LLVM doesn't reject
+      // call instructions in functions with debug info.
+      if (context.debug_enabled()) {
+        if (inst->loc_id.has_value()) {
+          context.SetDebugLoc(inst->loc_id);
+        } else if (context.current_scope()) {
+          // Fallback: line-0 location in the current scope.
+          context.builder().SetCurrentDebugLocation(
+              llvm::DILocation::get(context.llvm_context(), 0, 0,
+                                    context.current_scope()));
+        }
       }
       LowerSILInst(context, *inst, sil_values, sil_blocks, llvm_fn,
                    closure_captures);
@@ -2109,8 +2139,11 @@ auto LowerSILToLLVM(llvm::LLVMContext& llvm_context,
         fn_type, llvm::Function::ExternalLinkage, sil_fn->name,
         &context.module());
 
-    // M119: Create DISubprogram for each SIL function.
-    if (context.debug_enabled()) {
+    // M119: Create DISubprogram for SIL functions with bodies only.
+    // Function declarations (@extern("C") with no body) must not get
+    // SPFlagDefinition — LLVM's verifier rejects that.
+    if (context.debug_enabled() &&
+        !sil_fn->is_declaration && !sil_fn->blocks.empty()) {
       unsigned line = 0;
       // Use the SemIR function decl location if available.
       if (sil_fn->sem_ir_function_id >= 0) {

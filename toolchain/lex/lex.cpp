@@ -1244,7 +1244,8 @@ class Lexer {
   auto IsRightBound(const char* pos) -> bool {
     if (pos >= end_) return false;
     char next = *pos;
-    return IsIdentifierStart(next) || next == '(' || next == '[' ||
+    return IsIdentifierStart(next) || (next >= '0' && next <= '9') ||
+           next == '(' || next == '[' ||
            next == '{' || next == '.' || next == '"' || next == '\'' ||
            next == '$';
   }

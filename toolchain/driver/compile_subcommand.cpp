@@ -914,18 +914,19 @@ auto CompileSubcommand::Run(DriverEnv& driver_env) -> DriverResult {
   }
 
   // Create CompilationUnits (prelude files first, then user files).
+  // Module units will be inserted after lex+parse when we know what's imported.
   llvm::SmallVector<std::unique_ptr<CompilationUnit>> units;
   int prelude_count = static_cast<int>(prelude_files.size());
-  int total_unit_count = prelude_count +
-                         static_cast<int>(options_.input_filenames.size());
+  int user_count = static_cast<int>(options_.input_filenames.size());
+  int initial_total = prelude_count + user_count;
   for (int i = 0; i < prelude_count; ++i) {
     units.push_back(std::make_unique<CompilationUnit>(
-        SemIR::CheckIRId(i), total_unit_count, &driver_env, &options_,
+        SemIR::CheckIRId(i), initial_total, &driver_env, &options_,
         &driver_env.consumer, prelude_files[i], target));
   }
-  for (int i = 0; i < static_cast<int>(options_.input_filenames.size()); ++i) {
+  for (int i = 0; i < user_count; ++i) {
     units.push_back(std::make_unique<CompilationUnit>(
-        SemIR::CheckIRId(prelude_count + i), total_unit_count, &driver_env,
+        SemIR::CheckIRId(prelude_count + i), initial_total, &driver_env,
         &options_, &driver_env.consumer, options_.input_filenames[i], target));
   }
 
