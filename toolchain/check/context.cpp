@@ -189,9 +189,27 @@ auto Context::GetTypeName(SemIR::TypeId type_id) -> std::string {
   }
   auto type_inst = insts().Get(type_inst_id);
   switch (type_inst.kind()) {
-    case SemIR::InstKind::BoolType:
-      return "Bool";
-    case SemIR::InstKind::IntType:
+    case SemIR::InstKind::IntType: {
+      auto int_type = type_inst.As<SemIR::IntType>();
+      int bit_width = 64;
+      if (int_type.bit_width_id.has_value()) {
+        auto width_inst = insts().Get(int_type.bit_width_id);
+        if (auto iv = width_inst.TryAs<SemIR::IntValue>()) {
+          auto ap = sem_ir().ints().Get(iv->int_id);
+          bit_width = static_cast<int>(ap.getSExtValue());
+        }
+      }
+      // Int1 is Bool.
+      if (bit_width == 1 && int_type.int_kind.is_signed()) {
+        return "Bool";
+      }
+      // Platform-width Int/UInt (64-bit) display without suffix.
+      if (bit_width == 64) {
+        return int_type.int_kind.is_signed() ? "Int" : "UInt";
+      }
+      std::string prefix = int_type.int_kind.is_signed() ? "Int" : "UInt";
+      return prefix + std::to_string(bit_width);
+    }
     case SemIR::InstKind::IntLiteralType:
       return "Int";
     case SemIR::InstKind::StringType:
@@ -250,16 +268,80 @@ auto Context::GetBuiltinTypeScope(SemIR::InstId type_inst_id)
   return SemIR::NameScopeId::None;
 }
 
+auto Context::MakeIntType(SemIR::IntKind int_kind, int bit_width)
+    -> SemIR::TypeId {
+  // Create an IntValue instruction for the bit width.
+  auto width_int_id = ints().Add(static_cast<int64_t>(bit_width));
+  auto width_inst_id = AddInstInNoBlock(SemIR::LocIdAndInst::NoLoc(
+      SemIR::IntValue{.type_id = SemIR::TypeId::ForTypeConstant(
+                          SemIR::ConstantId::ForConcreteConstant(
+                              SemIR::IntLiteralType::TypeInstId)),
+                      .int_id = width_int_id}));
+
+  // Create the IntType instruction with the given signedness and bit width.
+  auto inst_id = AddInstInNoBlock(SemIR::LocIdAndInst::NoLoc(
+      SemIR::IntType{.type_id = SemIR::TypeType::TypeId,
+                     .int_kind = int_kind,
+                     .bit_width_id = width_inst_id}));
+  return SemIR::TypeId::ForTypeConstant(
+      SemIR::ConstantId::ForConcreteConstant(inst_id));
+}
+
 auto Context::GetBuiltinType(llvm::StringRef name) -> SemIR::TypeId {
-  if (name == "Bool") {
-    return SemIR::TypeId::ForTypeConstant(
-        SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+  // Return cached result if available (MakeIntType creates new instructions
+  // each call, so caching is required for type identity comparisons).
+  auto cached = builtin_type_cache_.find(name);
+  if (cached != builtin_type_cache_.end()) {
+    return cached->second;
   }
+  auto result = GetBuiltinTypeUncached(name);
+  if (result != SemIR::ErrorInst::TypeId) {
+    builtin_type_cache_.insert({name, result});
+  }
+  return result;
+}
+
+auto Context::GetBuiltinTypeUncached(llvm::StringRef name) -> SemIR::TypeId {
+  // Bool is Int1 — a 1-bit integer type (true=1, false=0).
+  if (name == "Bool") {
+    return MakeIntType(SemIR::IntKind::Signed, 1);
+  }
+  // Platform-width Int (defaults to 64-bit; future: arch-dependent via prelude).
   if (name == "Int") {
-    // Use IntLiteralType as a stand-in for Swift's Int type.
-    return SemIR::TypeId::ForTypeConstant(
-        SemIR::ConstantId::ForConcreteConstant(
-            SemIR::IntLiteralType::TypeInstId));
+    return MakeIntType(SemIR::IntKind::Signed, 64);
+  }
+  // Platform-width UInt (defaults to 64-bit; future: arch-dependent via prelude).
+  if (name == "UInt") {
+    return MakeIntType(SemIR::IntKind::Unsigned, 64);
+  }
+  // Fixed-width signed integer types.
+  if (name == "Int1") {
+    return MakeIntType(SemIR::IntKind::Signed, 1);
+  }
+  if (name == "Int8") {
+    return MakeIntType(SemIR::IntKind::Signed, 8);
+  }
+  if (name == "Int16") {
+    return MakeIntType(SemIR::IntKind::Signed, 16);
+  }
+  if (name == "Int32") {
+    return MakeIntType(SemIR::IntKind::Signed, 32);
+  }
+  if (name == "Int64") {
+    return MakeIntType(SemIR::IntKind::Signed, 64);
+  }
+  // Fixed-width unsigned integer types.
+  if (name == "UInt8") {
+    return MakeIntType(SemIR::IntKind::Unsigned, 8);
+  }
+  if (name == "UInt16") {
+    return MakeIntType(SemIR::IntKind::Unsigned, 16);
+  }
+  if (name == "UInt32") {
+    return MakeIntType(SemIR::IntKind::Unsigned, 32);
+  }
+  if (name == "UInt64") {
+    return MakeIntType(SemIR::IntKind::Unsigned, 64);
   }
   if (name == "String") {
     return SemIR::TypeId::ForTypeConstant(

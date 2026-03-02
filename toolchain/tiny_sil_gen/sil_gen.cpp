@@ -85,8 +85,7 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
   }
 
   // Skip type instructions.
-  if (kind == SemIR::InstKind::BoolType ||
-      kind == SemIR::InstKind::IntType ||
+  if (kind == SemIR::InstKind::IntType ||
       kind == SemIR::InstKind::IntLiteralType ||
       kind == SemIR::InstKind::FunctionType ||
       kind == SemIR::InstKind::PointerType ||
@@ -943,8 +942,9 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
 
   if (auto opt_none = inst.TryAs<SemIR::OptionalNone>()) {
     // Optional<T> is represented as {i1, T} — None = {false, T(zero)}.
+    // Bool is Int1; use IntLiteralType as SIL-level stand-in for i1 flag.
     auto bool_type_id = SemIR::TypeId::ForTypeConstant(
-        SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+        SemIR::ConstantId::ForConcreteConstant(SemIR::IntLiteralType::TypeInstId));
 
     // Determine the inner type from Optional<T>.
     SemIR::TypeId inner_type_id = opt_none->type_id;
@@ -982,8 +982,9 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
 
   if (auto opt_some = inst.TryAs<SemIR::OptionalSome>()) {
     // Optional<T> is represented as {i1, T} — Some(x) = {true, x}.
+    // Bool is Int1; use IntLiteralType as SIL-level stand-in for i1 flag.
     auto bool_type_id = SemIR::TypeId::ForTypeConstant(
-        SemIR::ConstantId::ForConcreteConstant(SemIR::BoolType::TypeInstId));
+        SemIR::ConstantId::ForConcreteConstant(SemIR::IntLiteralType::TypeInstId));
 
     // Emit has-value flag = i1 true.
     auto flag_val = AllocValue(ctx, ctx.GetSILType(bool_type_id));
@@ -2065,7 +2066,6 @@ auto GenerateSIL(const SemIR::File& sem_ir)
           kind != SemIR::InstKind::ImportDecl &&
           kind != SemIR::InstKind::FunctionDecl &&
           kind != SemIR::InstKind::NameBindingDecl &&
-          kind != SemIR::InstKind::BoolType &&
           kind != SemIR::InstKind::IntType &&
           kind != SemIR::InstKind::IntLiteralType &&
           kind != SemIR::InstKind::FunctionType &&

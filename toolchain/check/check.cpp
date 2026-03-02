@@ -68,20 +68,28 @@ auto CheckParseTrees(
   // M88: Register built-in type names in package scope so extensions can
   // resolve them via LookupName (e.g. `extension Int { ... }`).
   {
+    // Singleton types with fixed InstIds.
     static const struct {
       const char* name;
       SemIR::InstId inst_id;
-    } builtin_types[] = {
-        {"Bool", SemIR::BoolType::TypeInstId},
-        {"Int", SemIR::IntLiteralType::TypeInstId},
+    } singleton_types[] = {
         {"String", SemIR::StringType::TypeInstId},
         {"Float", SemIR::FloatType::TypeInstId},
         {"Double", SemIR::DoubleType::TypeInstId},
     };
-    for (const auto& bt : builtin_types) {
+    for (const auto& bt : singleton_types) {
       auto ident_id = context.identifiers().Add(bt.name);
       auto name_id = SemIR::NameId::ForIdentifier(ident_id);
       context.AddNameToScope(name_id, bt.inst_id);
+    }
+    // Dynamic types (Bool=Int1, Int=Int64) — register via GetBuiltinType.
+    static const char* dynamic_type_names[] = {"Bool", "Int", "UInt"};
+    for (const auto* type_name : dynamic_type_names) {
+      auto type_id = context.GetBuiltinType(type_name);
+      auto type_inst_id = context.types().GetTypeInstId(type_id);
+      auto ident_id = context.identifiers().Add(type_name);
+      auto name_id = SemIR::NameId::ForIdentifier(ident_id);
+      context.AddNameToScope(name_id, type_inst_id);
     }
   }
 

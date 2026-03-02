@@ -12,7 +12,7 @@ interface Copy {
   fn Op[self: Self]() -> Self;
 }
 
-private fn Bool() -> type = "bool.make_type";
+private fn MakeSignedInt(size: IntLiteral()) -> type = "int.make_type_signed";
 private fn CharLiteral() -> type = "char_literal.make_type";
 private fn FloatLiteral() -> type = "float_literal.make_type";
 private fn IntLiteral() -> type = "int_literal.make_type";
@@ -21,7 +21,10 @@ impl forall [T:! Copy] const T as Copy {
   fn Op[self: Self]() -> Self { return (self as T).(Copy.Op)() as const T; }
 }
 
-impl Bool() as Copy {
+// Bool is Int1 (1-bit signed integer). Copy is provided by Int(N) in int.swift,
+// but we also declare it here for the minimal prelude where int.swift may not
+// be loaded.
+impl MakeSignedInt(1) as Copy {
   fn Op[self: Self]() -> Self = "primitive_copy";
 }
 

@@ -128,9 +128,6 @@ struct ReturnExpr {
   DestInstId dest_id;
 };
 
-// The type of bool values.
-using BoolType = SingletonTypeInst<InstKind::BoolType, "bool">;
-
 // A primitive integer type.
 struct IntType {
   static constexpr auto Kind = InstKind::IntType.Define<Parse::NoneNodeId>(

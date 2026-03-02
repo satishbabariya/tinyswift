@@ -16,12 +16,19 @@ auto LowerType(Context& context, SemIR::TypeId type_id) -> llvm::Type* {
   auto inst = sem_ir.types().GetAsInst(type_id);
 
   switch (inst.kind()) {
-    case SemIR::InstKind::BoolType:
-      return llvm::Type::getInt1Ty(context.llvm_context());
-
+    // BoolType is no longer a singleton — Bool is IntType(Signed, 1).
+    // IntType handles all integer widths including i1 (Bool).
     case SemIR::InstKind::IntType: {
-      // Default to 64-bit integers.
-      return llvm::Type::getInt64Ty(context.llvm_context());
+      auto int_type = inst.As<SemIR::IntType>();
+      unsigned bit_width = 64;  // default fallback
+      if (int_type.bit_width_id.has_value()) {
+        auto width_inst = sem_ir.insts().Get(int_type.bit_width_id);
+        if (auto iv = width_inst.TryAs<SemIR::IntValue>()) {
+          auto ap = sem_ir.ints().Get(iv->int_id);
+          bit_width = static_cast<unsigned>(ap.getSExtValue());
+        }
+      }
+      return llvm::Type::getIntNTy(context.llvm_context(), bit_width);
     }
 
     case SemIR::InstKind::IntLiteralType:
