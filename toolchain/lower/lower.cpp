@@ -890,6 +890,19 @@ auto LowerSILInst(
               "__tinyswift_print_int", fn_type);
           builder.CreateCall(callee, {val});
         }
+      } else if (name == "print_bool") {
+        auto* val = getSILValue(inst.operands[0]);
+        if (val) {
+          auto* fn_type = llvm::FunctionType::get(
+              builder.getVoidTy(), {builder.getInt64Ty()}, false);
+          auto callee = context.module().getOrInsertFunction(
+              "__tinyswift_print_bool", fn_type);
+          // Widen i1 to i64.
+          if (!val->getType()->isIntegerTy(64)) {
+            val = builder.CreateSExt(val, builder.getInt64Ty());
+          }
+          builder.CreateCall(callee, {val});
+        }
       } else if (name == "print_string") {
         auto* val = getSILValue(inst.operands[0]);
         if (val) {

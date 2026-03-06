@@ -140,6 +140,9 @@ class Context {
   auto AddInstToBlock(SemIR::InstBlockId block_id, SemIR::InstId inst_id)
       -> void;
 
+  // Returns the last instruction ID in the current block, or None if empty.
+  auto GetLastInstInCurrentBlock() const -> SemIR::InstId;
+
   // Pushes an existing placeholder block onto the instruction block stack.
   // Unlike PushInstBlock(), this reuses an existing block ID rather than
   // creating a new one. Used for loop body blocks so that nested control
@@ -313,6 +316,14 @@ class Context {
     return deferred_blocks_;
   }
   auto ClearDeferredBlocks() -> void { deferred_blocks_.clear(); }
+
+  // --- Switch fallthrough target ---
+  auto SetFallthroughTarget(SemIR::InstBlockId target) -> void {
+    fallthrough_target_ = target;
+  }
+  auto GetFallthroughTarget() const -> SemIR::InstBlockId {
+    return fallthrough_target_;
+  }
 
   // --- Name scope management ---
 
@@ -570,6 +581,9 @@ class Context {
   // Each `defer { ... }` pushes its CodeBlock here.
   // Each return statement emits these LIFO before emitting ReturnExpr/Return.
   llvm::SmallVector<Parse::NodeId> deferred_blocks_;
+
+  // Switch fallthrough target block (set per-case during switch emission).
+  SemIR::InstBlockId fallthrough_target_ = SemIR::InstBlockId::None;
 
   // M107: Conditional compilation defines from --define flags.
   llvm::StringSet<> defines_;

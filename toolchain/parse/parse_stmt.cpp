@@ -377,6 +377,11 @@ static auto IsAtDeclStart(Context& context) -> bool {
 
 // Parses a single statement or declaration.
 auto ParseStatement(Context& context) -> void {
+  // Skip semicolons as statement separators.
+  while (context.Peek() == Lex::TokenKind::Semi) {
+    context.Consume();
+  }
+
   auto kind = context.Peek();
 
   // Declarations.
@@ -474,8 +479,10 @@ auto ParseStatement(Context& context) -> void {
     auto pound_if = context.Consume();
     context.AddLeafNode(NodeKind::PoundIfStart, pound_if);
 
-    // Parse the condition identifier (e.g. `DEBUG`).
-    if (context.Peek() == Lex::TokenKind::Identifier) {
+    // Parse the condition identifier (e.g. `DEBUG`, `true`, `false`).
+    if (context.Peek() == Lex::TokenKind::Identifier ||
+        context.Peek() == Lex::TokenKind::TrueKeyword ||
+        context.Peek() == Lex::TokenKind::FalseKeyword) {
       auto cond_token = context.Consume();
       context.AddLeafNode(NodeKind::IdentifierNameExpr, cond_token);
     }

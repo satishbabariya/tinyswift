@@ -748,6 +748,28 @@ auto HandleFunctionDefinition(Context& context, Parse::NodeId node_id,
     HandleCodeBlock(context, body_code_block);
   }
 
+  // Implicit return: if the function has a non-void return type and the
+  // current block is not terminated, the last expression's value is returned.
+  if (!context.IsCurrentBlockTerminated()) {
+    auto& fn = context.functions().Get(function_id);
+    if (fn.return_type_inst_id.has_value()) {
+      auto last_inst = context.GetLastInstInCurrentBlock();
+      if (last_inst.has_value()) {
+        auto last = context.insts().Get(last_inst);
+        if (last.type_id().has_value() &&
+            last.type_id() != SemIR::ErrorInst::TypeId) {
+          context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(body_code_block.has_value() ? body_code_block
+                                                       : node_id),
+              SemIR::ReturnExpr{
+                  .expr_id = last_inst,
+                  .dest_id =
+                      SemIR::DestInstId(SemIR::InstId::None)}));
+        }
+      }
+    }
+  }
+
   // M78: Pop ARC cleanup scope (emits releases for any remaining class locals).
   if (body_code_block.has_value()) {
     context.PopCleanupScope(body_code_block);

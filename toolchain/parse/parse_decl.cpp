@@ -385,6 +385,11 @@ static auto ParseMemberBlock(Context& context) -> void {
 
   while (context.Peek() != Lex::TokenKind::CloseCurlyBrace &&
          !context.AtEndOfFile()) {
+    // Skip semicolons as member separators.
+    while (context.Peek() == Lex::TokenKind::Semi) {
+      context.Consume();
+    }
+    if (context.Peek() == Lex::TokenKind::CloseCurlyBrace) break;
     ParseDecl(context);
   }
 

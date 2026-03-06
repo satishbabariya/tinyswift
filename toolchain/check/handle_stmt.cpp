@@ -167,15 +167,26 @@ auto HandleIfStatement(Context& context, Parse::NodeId node_id) -> void {
   Parse::NodeId else_block_node = Parse::NodeId::None;
   bool found_else = false;
 
+  // Track the inner condition expression for else-if chains.  In the parse
+  // tree, the inner condition Expr is a child of the *outer* IfStatement
+  // (between IfStatementElse and the inner IfStatement) because IfCondition
+  // has child_count=0 and the inner IfStatement is bracketed_by IfCondition.
+  Parse::NodeId pending_else_if_cond = Parse::NodeId::None;
+
   for (auto child : child_vec) {
     auto child_kind = context.node_kind(child);
 
     if (child_kind == Parse::NodeKind::IfCondition) {
       continue;
-    } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr) &&
-               !cond_id.has_value()) {
-      // Fallback: condition inside IfStatement children.
-      cond_id = HandleExpr(context, child);
+    } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+      if (!cond_id.has_value()) {
+        // Fallback: condition inside IfStatement children.
+        cond_id = HandleExpr(context, child);
+      } else if (found_else) {
+        // This is the inner if's condition expression (else-if chain).
+        // Don't evaluate it here — store it for the recursive call.
+        pending_else_if_cond = child;
+      }
     } else if (child_kind == Parse::NodeKind::CodeBlock) {
       if (!found_else) {
         then_block_node = child;
@@ -228,9 +239,11 @@ auto HandleIfStatement(Context& context, Parse::NodeId node_id) -> void {
   context.SwitchInstBlock(merge_block_id);
   context.AddBodyBlock(merge_block_id);
 
-  // Build the then block.
+  // Build the then block.  Use PushInstBlockWithId so nested control flow
+  // (e.g. inner if/while calling SwitchInstBlock) finalizes correctly.
   {
-    context.PushInstBlock();
+    context.PushInstBlockWithId(then_block_id);
+    context.AddBodyBlock(then_block_id);
     // For `if let v = opt { ... }`, inject the unwrapped payload binding at
     // the start of the then-block so that `v` is in scope for the body.
     if (opt_payload_id.has_value() && opt_binding_name_id.has_value()) {
@@ -252,27 +265,40 @@ auto HandleIfStatement(Context& context, Parse::NodeId node_id) -> void {
     if (then_block_node.has_value()) {
       HandleCodeBlock(context, then_block_node);
     }
-    auto tmp_id = context.PopInstBlock();
-    auto then_insts = context.inst_blocks().Get(tmp_id);
-    context.inst_blocks().ReplacePlaceholder(
-        then_block_id, llvm::ArrayRef<SemIR::InstId>(then_insts));
-    context.AddBodyBlock(then_block_id);
+    // If the then-block didn't end with a terminator (return/break),
+    // branch to the merge block so execution continues after the if.
+    if (!context.IsCurrentBlockTerminated()) {
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+    }
+    context.PopInstBlock();
   }
 
   if (else_block_node.has_value()) {
-    // Build the else block.
-    context.PushInstBlock();
+    // Build the else block.  Use PushInstBlockWithId for the same reason
+    // as the then block — nested else-if chains call SwitchInstBlock.
+    context.PushInstBlockWithId(false_block_id);
+    context.AddBodyBlock(false_block_id);
     auto else_kind = context.node_kind(else_block_node);
     if (else_kind == Parse::NodeKind::CodeBlock) {
       HandleCodeBlock(context, else_block_node);
     } else if (else_kind == Parse::NodeKind::IfStatement) {
+      // For else-if chains, the inner condition expression is a child of the
+      // outer IfStatement (not the inner one). Store it as pending so the
+      // recursive HandleIfStatement picks it up via TakePendingCondition.
+      if (pending_else_if_cond.has_value()) {
+        context.SetPendingCondition(pending_else_if_cond);
+      }
       HandleIfStatement(context, else_block_node);
     }
-    auto tmp_id = context.PopInstBlock();
-    auto else_insts = context.inst_blocks().Get(tmp_id);
-    context.inst_blocks().ReplacePlaceholder(
-        false_block_id, llvm::ArrayRef<SemIR::InstId>(else_insts));
-    context.AddBodyBlock(false_block_id);
+    // If the else-block didn't end with a terminator, branch to merge.
+    if (!context.IsCurrentBlockTerminated()) {
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+    }
+    context.PopInstBlock();
   }
 }
 
@@ -418,11 +444,30 @@ auto HandleWhileStatement(Context& context, Parse::NodeId node_id) -> void {
     }
 
     // Push loop context so break/continue can find their targets.
+    // Save deferred blocks before loop body so we can emit per-iteration
+    // defers and restore the outer state after the loop.
+    auto saved_deferred = context.GetDeferredBlocks();
+    context.ClearDeferredBlocks();
+
     context.PushLoopContext(merge_block_id, cond_block_id);
     if (body_node.has_value()) {
       HandleCodeBlock(context, body_node);
     }
     context.PopLoopContext();
+
+    // Emit deferred blocks from this iteration LIFO before the back-edge.
+    if (!context.IsCurrentBlockTerminated()) {
+      const auto& loop_deferred = context.GetDeferredBlocks();
+      for (int di = static_cast<int>(loop_deferred.size()) - 1; di >= 0; --di) {
+        HandleCodeBlock(context, loop_deferred[di]);
+      }
+    }
+    // Restore outer deferred blocks.
+    context.ClearDeferredBlocks();
+    for (auto block : saved_deferred) {
+      context.PushDeferredBlock(block);
+    }
+
     // Back-edge goes into the tail block (may differ from body_block_id if
     // inner control flow called SwitchInstBlock).
     if (!context.IsCurrentBlockTerminated()) {
@@ -467,7 +512,9 @@ auto HandleGuardStatement(Context& context, Parse::NodeId node_id) -> void {
   }
 
   // Guard: if condition is false, branch to else block (which must diverge).
+  // If condition is true, continue to the continuation block.
   auto else_block_id = context.inst_blocks().AddPlaceholder();
+  auto continuation_block_id = context.inst_blocks().AddPlaceholder();
 
   // BranchIf with negated condition: branch to else when cond is false.
   auto bool_type = context.GetBuiltinType("Bool");
@@ -479,21 +526,25 @@ auto HandleGuardStatement(Context& context, Parse::NodeId node_id) -> void {
       SemIR::LocId(node_id),
       SemIR::BranchIf{.target_id = SemIR::LabelId(else_block_id),
                        .cond_id = not_cond_id}));
+  // Explicit branch to continuation for the guard-passed (true) path.
+  context.AddInst(SemIR::LocIdAndInst(
+      SemIR::LocId(node_id),
+      SemIR::Branch{.target_id = SemIR::LabelId(continuation_block_id)}));
+
+  // Switch emission to the continuation block. Subsequent statements after
+  // the guard go here.
+  context.SwitchInstBlock(continuation_block_id);
+  context.AddBodyBlock(continuation_block_id);
 
   // Build else block contents.
-  llvm::SmallVector<SemIR::InstId> else_insts;
   {
-    context.PushInstBlock();
+    context.PushInstBlockWithId(else_block_id);
+    context.AddBodyBlock(else_block_id);
     if (else_block_node.has_value()) {
       HandleCodeBlock(context, else_block_node);
     }
-    auto tmp_id = context.PopInstBlock();
-    else_insts.append(context.inst_blocks().Get(tmp_id).begin(),
-                      context.inst_blocks().Get(tmp_id).end());
+    context.PopInstBlock();
   }
-  context.inst_blocks().ReplacePlaceholder(
-      else_block_id, llvm::ArrayRef<SemIR::InstId>(else_insts));
-  context.AddBodyBlock(else_block_id);
 }
 
 // Handles a for-in statement desugared to a while-loop over an integer range.
@@ -794,11 +845,15 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
       context.AddBodyBlock(cond_block_id);
     }
 
-    // Body block.
+    // Body block. Create a separate increment block for continue target.
+    auto arr_inc_block_id = context.inst_blocks().AddPlaceholder();
     {
       context.PushInstBlockWithId(body_block_id);
       context.AddBodyBlock(body_block_id);
-      context.PushLoopContext(merge_block_id, cond_block_id);
+      // Save deferred blocks for per-iteration defer emission.
+      auto saved_deferred_arr = context.GetDeferredBlocks();
+      context.ClearDeferredBlocks();
+      context.PushLoopContext(merge_block_id, arr_inc_block_id);
 
       // Load current index.
       auto idx_val_id = context.AddInst(SemIR::LocIdAndInst(
@@ -828,7 +883,6 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
       // M63: If where clause is present, wrap body execution conditionally.
       if (where_node.has_value()) {
         auto where_exec_id = context.inst_blocks().AddPlaceholder();
-        auto inc_block_id = context.inst_blocks().AddPlaceholder();
         auto where_cond_id = HandleExpr(context, where_node);
         context.AddInst(SemIR::LocIdAndInst(
             SemIR::LocId(node_id),
@@ -836,25 +890,55 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
                              .cond_id = where_cond_id}));
         context.AddInst(SemIR::LocIdAndInst(
             SemIR::LocId(node_id),
-            SemIR::Branch{.target_id = SemIR::LabelId(inc_block_id)}));
-        // body_block_id terminated; SwitchInstBlock will pop+finalize it.
+            SemIR::Branch{.target_id = SemIR::LabelId(arr_inc_block_id)}));
         context.SwitchInstBlock(where_exec_id);
         context.AddBodyBlock(where_exec_id);
         if (body_node.has_value()) HandleCodeBlock(context, body_node);
+        // Emit deferred blocks from this iteration LIFO.
+        if (!context.IsCurrentBlockTerminated()) {
+          const auto& ld = context.GetDeferredBlocks();
+          for (int di = static_cast<int>(ld.size()) - 1; di >= 0; --di) {
+            HandleCodeBlock(context, ld[di]);
+          }
+        }
         if (!context.IsCurrentBlockTerminated()) {
           context.AddInst(SemIR::LocIdAndInst(
               SemIR::LocId(node_id),
-              SemIR::Branch{.target_id = SemIR::LabelId(inc_block_id)}));
+              SemIR::Branch{.target_id = SemIR::LabelId(arr_inc_block_id)}));
         }
         context.PopLoopContext();
-        context.SwitchInstBlock(inc_block_id);
-        context.AddBodyBlock(inc_block_id);
       } else {
         if (body_node.has_value()) HandleCodeBlock(context, body_node);
+        // Emit deferred blocks from this iteration LIFO.
+        if (!context.IsCurrentBlockTerminated()) {
+          const auto& ld = context.GetDeferredBlocks();
+          for (int di = static_cast<int>(ld.size()) - 1; di >= 0; --di) {
+            HandleCodeBlock(context, ld[di]);
+          }
+        }
         context.PopLoopContext();
       }
+      // Restore outer deferred blocks.
+      context.ClearDeferredBlocks();
+      for (auto block : saved_deferred_arr) {
+        context.PushDeferredBlock(block);
+      }
 
-      // Increment index (goes into current block: body_block_id or inc_block_id).
+      // Branch from body tail to increment block.
+      if (!context.IsCurrentBlockTerminated()) {
+        context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::Branch{.target_id = SemIR::LabelId(arr_inc_block_id)}));
+      }
+      context.PopInstBlock();
+    }
+
+    // Increment block: idx = idx + 1, then branch to condition.
+    {
+      context.PushInstBlockWithId(arr_inc_block_id);
+      context.AddBodyBlock(arr_inc_block_id);
+
+      // Increment index.
       auto idx_reload_id = context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
           SemIR::NameRef{.type_id = int_type,
@@ -990,16 +1074,23 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
   // Build body block. Use PushInstBlockWithId so that nested control flow
   // (SwitchInstBlock from inner if/while) finalizes body_block_id with the
   // correct entry-block instructions.
+  //
+  // Create a separate increment block so `continue` skips to increment
+  // (not back to the condition, which would skip the increment and loop forever).
+  auto inc_block_id = context.inst_blocks().AddPlaceholder();
   {
     context.PushInstBlockWithId(body_block_id);
     context.AddBodyBlock(body_block_id);
-    // Push loop context so break/continue can find their targets.
-    context.PushLoopContext(merge_block_id, cond_block_id);
+    // Push loop context: break → merge, continue → increment block.
+    // Save deferred blocks before loop body for per-iteration defer emission.
+    auto saved_deferred_forin = context.GetDeferredBlocks();
+    context.ClearDeferredBlocks();
+
+    context.PushLoopContext(merge_block_id, inc_block_id);
 
     // M63: If where clause present, conditionally execute body.
     if (where_node.has_value()) {
       auto where_exec_id = context.inst_blocks().AddPlaceholder();
-      auto inc_block_id = context.inst_blocks().AddPlaceholder();
       auto where_cond_id = HandleExpr(context, where_node);
       context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
@@ -1012,24 +1103,54 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
       context.SwitchInstBlock(where_exec_id);
       context.AddBodyBlock(where_exec_id);
       if (body_node.has_value()) HandleCodeBlock(context, body_node);
+      // Emit deferred blocks from this iteration LIFO.
+      if (!context.IsCurrentBlockTerminated()) {
+        const auto& loop_def = context.GetDeferredBlocks();
+        for (int di = static_cast<int>(loop_def.size()) - 1; di >= 0; --di) {
+          HandleCodeBlock(context, loop_def[di]);
+        }
+      }
       if (!context.IsCurrentBlockTerminated()) {
         context.AddInst(SemIR::LocIdAndInst(
             SemIR::LocId(node_id),
             SemIR::Branch{.target_id = SemIR::LabelId(inc_block_id)}));
       }
-      context.PopLoopContext();
-      context.SwitchInstBlock(inc_block_id);
-      context.AddBodyBlock(inc_block_id);
     } else {
       // Process body statements.
       if (body_node.has_value()) {
         HandleCodeBlock(context, body_node);
       }
-      context.PopLoopContext();
+      // Emit deferred blocks from this iteration LIFO before back-edge.
+      if (!context.IsCurrentBlockTerminated()) {
+        const auto& loop_def = context.GetDeferredBlocks();
+        for (int di = static_cast<int>(loop_def.size()) - 1; di >= 0; --di) {
+          HandleCodeBlock(context, loop_def[di]);
+        }
+      }
+    }
+    // Clear loop-body defers and restore outer deferred blocks.
+    context.ClearDeferredBlocks();
+    for (auto block : saved_deferred_forin) {
+      context.PushDeferredBlock(block);
+    }
+    context.PopLoopContext();
+
+    // Branch from body tail to increment block (if not terminated).
+    if (!context.IsCurrentBlockTerminated()) {
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(inc_block_id)}));
     }
 
-    // Increment loop variable: i = i + 1.
-    // These go into the tail block (which may differ from body_block_id).
+    // Finalize the body tail block.
+    context.PopInstBlock();
+  }
+
+  // Build increment block: i = i + 1, then branch back to condition.
+  {
+    context.PushInstBlockWithId(inc_block_id);
+    context.AddBodyBlock(inc_block_id);
+
     auto loop_val_id = context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
         SemIR::NameRef{.type_id = int_type,
@@ -1052,7 +1173,6 @@ auto HandleForInStatement(Context& context, Parse::NodeId node_id) -> void {
         SemIR::LocId(node_id),
         SemIR::Branch{.target_id = SemIR::LabelId(cond_block_id)}));
 
-    // Finalize the tail block.
     context.PopInstBlock();
   }
 
@@ -1085,12 +1205,24 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
     SemIR::InstId pattern_id = SemIR::InstId::None;  // Loose expr pattern (None if default or dot-syntax)
     bool is_default = false;
     bool is_dot_enum = false;               // True if arm uses EnumCasePattern (.red syntax)
+    bool is_range = false;                  // True if pattern is a range (1...5)
+    bool range_inclusive = true;            // true for `...`, false for `..<`
+    SemIR::InstId range_lo_id = SemIR::InstId::None;
+    SemIR::InstId range_hi_id = SemIR::InstId::None;
+    llvm::SmallVector<SemIR::InstId> multi_patterns;  // For `case 1, 5, 9:`
     llvm::StringRef dot_case_name;  // Case name for dot-syntax enum patterns
     llvm::StringRef payload_binding_name;  // Binding name for `(let v)` payload
     Parse::NodeId body_node = Parse::NodeId::None;  // SwitchCaseBody parse node
+    bool has_where = false;                 // True if `case let n where <cond>:`
+    SemIR::InstId where_cond_id = SemIR::InstId::None;
+    SemIR::NameId binding_name_id = SemIR::NameId::None;
+    Parse::NodeId where_expr_node = Parse::NodeId::None;  // Deferred where expression node
   };
   llvm::SmallVector<CaseArm> arms;
   SemIR::InstId pending_pattern_id = SemIR::InstId::None;
+  llvm::SmallVector<SemIR::InstId> pending_multi_patterns;  // For comma-separated case values
+  Parse::NodeId pending_pattern_node = Parse::NodeId::None;
+  llvm::StringRef pending_binding_name;  // For `case let n where ...`
 
   for (auto child : children) {
     auto child_kind = context.node_kind(child);
@@ -1107,16 +1239,51 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
       continue;
     }
 
+    // IdentifierPattern from `case let n where ...` (leaked from pattern).
+    if (child_kind == Parse::NodeKind::IdentifierPattern) {
+      pending_binding_name = context.token_text(context.node_token(child));
+      continue;
+    }
+
     // Loose Expr children (from ExprPattern's child_count=0) are pattern values.
     if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
+      // If there's already a pending pattern, this is a multi-value case.
+      if (pending_pattern_id.has_value()) {
+        pending_multi_patterns.push_back(pending_pattern_id);
+      }
       pending_pattern_id = HandleExpr(context, child);
+      pending_pattern_node = child;
       continue;
     }
 
     if (child_kind == Parse::NodeKind::SwitchCaseBody) {
       CaseArm arm;
       arm.pattern_id = pending_pattern_id;
+      // Transfer multi-patterns (comma-separated case values).
+      if (!pending_multi_patterns.empty()) {
+        pending_multi_patterns.push_back(pending_pattern_id);
+        arm.multi_patterns = std::move(pending_multi_patterns);
+        pending_multi_patterns.clear();
+      }
+      // Detect range patterns.
+      if (pending_pattern_node.has_value() &&
+          context.node_kind(pending_pattern_node) ==
+              Parse::NodeKind::InfixOperatorExpr) {
+        auto op_text = context.token_text(
+            context.node_token(pending_pattern_node));
+        if (op_text == "..." || op_text == "..<") {
+          arm.is_range = true;
+          arm.range_inclusive = (op_text == "...");
+          auto range_children =
+              context.children_source_order(pending_pattern_node);
+          if (range_children.size() >= 2) {
+            arm.range_lo_id = HandleExpr(context, range_children[0]);
+            arm.range_hi_id = HandleExpr(context, range_children[1]);
+          }
+        }
+      }
       pending_pattern_id = SemIR::InstId::None;
+      pending_pattern_node = Parse::NodeId::None;
       arm.is_default = false;
       arm.is_dot_enum = false;
       arm.body_node = child;
@@ -1130,14 +1297,9 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
           for (auto lc : context.children_source_order(bc)) {
             if (context.node_kind(lc) == Parse::NodeKind::EnumCasePattern) {
               arm.is_dot_enum = true;
-              // EnumCasePattern token is '.'; case name is the next token.
-              // EnumCasePattern is always a leaf (child_count=0), so children
-              // iteration finds nothing. Instead use token arithmetic:
-              //   dot+0='.'  dot+1=case_name  dot+2='('?  dot+3='let'/'var'/name  dot+4=name
               auto dot_tok = context.node_token(lc);
               auto name_tok = Lex::TokenIndex(dot_tok.index + 1);
               arm.dot_case_name = context.token_text(name_tok);
-              // Check for payload binding via token arithmetic.
               auto maybe_open = Lex::TokenIndex(dot_tok.index + 2);
               if (context.token_text(maybe_open) == "(") {
                 auto maybe_kw = Lex::TokenIndex(dot_tok.index + 3);
@@ -1151,8 +1313,21 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
               }
               break;
             }
+            // Detect where clause: Expr inside SwitchCaseLabel is the condition.
+            if (context.node_kind(lc).category().HasAnyOf(
+                    Parse::NodeCategory::Expr)) {
+              arm.has_where = true;
+              arm.where_expr_node = lc;
+            }
           }
         }
+      }
+
+      // Populate binding name from pending `case let n` pattern.
+      if (!pending_binding_name.empty()) {
+        auto ident_id = context.identifiers().Add(pending_binding_name);
+        arm.binding_name_id = SemIR::NameId::ForIdentifier(ident_id);
+        pending_binding_name = llvm::StringRef();
       }
 
       arms.push_back(arm);
@@ -1227,7 +1402,25 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
       // Build comparison expression.
       SemIR::InstId cond_id = SemIR::InstId::None;
 
-      if (scrutinee_is_enum) {
+      // case let n where <cond>: bind n = scrutinee, evaluate cond.
+      if (arm.has_where && arm.where_expr_node.has_value()) {
+        // Bind the pattern variable to the scrutinee.
+        if (arm.binding_name_id != SemIR::NameId::None &&
+            scrutinee_id.has_value()) {
+          auto ename_id = context.entity_names().Add(
+              {.name_id = arm.binding_name_id,
+               .parent_scope_id = context.CurrentScopeId()});
+          auto binding_id = context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::ValueBinding{
+                  .type_id = context.insts().Get(scrutinee_id).type_id(),
+                  .entity_name_id = ename_id,
+                  .value_id = scrutinee_id}));
+          context.AddNameToScope(arm.binding_name_id, binding_id);
+        }
+        // Evaluate the where condition.
+        cond_id = HandleExpr(context, arm.where_expr_node);
+      } else if (scrutinee_is_enum) {
         // Enum scrutinee: compare discriminants.
         SemIR::InstId pattern_disc_id = SemIR::InstId::None;
 
@@ -1279,6 +1472,51 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
               SemIR::IntEq{.type_id = bool_type,
                            .lhs_id = scrutinee_disc_id,
                            .rhs_id = pattern_disc_id}));
+        }
+      } else if (arm.is_range && arm.range_lo_id.has_value() &&
+                 arm.range_hi_id.has_value()) {
+        // Range pattern: lo <= scrutinee && scrutinee <= hi (or < hi).
+        auto lo_cond = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::IntLessEq{.type_id = bool_type,
+                             .lhs_id = arm.range_lo_id,
+                             .rhs_id = scrutinee_id}));
+        SemIR::InstId hi_cond = SemIR::InstId::None;
+        if (arm.range_inclusive) {
+          hi_cond = context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::IntLessEq{.type_id = bool_type,
+                               .lhs_id = scrutinee_id,
+                               .rhs_id = arm.range_hi_id}));
+        } else {
+          hi_cond = context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::IntLess{.type_id = bool_type,
+                             .lhs_id = scrutinee_id,
+                             .rhs_id = arm.range_hi_id}));
+        }
+        // AND the two conditions: lo_cond && hi_cond.
+        cond_id = context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::BoolAnd{.type_id = bool_type,
+                           .lhs_id = lo_cond, .rhs_id = hi_cond}));
+      } else if (arm.multi_patterns.size() > 1) {
+        // Multi-value pattern: case 1, 5, 9 → scrutinee==1 || scrutinee==5 || scrutinee==9
+        cond_id = SemIR::InstId::None;
+        for (auto pat : arm.multi_patterns) {
+          auto eq = context.AddInst(SemIR::LocIdAndInst(
+              SemIR::LocId(node_id),
+              SemIR::IntEq{.type_id = bool_type,
+                           .lhs_id = scrutinee_id,
+                           .rhs_id = pat}));
+          if (!cond_id.has_value()) {
+            cond_id = eq;
+          } else {
+            cond_id = context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::BoolOr{.type_id = bool_type,
+                              .lhs_id = cond_id, .rhs_id = eq}));
+          }
         }
       } else if (arm.pattern_id.has_value()) {
         // Integer scrutinee: direct equality comparison.
@@ -1375,6 +1613,14 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
       }
     }
 
+    // Set fallthrough target: next case body block (or None for last arm).
+    auto saved_ft_target = context.GetFallthroughTarget();
+    if (i + 1 < arms.size()) {
+      context.SetFallthroughTarget(body_block_ids[i + 1]);
+    } else {
+      context.SetFallthroughTarget(SemIR::InstBlockId::None);
+    }
+
     // Process body statements (children of SwitchCaseBody, skipping the label).
     for (auto bc : context.children_source_order(arms[i].body_node)) {
       auto bck = context.node_kind(bc);
@@ -1390,8 +1636,11 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
       }
     }
 
+    // Restore fallthrough target.
+    context.SetFallthroughTarget(saved_ft_target);
+
     // Add branch to merge only if the body didn't already terminate
-    // (e.g., via a return statement).
+    // (e.g., via a return statement or fallthrough).
     if (!context.IsCurrentBlockTerminated()) {
       context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
@@ -1399,11 +1648,6 @@ auto HandleSwitchStatement(Context& context, Parse::NodeId node_id) -> void {
     }
 
     // PopInstBlock finalizes whatever is currently on top of the stack.
-    // If no SwitchInstBlock was called during body emission, this pops
-    // body_block_ids[i] and finalizes it directly.
-    // If SwitchInstBlock WAS called (e.g., by HandleTryExpr inside a do-catch),
-    // body_block_ids[i] was already finalized by SwitchInstBlock, and this
-    // pops the continuation block instead.
     context.PopInstBlock();
   }
 }
@@ -1867,6 +2111,17 @@ auto HandleStatement(Context& context, Parse::NodeId node_id) -> void {
     return;
   }
 
+  // Fallthrough statement: branch to the next case body in a switch.
+  if (kind == Parse::NodeKind::FallthroughStatement) {
+    auto target = context.GetFallthroughTarget();
+    if (target.has_value()) {
+      context.AddInst(SemIR::LocIdAndInst(
+          SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(target)}));
+    }
+    return;
+  }
+
   // M98: yield statement.
   if (kind == Parse::NodeKind::YieldStatement) {
     HandleYieldStatement(context, node_id);
@@ -1942,8 +2197,15 @@ auto HandleStatement(Context& context, Parse::NodeId node_id) -> void {
       if (!condition_met && ck == Parse::NodeKind::IdentifierNameExpr) {
         auto token = context.node_token(child);
         condition_name = context.token_text(token);
-        // Check if the flag is in the defines set.
-        condition_met = context.HasDefine(condition_name);
+        // Check condition: `true` is always true, `false` is always false,
+        // otherwise check if the flag is in the defines set.
+        if (condition_name == "true") {
+          condition_met = true;
+        } else if (condition_name == "false") {
+          condition_met = false;
+        } else {
+          condition_met = context.HasDefine(condition_name);
+        }
         continue;
       }
       if (ck == Parse::NodeKind::PoundElseDecl ||

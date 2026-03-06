@@ -1366,7 +1366,27 @@ auto EmitInst(Context& ctx, SemIR::InstId inst_id) -> void {
           is_string = true;
         }
       }
-      sil_inst->builtin_name = is_string ? "print_string" : "print_int";
+      // Detect bool type: Bool is IntType with 1-bit width.
+      bool is_bool = false;
+      if (arg_semtype.has_value() && !is_string) {
+        auto bool_ti = sem_ir.types().GetTypeInstId(arg_semtype);
+        if (bool_ti.has_value()) {
+          if (auto it = sem_ir.insts().Get(bool_ti).TryAs<SemIR::IntType>()) {
+            // Check if the bit_width_id resolves to IntValue(1).
+            if (it->bit_width_id.has_value()) {
+              auto bw_inst = sem_ir.insts().Get(it->bit_width_id);
+              if (auto iv = bw_inst.TryAs<SemIR::IntValue>()) {
+                auto bw_val = sem_ir.ints().Get(iv->int_id);
+                if (bw_val == 1) {
+                  is_bool = true;
+                }
+              }
+            }
+          }
+        }
+      }
+      sil_inst->builtin_name = is_string ? "print_string"
+                                         : is_bool ? "print_bool" : "print_int";
       if (arg_val.is_valid()) {
         sil_inst->setOperand(0, arg_val);
       }

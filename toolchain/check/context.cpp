@@ -67,6 +67,13 @@ auto Context::CurrentInstBlockId() const -> SemIR::InstBlockId {
   return inst_block_stack_.back().id;
 }
 
+auto Context::GetLastInstInCurrentBlock() const -> SemIR::InstId {
+  if (inst_block_stack_.empty() || inst_block_stack_.back().insts.empty()) {
+    return SemIR::InstId::None;
+  }
+  return inst_block_stack_.back().insts.back();
+}
+
 auto Context::AddInstToBlock(SemIR::InstBlockId block_id,
                              SemIR::InstId inst_id) -> void {
   // Find the block in the stack and add to it.

@@ -124,6 +124,10 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
   SemIR::InstId init_id = SemIR::InstId::None;
   Parse::NodeId name_node_id = Parse::NodeId::None;
 
+  // Collect leaked tuple element type nodes (TupleType has child_count=0,
+  // so its element types appear as siblings in the parent LetDecl).
+  llvm::SmallVector<SemIR::TypeId> pending_tuple_elem_types;
+
   for (size_t ci = 0; ci < children.size(); ++ci) {
     auto child = children[ci];
     auto child_kind = context.node_kind(child);
@@ -157,6 +161,12 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
       auto ident_id = context.identifiers().Add(text);
       name_id = SemIR::NameId::ForIdentifier(ident_id);
     } else if (child_kind == Parse::NodeKind::LetInitializer) {
+      continue;
+    } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Type) &&
+               child_kind != Parse::NodeKind::TypeAnnotation) {
+      // Leaked tuple element type (TupleType has child_count=0, so element
+      // types like IdentifierType appear as siblings in LetDecl).
+      pending_tuple_elem_types.push_back(HandleTypeExpr(context, child));
       continue;
     } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
       // M68: If this Expr is immediately followed by a CallExpr, it's the
@@ -209,9 +219,43 @@ auto HandleLetDecl(Context& context, Parse::NodeId node_id) -> void {
         context.SetPendingCalleeId(HandleExpr(context, child));
         continue;
       }
+      // M39: If followed by a cast node, evaluate LHS and store as pending cast.
+      if (ci + 1 < children.size()) {
+        auto next_kind = context.node_kind(children[ci + 1]);
+        if (next_kind == Parse::NodeKind::IsExpr ||
+            next_kind == Parse::NodeKind::AsExpr ||
+            next_kind == Parse::NodeKind::AsQuestionExpr ||
+            next_kind == Parse::NodeKind::AsExclaimExpr) {
+          auto lhs_id = HandleExpr(context, child);
+          context.SetPendingCastExpr(lhs_id);
+          continue;
+        }
+      }
       init_id = HandleExpr(context, child);
     } else if (child_kind == Parse::NodeKind::TypeAnnotation) {
       type_id = HandleTypeExpr(context, child);
+      // If we collected leaked tuple element types and the annotation resolved
+      // to an empty TupleType, rebuild with the actual element types.
+      if (!pending_tuple_elem_types.empty() && type_id.has_value()) {
+        auto ti = context.types().GetTypeInstId(type_id);
+        if (ti.has_value() &&
+            context.insts().Get(ti).Is<SemIR::TupleType>()) {
+          llvm::SmallVector<SemIR::InstId> elem_inst_ids;
+          for (auto et : pending_tuple_elem_types) {
+            elem_inst_ids.push_back(
+                SemIR::InstId(context.types().GetTypeInstId(et).index));
+          }
+          auto block = context.inst_blocks().AddPlaceholder();
+          context.inst_blocks().ReplacePlaceholder(block, elem_inst_ids);
+          auto tuple_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+              SemIR::LocId(child),
+              SemIR::TupleType{.type_id = SemIR::TypeType::TypeId,
+                               .element_types_id = block}));
+          type_id = SemIR::TypeId::ForTypeConstant(
+              SemIR::ConstantId::ForConcreteConstant(tuple_id));
+        }
+        pending_tuple_elem_types.clear();
+      }
     }
   }
 
@@ -406,6 +450,9 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
   SemIR::InstId init_id = SemIR::InstId::None;
   Parse::NodeId name_node_id = Parse::NodeId::None;
 
+  // Collect leaked tuple element type nodes (same as LetDecl).
+  llvm::SmallVector<SemIR::TypeId> pending_tuple_elem_types;
+
   for (size_t ci = 0; ci < children.size(); ++ci) {
     auto child = children[ci];
     auto child_kind = context.node_kind(child);
@@ -455,7 +502,33 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
       // Direct type annotation for `var name: Type = expr` when IdentifierPattern
       // is used directly (not wrapped in VariablePattern).
       type_id = HandleTypeExpr(context, child);
+      // Rebuild empty TupleType with leaked element types (same as LetDecl).
+      if (!pending_tuple_elem_types.empty() && type_id.has_value()) {
+        auto ti = context.types().GetTypeInstId(type_id);
+        if (ti.has_value() &&
+            context.insts().Get(ti).Is<SemIR::TupleType>()) {
+          llvm::SmallVector<SemIR::InstId> elem_inst_ids;
+          for (auto et : pending_tuple_elem_types) {
+            elem_inst_ids.push_back(
+                SemIR::InstId(context.types().GetTypeInstId(et).index));
+          }
+          auto block = context.inst_blocks().AddPlaceholder();
+          context.inst_blocks().ReplacePlaceholder(block, elem_inst_ids);
+          auto tuple_id = context.AddInstInNoBlock(SemIR::LocIdAndInst(
+              SemIR::LocId(child),
+              SemIR::TupleType{.type_id = SemIR::TypeType::TypeId,
+                               .element_types_id = block}));
+          type_id = SemIR::TypeId::ForTypeConstant(
+              SemIR::ConstantId::ForConcreteConstant(tuple_id));
+        }
+        pending_tuple_elem_types.clear();
+      }
     } else if (child_kind == Parse::NodeKind::VariableInitializer) {
+      continue;
+    } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Type) &&
+               child_kind != Parse::NodeKind::TypeAnnotation) {
+      // Leaked tuple element type (same as LetDecl).
+      pending_tuple_elem_types.push_back(HandleTypeExpr(context, child));
       continue;
     } else if (child_kind.category().HasAnyOf(Parse::NodeCategory::Expr)) {
       // M68: If this Expr is immediately followed by a CallExpr, it's the
@@ -509,6 +582,18 @@ auto HandleVariableDecl(Context& context, Parse::NodeId node_id) -> void {
         }
         context.SetPendingCalleeId(HandleExpr(context, child));
         continue;
+      }
+      // M39: If followed by a cast node, evaluate LHS and store as pending cast.
+      if (ci + 1 < children.size()) {
+        auto next_kind = context.node_kind(children[ci + 1]);
+        if (next_kind == Parse::NodeKind::IsExpr ||
+            next_kind == Parse::NodeKind::AsExpr ||
+            next_kind == Parse::NodeKind::AsQuestionExpr ||
+            next_kind == Parse::NodeKind::AsExclaimExpr) {
+          auto lhs_id = HandleExpr(context, child);
+          context.SetPendingCastExpr(lhs_id);
+          continue;
+        }
       }
       init_id = HandleExpr(context, child);
     }

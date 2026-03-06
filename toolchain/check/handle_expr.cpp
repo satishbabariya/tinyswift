@@ -112,9 +112,16 @@ auto HandleIntLiteral(Context& context, Parse::NodeId node_id)
   auto token = context.node_token(node_id);
   auto text = context.token_text(token);
 
+  // Strip underscores from numeric literals (e.g., 1_000_000 → 1000000).
+  std::string cleaned;
+  cleaned.reserve(text.size());
+  for (char c : text) {
+    if (c != '_') cleaned.push_back(c);
+  }
+
   // Parse the integer value.
   llvm::APInt value;
-  if (text.getAsInteger(0, value)) {
+  if (llvm::StringRef(cleaned).getAsInteger(0, value)) {
     value = llvm::APInt(64, 0);
   }
 
@@ -157,6 +164,30 @@ auto HandleBoolLiteral(Context& context, Parse::NodeId node_id, bool value)
                          .value = SemIR::BoolValue::From(value)}));
 }
 
+// Process escape sequences in a string literal segment.
+static auto ProcessEscapes(llvm::StringRef input) -> std::string {
+  std::string result;
+  result.reserve(input.size());
+  for (size_t i = 0; i < input.size(); ++i) {
+    if (input[i] == '\\' && i + 1 < input.size()) {
+      char next = input[i + 1];
+      switch (next) {
+        case 'n': result.push_back('\n'); ++i; break;
+        case 't': result.push_back('\t'); ++i; break;
+        case 'r': result.push_back('\r'); ++i; break;
+        case '\\': result.push_back('\\'); ++i; break;
+        case '"': result.push_back('"'); ++i; break;
+        case '\'': result.push_back('\''); ++i; break;
+        case '0': result.push_back('\0'); ++i; break;
+        default: result.push_back(input[i]); break;
+      }
+    } else {
+      result.push_back(input[i]);
+    }
+  }
+  return result;
+}
+
 // Handles a string literal, including M38 string interpolation `"text\(expr)"`.
 // Interpolated segments are desugared into IntToString + StringConcat chains.
 auto HandleStringLiteral(Context& context, Parse::NodeId node_id)
@@ -176,8 +207,10 @@ auto HandleStringLiteral(Context& context, Parse::NodeId node_id)
   // Check for string interpolation: `\(...)` sequences.
   // Only handle simple `\(identifier)` for M38.
   if (!content.contains("\\(")) {
-    // Plain string literal — no interpolation.
-    auto string_id = context.string_literal_values().Add(content);
+    // Plain string literal — no interpolation. Process escape sequences.
+    auto processed = ProcessEscapes(content);
+    auto string_id = context.string_literal_values().Add(
+        llvm::StringRef(processed));
     return context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
         SemIR::StringLiteral{.type_id = string_type_id,
@@ -192,8 +225,10 @@ auto HandleStringLiteral(Context& context, Parse::NodeId node_id)
   while (!remaining.empty()) {
     auto interp_pos = remaining.find("\\(");
     if (interp_pos == llvm::StringRef::npos) {
-      // Trailing literal segment.
-      auto seg_id = context.string_literal_values().Add(remaining);
+      // Trailing literal segment — process escape sequences.
+      auto processed = ProcessEscapes(remaining);
+      auto seg_id = context.string_literal_values().Add(
+          llvm::StringRef(processed));
       auto seg_inst = context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
           SemIR::StringLiteral{.type_id = string_type_id,
@@ -210,10 +245,12 @@ auto HandleStringLiteral(Context& context, Parse::NodeId node_id)
       break;
     }
 
-    // Emit the literal part before `\(`.
+    // Emit the literal part before `\(` — process escape sequences.
     if (interp_pos > 0) {
       auto literal_part = remaining.take_front(interp_pos);
-      auto seg_id = context.string_literal_values().Add(literal_part);
+      auto processed_part = ProcessEscapes(literal_part);
+      auto seg_id = context.string_literal_values().Add(
+          llvm::StringRef(processed_part));
       auto seg_inst = context.AddInst(SemIR::LocIdAndInst(
           SemIR::LocId(node_id),
           SemIR::StringLiteral{.type_id = string_type_id,
@@ -264,26 +301,159 @@ auto HandleStringLiteral(Context& context, Parse::NodeId node_id)
 
     // Try identifier lookup (e.g., \(x)).
     if (!interp_inst.has_value()) {
-      auto ident_id = context.identifiers().Lookup(expr_text);
-      if (ident_id.has_value()) {
-        auto name_id = SemIR::NameId::ForIdentifier(ident_id);
-        auto value_id = context.LookupName(name_id);
-        if (value_id.has_value()) {
-          auto ref_type_id = GetInstType(context, value_id);
-          auto name_ref_id = context.AddInst(SemIR::LocIdAndInst(
+      // Helper lambda: resolve a simple name to an InstId.
+      auto resolve_name = [&](llvm::StringRef name) -> SemIR::InstId {
+        auto trimmed = name.trim();
+        auto id = context.identifiers().Lookup(trimmed);
+        if (!id.has_value()) return SemIR::InstId::None;
+        auto nm = SemIR::NameId::ForIdentifier(id);
+        auto val = context.LookupName(nm);
+        if (!val.has_value()) return SemIR::InstId::None;
+        auto tp = GetInstType(context, val);
+        return context.AddInst(SemIR::LocIdAndInst(
+            SemIR::LocId(node_id),
+            SemIR::NameRef{.type_id = tp,
+                           .name_id = nm,
+                           .value_id = val}));
+      };
+
+      // Helper lambda: convert an InstId to string for interpolation.
+      auto to_string_inst = [&](SemIR::InstId inst) -> SemIR::InstId {
+        if (!inst.has_value()) return SemIR::InstId::None;
+        auto tp = context.insts().Get(inst).type_id();
+        if (tp == int_type_id || tp == context.GetBuiltinType("Bool")) {
+          return context.AddInst(SemIR::LocIdAndInst(
               SemIR::LocId(node_id),
-              SemIR::NameRef{.type_id = ref_type_id,
-                             .name_id = name_id,
-                             .value_id = value_id}));
-          // Convert to String: Int/Bool → IntToString, String stays as-is.
-          if (ref_type_id == int_type_id ||
-              ref_type_id == context.GetBuiltinType("Bool")) {
-            interp_inst = context.AddInst(SemIR::LocIdAndInst(
-                SemIR::LocId(node_id),
-                SemIR::IntToString{.type_id = string_type_id,
-                                   .operand_id = name_ref_id}));
-          } else {
-            interp_inst = name_ref_id;  // Already a String.
+              SemIR::IntToString{.type_id = string_type_id,
+                                 .operand_id = inst}));
+        }
+        return inst;  // Already a String or other type.
+      };
+
+      // First try simple identifier.
+      auto simple_ref = resolve_name(expr_text);
+      if (simple_ref.has_value()) {
+        interp_inst = to_string_inst(simple_ref);
+      }
+
+      // Try member access: `name.member` (e.g., self.num).
+      if (!interp_inst.has_value() && expr_text.contains('.')) {
+        auto dot_pos = expr_text.find('.');
+        auto obj_name = expr_text.take_front(dot_pos).trim();
+        auto member_name = expr_text.drop_front(dot_pos + 1).trim();
+        auto obj_ref = resolve_name(obj_name);
+        if (obj_ref.has_value() && !member_name.empty()) {
+          auto obj_type = context.insts().Get(obj_ref).type_id();
+          auto member_ident = context.identifiers().Lookup(member_name);
+          if (member_ident.has_value() && obj_type.has_value()) {
+            auto member_nm = SemIR::NameId::ForIdentifier(member_ident);
+            // Try to find the field in the type's scope.
+            auto type_inst_id = context.types().GetTypeInstId(obj_type);
+            if (type_inst_id.has_value()) {
+              auto type_inst = context.insts().Get(type_inst_id);
+              SemIR::NameScopeId scope_id = SemIR::NameScopeId::None;
+              if (auto sd = type_inst.TryAs<SemIR::StructType>()) {
+                scope_id = sd->name_scope_id;
+              } else if (auto cd = type_inst.TryAs<SemIR::ClassType>()) {
+                scope_id = cd->name_scope_id;
+              }
+              if (scope_id.has_value()) {
+                auto& scope = context.name_scopes().Get(scope_id);
+                auto it = scope.names.find(member_nm.index);
+                if (it != scope.names.end()) {
+                  auto field_inst = context.insts().Get(it->second);
+                  if (auto sf = field_inst.TryAs<SemIR::StructField>()) {
+                    auto access = context.AddInst(SemIR::LocIdAndInst(
+                        SemIR::LocId(node_id),
+                        SemIR::FieldAccess{.type_id = sf->type_id,
+                                           .base_id = obj_ref,
+                                           .index = sf->index}));
+                    interp_inst = to_string_inst(access);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Try binary operator expression: `a op b` (e.g., x + y).
+      if (!interp_inst.has_value()) {
+        // Find operator in the expression (scanning from the end to handle
+        // cases like "a + b" correctly).
+        static const char* ops[] = {" + ", " - ", " * ", " / ", " % "};
+        for (auto op_str : ops) {
+          auto op_pos = expr_text.find(op_str);
+          if (op_pos != llvm::StringRef::npos) {
+            auto lhs_text = expr_text.take_front(op_pos).trim();
+            auto rhs_text = expr_text.drop_front(
+                op_pos + strlen(op_str)).trim();
+            // Resolve LHS and RHS (support simple identifiers and int literals).
+            SemIR::InstId lhs_val = resolve_name(lhs_text);
+            if (!lhs_val.has_value()) {
+              llvm::APInt lhs_int;
+              if (!lhs_text.getAsInteger(10, lhs_int)) {
+                lhs_val = context.AddInst(SemIR::LocIdAndInst(
+                    SemIR::LocId(node_id),
+                    SemIR::IntValue{.type_id = int_type_id,
+                                    .int_id = context.ints().Add(
+                                        static_cast<int64_t>(lhs_int.getSExtValue()))}));
+              }
+            }
+            SemIR::InstId rhs_val = resolve_name(rhs_text);
+            if (!rhs_val.has_value()) {
+              llvm::APInt rhs_int;
+              if (!rhs_text.getAsInteger(10, rhs_int)) {
+                rhs_val = context.AddInst(SemIR::LocIdAndInst(
+                    SemIR::LocId(node_id),
+                    SemIR::IntValue{.type_id = int_type_id,
+                                    .int_id = context.ints().Add(
+                                        static_cast<int64_t>(rhs_int.getSExtValue()))}));
+              }
+            }
+            if (lhs_val.has_value() && rhs_val.has_value()) {
+              SemIR::InstId op_result = SemIR::InstId::None;
+              char op_char = op_str[1];
+              switch (op_char) {
+                case '+':
+                  op_result = context.AddInst(SemIR::LocIdAndInst(
+                      SemIR::LocId(node_id),
+                      SemIR::IntAdd{.type_id = int_type_id,
+                                    .lhs_id = lhs_val, .rhs_id = rhs_val}));
+                  break;
+                case '-':
+                  op_result = context.AddInst(SemIR::LocIdAndInst(
+                      SemIR::LocId(node_id),
+                      SemIR::IntSub{.type_id = int_type_id,
+                                    .lhs_id = lhs_val, .rhs_id = rhs_val}));
+                  break;
+                case '*':
+                  op_result = context.AddInst(SemIR::LocIdAndInst(
+                      SemIR::LocId(node_id),
+                      SemIR::IntMul{.type_id = int_type_id,
+                                    .lhs_id = lhs_val, .rhs_id = rhs_val}));
+                  break;
+                case '/':
+                  op_result = context.AddInst(SemIR::LocIdAndInst(
+                      SemIR::LocId(node_id),
+                      SemIR::IntDiv{.type_id = int_type_id,
+                                    .lhs_id = lhs_val, .rhs_id = rhs_val}));
+                  break;
+                case '%':
+                  op_result = context.AddInst(SemIR::LocIdAndInst(
+                      SemIR::LocId(node_id),
+                      SemIR::IntMod{.type_id = int_type_id,
+                                    .lhs_id = lhs_val, .rhs_id = rhs_val}));
+                  break;
+              }
+              if (op_result.has_value()) {
+                interp_inst = context.AddInst(SemIR::LocIdAndInst(
+                    SemIR::LocId(node_id),
+                    SemIR::IntToString{.type_id = string_type_id,
+                                       .operand_id = op_result}));
+              }
+            }
+            break;
           }
         }
       }
@@ -2794,6 +2964,40 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
         SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
   }
 
+  // Early numeric tuple member access: check the base type directly.
+  // This handles cases where types().GetTypeInstId() may not resolve properly.
+  if (base_type_id.has_value()) {
+    unsigned tuple_idx = 0;
+    if (!member_name.empty() && !member_name.getAsInteger(10, tuple_idx)) {
+      // Numeric member name — try to resolve as tuple access.
+      auto type_inst_id2 = context.types().GetTypeInstId(base_type_id);
+      // Also try direct resolution from type's constant value.
+      SemIR::TypeInstId resolved_ti = type_inst_id2;
+      if (!resolved_ti.has_value()) {
+        auto const_id = base_type_id.AsConstantId();
+        if (const_id.is_concrete()) {
+          resolved_ti = SemIR::TypeInstId(const_id.index);
+        }
+      }
+      if (resolved_ti.has_value()) {
+        auto type_inst_raw = context.insts().Get(resolved_ti);
+        if (auto tt = type_inst_raw.TryAs<SemIR::TupleType>()) {
+          auto elems = context.inst_blocks().Get(tt->element_types_id);
+          if (tuple_idx < elems.size()) {
+            auto elem_type = context.types().GetTypeIdForTypeInstId(
+                SemIR::TypeInstId::UnsafeMake(elems[tuple_idx]));
+            return context.AddInst(SemIR::LocIdAndInst(
+                SemIR::LocId(node_id),
+                SemIR::TupleAccess{.type_id = elem_type,
+                                   .tuple_id = base_id,
+                                   .index = SemIR::ElementIndex(
+                                       tuple_idx)}));
+          }
+        }
+      }
+    }
+  }
+
   // For struct/class/enum types, look up the member in the type's scope.
   if (base_type_id.has_value() && base_type_id.is_concrete()) {
     auto type_inst_id = context.types().GetTypeInstId(base_type_id);
@@ -2901,6 +3105,78 @@ auto HandleMemberAccessExpr(Context& context, Parse::NodeId node_id)
 auto HandleInfixOperatorExpr(Context& context, Parse::NodeId node_id)
     -> SemIR::InstId {
   auto children = context.children_source_order(node_id);
+  auto op_text = context.token_text(context.node_token(node_id));
+
+  // Short-circuit evaluation for && and ||.
+  // LHS is evaluated first; RHS is only evaluated if needed.
+  if (op_text == "&&" || op_text == "||") {
+    Parse::NodeId lhs_node = Parse::NodeId::None;
+    Parse::NodeId rhs_node = Parse::NodeId::None;
+    for (auto child : children) {
+      if (context.node_kind(child).category().HasAnyOf(
+              Parse::NodeCategory::Expr)) {
+        if (!lhs_node.has_value()) lhs_node = child;
+        else rhs_node = child;
+      }
+    }
+    auto bool_type = context.GetBuiltinType("Bool");
+    auto lhs_id = HandleExpr(context, lhs_node);
+
+    auto temp_id = context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::VarStorage{.type_id = bool_type,
+                          .pattern_id = SemIR::AbsoluteInstId(
+                              SemIR::InstId::None)}));
+
+    auto eval_rhs_block = context.inst_blocks().AddPlaceholder();
+    auto sc_block = context.inst_blocks().AddPlaceholder();
+    auto merge_block = context.inst_blocks().AddPlaceholder();
+
+    if (op_text == "&&") {
+      // true → evaluate RHS, false → result is false
+      context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+          SemIR::BranchIf{.target_id = SemIR::LabelId(eval_rhs_block),
+                          .cond_id = lhs_id}));
+      context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(sc_block)}));
+    } else {
+      // true → result is true, false → evaluate RHS
+      context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+          SemIR::BranchIf{.target_id = SemIR::LabelId(sc_block),
+                          .cond_id = lhs_id}));
+      context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+          SemIR::Branch{.target_id = SemIR::LabelId(eval_rhs_block)}));
+    }
+
+    // Evaluate RHS block.
+    context.SwitchInstBlock(eval_rhs_block);
+    context.AddBodyBlock(eval_rhs_block);
+    auto rhs_id = HandleExpr(context, rhs_node);
+    context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+        SemIR::Assign{.lhs_id = temp_id, .rhs_id = rhs_id}));
+    context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(merge_block)}));
+
+    // Short-circuit block: use constant result.
+    context.SwitchInstBlock(sc_block);
+    context.AddBodyBlock(sc_block);
+    bool sc_value = (op_text == "||");  // && → false, || → true
+    auto sc_lit = context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+        SemIR::BoolLiteral{.type_id = bool_type,
+                           .value = SemIR::BoolValue::From(sc_value)}));
+    context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+        SemIR::Assign{.lhs_id = temp_id, .rhs_id = sc_lit}));
+    context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(merge_block)}));
+
+    // Merge block: load result.
+    context.SwitchInstBlock(merge_block);
+    context.AddBodyBlock(merge_block);
+    return context.AddInst(SemIR::LocIdAndInst(SemIR::LocId(node_id),
+        SemIR::NameRef{.type_id = bool_type,
+                       .name_id = SemIR::NameId::None,
+                       .value_id = temp_id}));
+  }
 
   SemIR::InstId lhs_id = SemIR::InstId::None;
   SemIR::InstId rhs_id = SemIR::InstId::None;
@@ -2915,8 +3191,6 @@ auto HandleInfixOperatorExpr(Context& context, Parse::NodeId node_id)
       }
     }
   }
-
-  auto op_text = context.token_text(context.node_token(node_id));
   auto lhs_type = GetInstType(context, lhs_id);
   auto rhs_type = GetInstType(context, rhs_id);
   auto bool_type = context.GetBuiltinType("Bool");
@@ -3875,6 +4149,7 @@ auto HandleAssignmentExpr(Context& context, Parse::NodeId node_id)
 
 // Handles a ternary expression: `condition ? then_expr : else_expr`.
 // Lowered to: VarStorage temp + conditional branch + store in each arm + load in merge.
+// Uses SwitchInstBlock for each branch to properly handle nested ternaries.
 auto HandleTernaryExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId {
   auto children = context.children_source_order(node_id);
   // TernaryExpr has child_count=3: condition, then_expr, else_expr.
@@ -3891,19 +4166,8 @@ auto HandleTernaryExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId
         SemIR::ErrorInst{SemIR::ErrorInst::TypeId}));
   }
 
-  // Pre-evaluate then-branch to infer result type.
-  context.PushInstBlock();
-  auto then_val = HandleExpr(context, then_node);
-  auto pre_then_block = context.PopInstBlock();
-
-  // Infer result type from then-branch (falls back to Int).
+  // Default result type to Int (refined after evaluating then-branch).
   auto result_type = context.GetBuiltinType("Int");
-  if (then_val.has_value()) {
-    auto then_type = context.insts().Get(then_val).type_id();
-    if (then_type.has_value()) {
-      result_type = then_type;
-    }
-  }
 
   // Allocate a temporary VarStorage for the result.
   auto temp_id = context.AddInst(SemIR::LocIdAndInst(
@@ -3926,46 +4190,43 @@ auto HandleTernaryExpr(Context& context, Parse::NodeId node_id) -> SemIR::InstId
       SemIR::LocId(node_id),
       SemIR::Branch{.target_id = SemIR::LabelId(else_block_id)}));
 
-  // Switch emission to merge block; code after the ternary continues there.
-  context.SwitchInstBlock(merge_block_id);
-  context.AddBodyBlock(merge_block_id);
-
-  // Build then block using pre-evaluated instructions.
-  {
-    llvm::SmallVector<SemIR::InstId> then_insts_vec;
-    auto pre_insts = context.inst_blocks().Get(pre_then_block);
-    then_insts_vec.append(pre_insts.begin(), pre_insts.end());
-    if (then_val.has_value()) {
-      then_insts_vec.push_back(context.AddInstInNoBlock(SemIR::LocIdAndInst(
-          SemIR::LocId(node_id),
-          SemIR::Assign{.lhs_id = temp_id, .rhs_id = then_val})));
-    }
-    then_insts_vec.push_back(context.AddInstInNoBlock(SemIR::LocIdAndInst(
-        SemIR::LocId(node_id),
-        SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)})));
-    context.inst_blocks().ReplacePlaceholder(
-        then_block_id, llvm::ArrayRef<SemIR::InstId>(then_insts_vec));
-    context.AddBodyBlock(then_block_id);
-  }
-
-  // Build else block: evaluate else_expr, assign to temp, branch to merge.
-  {
-    context.PushInstBlock();
-    auto else_val = HandleExpr(context, else_node);
-    if (else_val.has_value()) {
-      context.AddInst(SemIR::LocIdAndInst(
-          SemIR::LocId(node_id),
-          SemIR::Assign{.lhs_id = temp_id, .rhs_id = else_val}));
+  // Switch to then block, evaluate then expression.
+  context.SwitchInstBlock(then_block_id);
+  context.AddBodyBlock(then_block_id);
+  auto then_val = HandleExpr(context, then_node);
+  if (then_val.has_value()) {
+    auto then_type = context.insts().Get(then_val).type_id();
+    if (then_type.has_value()) {
+      result_type = then_type;
     }
     context.AddInst(SemIR::LocIdAndInst(
         SemIR::LocId(node_id),
-        SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
-    auto tmp = context.PopInstBlock();
-    auto insts = context.inst_blocks().Get(tmp);
-    context.inst_blocks().ReplacePlaceholder(
-        else_block_id, llvm::ArrayRef<SemIR::InstId>(insts));
-    context.AddBodyBlock(else_block_id);
+        SemIR::Assign{.lhs_id = temp_id, .rhs_id = then_val}));
   }
+  if (!context.IsCurrentBlockTerminated()) {
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+  }
+
+  // Switch to else block, evaluate else expression.
+  context.SwitchInstBlock(else_block_id);
+  context.AddBodyBlock(else_block_id);
+  auto else_val = HandleExpr(context, else_node);
+  if (else_val.has_value()) {
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Assign{.lhs_id = temp_id, .rhs_id = else_val}));
+  }
+  if (!context.IsCurrentBlockTerminated()) {
+    context.AddInst(SemIR::LocIdAndInst(
+        SemIR::LocId(node_id),
+        SemIR::Branch{.target_id = SemIR::LabelId(merge_block_id)}));
+  }
+
+  // Switch to merge block for code after ternary.
+  context.SwitchInstBlock(merge_block_id);
+  context.AddBodyBlock(merge_block_id);
 
   // In merge block: load from temp (NameRef → SILGen emits Load).
   auto load_id = context.AddInst(SemIR::LocIdAndInst(
